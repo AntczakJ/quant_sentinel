@@ -1,6 +1,11 @@
 # finance.py
 """
 finance.py — obliczenia finansowe i zarządzanie ryzykiem.
+
+Zmiany:
+- Stały minimalny dystans TP = 5$.
+- Dodano dynamiczny filtr: min_tp_distance = max(atr * min_tp_distance_mult, 5.0).
+- Parametr min_tp_distance_mult jest przechowywany w dynamic_params i może być optymalizowany.
 """
 
 import requests
@@ -21,18 +26,11 @@ def get_fx_rate(base: str = "USD", target: str = "PLN") -> float:
 
 def calculate_position(analysis_data: dict, balance: float, user_currency: str, td_api_key: str) -> dict:
     """
-    Oblicza pozycję z filtrami ekonomicznymi:
-    - minimalny zysk 10 USD
-    - minimalny dystans TP (ATR lub 2$)
+    SMC MASTER VERSION: Oblicza pozycję w oparciu o Liquidity Grab, MSS, FVG, DBR/RBD i makro.
+    Filtry:
+    - Minimalny dystans TP = 5$ (stały) lub dynamiczny = atr * min_tp_distance_mult (jeśli większy).
     """
     # Dane z silnika SMC
-    from src.database import NewsDB
-    db = NewsDB()
-
-    risk_percent = db.get_param("risk_percent", 1.0)
-    min_profit_usd = db.get_param("min_profit_usd", 10.0)
-    min_tp_distance_mult = db.get_param("min_tp_distance_mult", 1.0)
-    target_rr = db.get_param("target_rr", 2.5)
     price = analysis_data['price']
     trend = analysis_data['trend']
     fvg_type = analysis_data.get('fvg_type')
@@ -50,7 +48,13 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     swing_low = analysis_data.get('swing_low')
     atr = analysis_data.get('atr', 2.0)
 
-    # --- 1. Ustal kierunek ---
+    # Pobranie dynamicznych parametrów
+    from src.database import NewsDB
+    db = NewsDB()
+    risk_percent = db.get_param("risk_percent", 1.0)
+    min_tp_distance_mult = db.get_param("min_tp_distance_mult", 1.0)
+
+    # --- 1. Ustal kierunek na podstawie konfluencji ---
     direction = None
     entry = price
     logic = ""
@@ -132,30 +136,24 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         except:
             balance_in_usd = balance / 4.0
 
-    # --- 4. Wielkość lota (1% ryzyka) ---
+    # --- 4. Wielkość lota (ryzyko %) ---
     risk_usd = balance_in_usd * (risk_percent / 100)
-
-
-
     dist = abs(entry - sl)
     if dist <= 0:
         dist = 2.0
     lot_size = round(risk_usd / (dist * 100), 2)
     if lot_size < 0.01:
-        lot_size = 0.01  # minimum brokera
+        lot_size = 0.01
 
-    potential_profit_usd = abs(entry - tp) * lot_size * 100
+    # --- 5. FILTR: minimalny dystans TP ---
+    MIN_TP_DISTANCE = 5.0
+    dynamic_min_distance = atr * min_tp_distance_mult
+    min_distance = max(dynamic_min_distance, MIN_TP_DISTANCE)
 
-    # --- 6. Filtry ekonomiczne (po obliczeniu lot_size) ---
-    if potential_profit_usd < min_profit_usd:
+    if abs(entry - tp) < min_distance:
         return {"direction": "CZEKAJ",
-                "reason": f"Zbyt mały zysk ({potential_profit_usd:.2f}$) – minimalny {min_profit_usd}$."}
+                "reason": f"Zbyt mały dystans TP ({abs(entry - tp):.2f}$) – minimalny {min_distance:.2f}$."}
 
-    min_tp_distance = max(atr * min_tp_distance_mult, 2.0)
-    if abs(entry - tp) < min_tp_distance:
-        return {"direction": "CZEKAJ", "reason": f"Zbyt mały dystans TP – minimalny {min_tp_distance}$."}
-
-    # --- 7. Zwrot pozycji ---
     return {
         'lot': lot_size,
         'sl': sl,
