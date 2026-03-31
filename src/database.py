@@ -26,55 +26,155 @@ class NewsDB:
 
             # 2. Ustawienia użytkownika
             self.conn.execute("""
-                CREATE TABLE IF NOT EXISTS user_settings (
-                    user_id INTEGER PRIMARY KEY,
-                    balance REAL DEFAULT 1000.0,
-                    risk_percent REAL DEFAULT 1.0
-                )
-            """)
+                              CREATE TABLE IF NOT EXISTS user_settings
+                              (
+                                  user_id
+                                  INTEGER
+                                  PRIMARY
+                                  KEY,
+                                  balance
+                                  REAL
+                                  DEFAULT
+                                  1000.0,
+                                  risk_percent
+                                  REAL
+                                  DEFAULT
+                                  1.0
+                              )
+                              """)
 
-            # 3. Główna tabela transakcji
+            # 3. Główna tabela transakcji (dodajemy kolumnę pattern)
             self.conn.execute("""
-                CREATE TABLE IF NOT EXISTS trades (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    direction TEXT,
-                    entry REAL,
-                    sl REAL,
-                    tp REAL,
-                    rsi REAL,
-                    trend TEXT,
-                    structure TEXT DEFAULT 'Stable',
-                    status TEXT DEFAULT 'OPEN',
-                    failure_reason TEXT,
-                    condition_at_loss TEXT
-                )
-            """)
+                              CREATE TABLE IF NOT EXISTS trades
+                              (
+                                  id
+                                  INTEGER
+                                  PRIMARY
+                                  KEY
+                                  AUTOINCREMENT,
+                                  timestamp
+                                  DATETIME
+                                  DEFAULT
+                                  CURRENT_TIMESTAMP,
+                                  direction
+                                  TEXT,
+                                  entry
+                                  REAL,
+                                  sl
+                                  REAL,
+                                  tp
+                                  REAL,
+                                  rsi
+                                  REAL,
+                                  trend
+                                  TEXT,
+                                  structure
+                                  TEXT
+                                  DEFAULT
+                                  'Stable',
+                                  status
+                                  TEXT
+                                  DEFAULT
+                                  'OPEN',
+                                  failure_reason
+                                  TEXT,
+                                  condition_at_loss
+                                  TEXT,
+                                  pattern
+                                  TEXT
+                              )
+                              """)
 
             # 4. Tabela Skanera
             self.conn.execute("""
-                CREATE TABLE IF NOT EXISTS scanner_signals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    direction TEXT,
-                    entry REAL,
-                    sl REAL,
-                    tp REAL,
-                    rsi REAL,
-                    trend TEXT,
-                    structure TEXT,
-                    status TEXT DEFAULT 'PENDING'
-                )
-            """)
+                              CREATE TABLE IF NOT EXISTS scanner_signals
+                              (
+                                  id
+                                  INTEGER
+                                  PRIMARY
+                                  KEY
+                                  AUTOINCREMENT,
+                                  timestamp
+                                  DATETIME
+                                  DEFAULT
+                                  CURRENT_TIMESTAMP,
+                                  direction
+                                  TEXT,
+                                  entry
+                                  REAL,
+                                  sl
+                                  REAL,
+                                  tp
+                                  REAL,
+                                  rsi
+                                  REAL,
+                                  trend
+                                  TEXT,
+                                  structure
+                                  TEXT,
+                                  status
+                                  TEXT
+                                  DEFAULT
+                                  'PENDING'
+                              )
+                              """)
+
+            # 5. Tabela statystyk wzorców
+            self.conn.execute("""
+                              CREATE TABLE IF NOT EXISTS pattern_stats
+                              (
+                                  pattern
+                                  TEXT
+                                  PRIMARY
+                                  KEY,
+                                  count
+                                  INTEGER
+                                  DEFAULT
+                                  0,
+                                  wins
+                                  INTEGER
+                                  DEFAULT
+                                  0,
+                                  losses
+                                  INTEGER
+                                  DEFAULT
+                                  0,
+                                  win_rate
+                                  REAL
+                                  DEFAULT
+                                  0,
+                                  last_updated
+                                  TIMESTAMP
+                                  DEFAULT
+                                  CURRENT_TIMESTAMP
+                              )
+                              """)
+
+            # 6. Tabela parametrów dynamicznych
+            self.conn.execute("""
+                              CREATE TABLE IF NOT EXISTS dynamic_params
+                              (
+                                  param_name
+                                  TEXT
+                                  PRIMARY
+                                  KEY,
+                                  param_value
+                                  REAL,
+                                  last_updated
+                                  TIMESTAMP
+                                  DEFAULT
+                                  CURRENT_TIMESTAMP
+                              )
+                              """)
 
     def migrate(self):
-        """Dodaje brakujące kolumny do istniejącej bazy bez jej usuwania."""
+        """Dodaje brakujące kolumny do istniejącej bazy."""
         try:
             with self.conn:
                 self.cursor.execute("PRAGMA table_info(trades)")
                 columns = [column[1] for column in self.cursor.fetchall()]
-                if 'structure' not in columns:
-                    self.conn.execute("ALTER TABLE trades ADD COLUMN structure TEXT DEFAULT 'Stable'")
+                if 'pattern' not in columns:
+                    self.conn.execute("ALTER TABLE trades ADD COLUMN pattern TEXT")
                 if 'failure_reason' not in columns:
                     self.conn.execute("ALTER TABLE trades ADD COLUMN failure_reason TEXT")
                 if 'condition_at_loss' not in columns:
@@ -83,6 +183,60 @@ class NewsDB:
             print(f"ℹ️ Migracja: {e}")
 
     # --- ZARZĄDZANIE KAPITAŁEM ---
+    def update_pattern_stats(self, pattern: str, outcome: str):
+        """Aktualizuje statystyki dla danego wzorca."""
+        with self.conn:
+            self.cursor.execute("SELECT count, wins, losses FROM pattern_stats WHERE pattern = ?", (pattern,))
+            row = self.cursor.fetchone()
+            if row:
+                count, wins, losses = row
+                count += 1
+                if outcome == "PROFIT":
+                    wins += 1
+                else:
+                    losses += 1
+                win_rate = wins / count if count > 0 else 0
+                self.conn.execute(
+                    "UPDATE pattern_stats SET count=?, wins=?, losses=?, win_rate=?, last_updated=CURRENT_TIMESTAMP WHERE pattern=?",
+                    (count, wins, losses, win_rate, pattern)
+                )
+            else:
+                wins = 1 if outcome == "PROFIT" else 0
+                losses = 1 if outcome == "LOSS" else 0
+                win_rate = wins / (wins + losses)
+                self.conn.execute(
+                    "INSERT INTO pattern_stats (pattern, count, wins, losses, win_rate) VALUES (?, ?, ?, ?, ?)",
+                    (pattern, 1, wins, losses, win_rate)
+                )
+
+    def get_pattern_stats(self, pattern: str) -> dict:
+        """Zwraca statystyki wzorca."""
+        self.cursor.execute("SELECT count, wins, losses, win_rate FROM pattern_stats WHERE pattern = ?", (pattern,))
+        row = self.cursor.fetchone()
+        if row:
+            return {"count": row[0], "wins": row[1], "losses": row[2], "win_rate": row[3]}
+        return {"count": 0, "wins": 0, "losses": 0, "win_rate": 0}
+
+    def get_all_patterns_stats(self) -> list:
+        """Zwraca wszystkie wzorce z win_rate > 0."""
+        self.cursor.execute("SELECT pattern, count, wins, losses, win_rate FROM pattern_stats ORDER BY win_rate DESC")
+        return self.cursor.fetchall()
+
+    # --- Dynamic parameters ---
+    def set_param(self, name: str, value: float):
+        """Zapisuje dynamiczny parametr."""
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO dynamic_params (param_name, param_value) VALUES (?, ?) ON CONFLICT(param_name) DO UPDATE SET param_value=excluded.param_value, last_updated=CURRENT_TIMESTAMP",
+                (name, value)
+            )
+
+    def get_param(self, name: str, default: float = None) -> float:
+        """Odczytuje dynamiczny parametr."""
+        self.cursor.execute("SELECT param_value FROM dynamic_params WHERE param_name = ?", (name,))
+        row = self.cursor.fetchone()
+        return row[0] if row else default
+
 
     def update_balance(self, user_id: int, amount: float):
         with self.conn:
@@ -108,14 +262,16 @@ class NewsDB:
 
     # --- OBSŁUGA TRANSAKCJI ---
 
-    def log_trade(self, direction, price, sl, tp, rsi, trend, structure="Stable"):
-        """Zapisuje nową pozycję wraz z kontekstem rynkowym."""
+    # src/database.py – log_trade
+
+    def log_trade(self, direction, price, sl, tp, rsi, trend, structure="Stable", pattern=None):
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self.conn:
             self.conn.execute("""
-                INSERT INTO trades (direction, entry, sl, tp, rsi, trend, structure) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (direction, price, sl, tp, rsi, trend, structure))
-        print(f"✅ Baza: Zalogowano {direction} (Struktura: {structure})")
+                              INSERT INTO trades (timestamp, direction, entry, sl, tp, rsi, trend, structure, pattern)
+                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              """, (timestamp, direction, price, sl, tp, rsi, trend, structure, pattern))
 
     def get_open_trades(self):
         self.cursor.execute("SELECT id, direction, entry, sl, tp FROM trades WHERE status = 'OPEN'")

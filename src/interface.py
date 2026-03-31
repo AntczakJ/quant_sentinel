@@ -55,6 +55,7 @@ def tf_menu() -> InlineKeyboardMarkup:
     """
     keyboard = [
         [
+            InlineKeyboardButton("5m", callback_data='set_5m'),
             InlineKeyboardButton("15m", callback_data='set_15m'),
             InlineKeyboardButton("1h", callback_data='set_1h'),
             InlineKeyboardButton("4h", callback_data='set_4h')

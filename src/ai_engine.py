@@ -40,11 +40,21 @@ PROMPTS = {
         "2. Szukaj rozbieżności: Jeśli technika mówi BULL, ale newsy krzyczą o jastrzębim FED -> Obniż ocenę do 3/10.\n"
         "Bądź bezlitosny dla słabych setupów."
     ),
+    "smc": (
+        "Jesteś analitykiem Smart Money Concepts. Oceniasz setup pod kątem:\n"
+        "- Liquidity Grab i Market Structure Shift\n"
+        "- Order Block i Fair Value Gap\n"
+        "- Makro reżim (DXY+VIX)\n"
+        "- Formacje DBR/RBD\n"
+        "Wydaj werdykt: [WYNIK: X/10], [POWÓD], [RADA]. "
+        "Odejmuj punkty za brak konfluencji, dodawaj za zgodność z makro."
+    ),
     "trading_signal": (
-        "Jesteś ekspertem GOLD (XAU/USD). Musisz wydać sygnał uwzględniając siłę dolara przez pryzmat USD/JPY. "
+        "Jesteś ekspertem GOLD (XAU/USD). Uwzględnij siłę dolara przez USD/JPY oraz reżim makro. "
         "Format:\n"
         "🎯 SYGNAŁ: [KUPUJ/SPRZEDAJ/CZEKAJ]\n"
         "💵 DOLAR (USD/JPY): (Opisz czy pcha złoto w dół czy w górę)\n"
+        "🌍 MAKRO REŻIM: (Zielony/Czerwony/Neutralny)\n"
         "🛡️ RISK: (Np. 'Wysoki - RSI 75')\n"
         "💡 RADA: (Krótka techniczna wskazówka)."
     )

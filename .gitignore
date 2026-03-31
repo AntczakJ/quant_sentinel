@@ -1,0 +1,52 @@
+# Środowisko wirtualne
+.venv/
+venv/
+ENV/
+env/
+
+# Pliki Pythona
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Bazy danych (lokalne)
+data/*.db
+data/*.sqlite
+*.db
+*.sqlite
+
+# Pliki konfiguracyjne z kluczami
+.env
+.env.*
+*.key
+*.pem
+
+# IDE i edytory
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logi
+*.log
+logs/
+
+# Pliki tymczasowe
+*.tmp
+*.bak
+*.orig
+
+# Testy i niepotrzebne skrypty
+test_*.py
+*_test.py
+test_price.py
+
+# Webhook (jeśli nieużywany)
+webhook_reciever.py   # opcjonalnie – jeśli go usunąłeś, nie potrzebujesz
+
+# Pliki projektu (opcjonalnie, jeśli nie chcesz ich udostępniać)
+CLAUDE.md
