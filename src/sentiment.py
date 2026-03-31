@@ -22,6 +22,8 @@ from scipy.special import softmax
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from openai import OpenAI
 
+from src.cache import cached
+
 
 class AISystem:
     """
@@ -109,7 +111,7 @@ def _get_ai_instance() -> AISystem:
         _ai_instance = AISystem()
     return _ai_instance
 
-
+@cached('sentiment', ttl=180)
 def get_sentiment_data(text_to_analyze: str = None) -> str:
     """
     Główna funkcja wywoływana przez main.py po kliknięciu przycisku "SENTYMENT AI".

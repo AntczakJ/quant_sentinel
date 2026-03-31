@@ -1,3 +1,4 @@
+# main.py
 """
 main.py — główny orchestrator bota Telegram.
 
@@ -7,16 +8,6 @@ Odpowiada za:
   - Obsługę wszystkich przycisków inline menu (CallbackQueryHandler)
   - Uruchomienie Flask webhook (TradingView alerts) w osobnym wątku
   - Rejestrację zadań cyklicznych (skaner rynku, resolver transakcji)
-
-Naprawione błędy (v2):
-  - Usunięto wykonaj_pelna_analize_pro() — funkcja-zombie z SyntaxError
-    (niezindentowany kod na dole tworzył pętlę poza funkcją)
-  - Usunięto globalną safe_edit() — kolidowała z lokalną wersją w handle_buttons
-  - Usunięto wszystkie zduplikowane importy (3× get_smc_analysis, 2× scan_market_task itp.)
-  - Naprawiono news handler: ask_ai_gold() teraz wywołane przez asyncio.to_thread()
-  - Naprawiono if __name__ == '__main__': teraz wywołuje run_bot() zamiast aiogram executor
-  - Usunięto podwójny blok inicjalizacji AI (był zdefiniowany dwa razy przed db = NewsDB())
-  - aiogram (bot/dp/executor) i python-telegram-bot (Application) zachowane razem
 """
 
 import io
@@ -29,9 +20,7 @@ matplotlib.use('Agg')  # Backend bez GUI — konieczne na serwerze
 import matplotlib.pyplot as plt
 import yfinance as yf
 import requests
-
-# --- aiogram (używane przez on_startup / scan_market_task) ---
-from aiogram import Bot, Dispatcher, executor as aiogram_executor
+import httpx
 
 # --- python-telegram-bot (główna obsługa menu i komend) ---
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -39,21 +28,22 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from telegram.error import BadRequest
 from telegram.request import HTTPXRequest
 
+from src.self_learning import auto_analyze_and_learn
+
+
 from src.config import TOKEN, USER_PREFS, CHAT_ID, TD_API_KEY
 from src.interface import main_menu, tf_menu
 from src.smc_engine import get_smc_analysis
 from src.finance import calculate_position
-from src.scanner import scan_market_task
+from src.scanner import scan_market_task, resolve_trades_task
 from src.ai_engine import ask_ai_gold
 from src.database import NewsDB
 from src.sentiment import get_sentiment_data
 from src.news import get_latest_news, get_economic_calendar
 
 from flask import Flask, request as flask_request
+from src.self_learning import run_learning_cycle
 
-# --- aiogram bot/dispatcher (używane wyłącznie przez on_startup + aiogram executor) ---
-aiogram_bot = Bot(token=TOKEN)
-dp = Dispatcher(aiogram_bot)
 
 # =============================================================================
 # INICJALIZACJA AI (warm-up przed startem sieci)
@@ -267,81 +257,97 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ANALIZA QUANT PRO
     # -------------------------------------------------------------------------
     if query.data == 'smc_pro':
-        await safe_edit("🔍 *Analiza Quant PRO (M15 + H1 + USD/JPY)...*")
+        await safe_edit("🔍 *Analiza Quant PRO (M15 + H1 + Makro + SMC)...*")
 
-        s = await asyncio.to_thread(get_smc_analysis, USER_PREFS['tf'])
-        s_higher = await asyncio.to_thread(get_smc_analysis, "1h")
+        s, s_higher, s_lower, raw_news, eco_calendar = await asyncio.gather(
+            asyncio.to_thread(get_smc_analysis, USER_PREFS['tf']),
+            asyncio.to_thread(get_smc_analysis, "1h"),
+            asyncio.to_thread(get_smc_analysis, "5min"),  # dodajemy M5
+            asyncio.to_thread(get_latest_news),
+            asyncio.to_thread(get_economic_calendar)
+        )
 
-        if not s or not s_higher:
+        if not s or not s_higher or not s_lower:
             await safe_edit("❌ Błąd danych rynkowych.")
             return
 
-        confluence_warning = ""
-        is_counter_trend = False
-
-        if s['trend'] != s_higher['trend']:
-            is_counter_trend = True
-            user_direction = "Long (Kupno)" if s['trend'] == "Bull" else "Short (Sprzedaż)"
-            higher_trend_label = "Bearish (H1 spada)" if s_higher['trend'] == "Bear" else "Bullish (H1 rośnie)"
-            confluence_warning = (
-                f"⚠️ *GRASZ POD PRĄD TRENDU H1!*\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"Twoja gra: *{user_direction}* | Trend H1: *{higher_trend_label}*\n"
-                f"Zasada Quant PRO: Setup Counter-Trend ma mniejsze szanse na TP i jest bardziej ryzykowny.\n\n"
-            )
-
-        raw_news = await asyncio.to_thread(get_latest_news)
-        eco_calendar = await asyncio.to_thread(get_economic_calendar)
-        recent_losses = db.get_recent_lessons(5)
-
-        learning_context = (
-            f"STRUKTURA RYNKU:\n"
-            f"- Cena: {s['price']}$ | Trend: {s['trend']} (Wyższy trend H1: {s_higher['trend']})\n"
-            f"- Status: {s.get('structure', 'Stable')}\n"
-            f"- Strefa: {'DISCOUNT (Tanio)' if s['is_discount'] else 'PREMIUM (Drogo)'}\n"
-            f"- Order Block: {s['ob_price']}$ | Poziom EQ: {s['eq_level']}$\n"
-            f"- FVG: {s['fvg']} | USD/JPY: {s['dxy']}\n"
-            f"- SMT: {s['smt']}\n\n"
-            f"FUNDAMENTY:\n"
-            f"KALENDARZ EKONOMICZNY (High Impact USD):\n{eco_calendar}\n\n"
-            f"HISTORIA OSTATNICH STRAT: {recent_losses}\n"
-            f"{'UWAGA: To jest setup COUNTER-TREND!' if is_counter_trend else ''}\n"
-            f"NEWSY: {raw_news[:500]}"
+        # Przygotowanie kontekstu makro
+        macro_context = (
+            f"Reżim: {s['macro_regime'].upper()} | "
+            f"USD/JPY Z-score: {s['usdjpy_zscore']} | "
+            f"ATR: {s['atr']} (śr: {s['atr_mean']})"
         )
 
-        learning_prompt = f"""
-        Jesteś rygorystycznym analitykiem Quant. Twoim zadaniem jest OCENA (0-10) tego setupu.
-        ZASADY:
-        1. Porównaj RSI z ostatnimi stratami. Jeśli sytuacja jest identyczna - odejmij 3 pkt.
-        2. Jeśli USD/JPY rośnie, a my chcemy LONG - odejmij 2 pkt.
-        3. Jeśli mamy FVG > 0.8$ w stronę trendu - dodaj 2 pkt.
-        4. Jeśli w kalendarzu są blisko ważne dane USD, dopisz w [RADA]: 'UWAGA: Dane blisko!'.
-        5. Jeśli to jest setup COUNTER-TREND (gramy pod prąd H1) - odejmij automatycznie 2 punkty.
-        6. Spójrz na screen (obraz_0.png) - czy FVG jest na tyle duże, że warto ryzykować Counter-Trend?
-        7. Jeśli BUY w strefie PREMIUM (powyżej 50% ruchu) -> odejmij 4 pkt (za drogo!).
-        8. Jeśli SELL w strefie DISCOUNT -> odejmij 4 pkt (za tanio na short!).
-        9. Jeśli cena dotyka właśnie Order Blocka -> dodaj 3 pkt (idealne wejście).
-        10. Jeśli FVG jest powyżej Equilibrium przy Longu -> dodaj 1 pkt (magnes cenowy).
-        11. Jeśli SMT Divergence wykryte -> ostrzeż o możliwej pułapce!
-        12. Jeśli Status Struktury to 'ChoCH Bearish' a my chcemy LONG -> Odejmij 7 pkt (Kategoryczny zakaz kupowania!).
-        13. Jeśli Status Struktury to 'ChoCH Bullish' a my chcemy SHORT -> Odejmij 7 pkt (Kategoryczny zakaz sprzedaży!).
-        14. Jeśli Struktura to 'LIQUIDITY SWEEP' - to bardzo silny sygnał odwrócenia! Dodaj 4 pkt do oceny w stronę przeciwną do wybicia.
-        15. Jeśli Status Struktury to 'ChoCH Bearish' (prawdziwe przebicie) - kategorycznie odejmij 8 pkt dla LONGÓW. Nie idź pod prąd pociągu.
-        16. Jeśli cena jest w DISCOUNT i mamy LIQUIDITY SWEEP dołem - to jest setup 10/10 na BUY.
+        # Przygotowanie kontekstu dla AI
+        learning_context = f"""
+        STRUKTURA RYNKU (SMC):
+        - Cena: {s['price']}$ | Trend Główny: {s['trend']} | Trend H1: {s_higher['trend']} | Trend M5: {s_lower['trend']}
+        - Swing High: {s['swing_high']} | Swing Low: {s['swing_low']}
+        - Liquidity Grab: {s['liquidity_grab']} ({s['liquidity_grab_dir']})
+        - Market Structure Shift: {s['mss']}
+        - FVG: {s['fvg']} (typ: {s['fvg_type']}, wielkość: {s['fvg_size']})
+        - Order Block: {s['ob_price']}$ | EQ: {s['eq_level']}$ | Strefa: {'DISCOUNT' if s['is_discount'] else 'PREMIUM'}
+        - DBR/RBD: {s['dbr_rbd_type']}
+        - SMT: {s['smt']}
 
-        ODPOWIEDZ KONKRETNIE:
-        [WYNIK: X/10]
-        [POWÓD]: (max 15 słów - opisz ryzyko lub przewagę setupu)
-        [RADA]: (krótka wskazówka techniczna, np. Czekaj na dotknięcie OB {s['ob_price']})
+        POTWIERDZENIE M5:
+        - Trend M5: {s_lower['trend']}
+        - Liquidity Grab M5: {s_lower['liquidity_grab']} ({s_lower['liquidity_grab_dir']})
+        - MSS M5: {s_lower['mss']}
+        - FVG M5: {s_lower['fvg']}
+        - Order Block M5: {s_lower['ob_price']}$
+
+        MAKROEKONOMIA:
+        - {macro_context}
+        - USD/JPY: {s['usdjpy']}
+        - Kalendarz ekonomiczny (USD High Impact):
+        {eco_calendar}
+
+        NEWSY: {raw_news[:500]}
+
+        HISTORIA OSTATNICH STRAT: {db.get_recent_lessons(5)}
         """
 
-        ai_verdict = await asyncio.to_thread(ask_ai_gold, "analysis", learning_context + "\n" + learning_prompt)
+        learning_prompt = """
+        Jesteś rygorystycznym analitykiem Quant. OCEŃ SETUP (0-10) według zasad:
+        1. Jeśli Liquidity Grab + MSS -> dodaj 4 pkt.
+        2. Jeśli makro reżim zgodny z kierunkiem -> dodaj 2 pkt.
+        3. Jeśli FVG w stronę trendu -> dodaj 2 pkt.
+        4. Jeśli DBR/RBD zgodne z trendem -> dodaj 2 pkt.
+        5. Jeśli RSI w strefie 40-50 przy trendzie bull -> dodaj 1 pkt.
+        6. Jeśli RSI w strefie 50-60 przy trendzie bear -> dodaj 1 pkt.
+        7. Jeśli struktura H1 przeciwna -> odejmij 2 pkt.
+        8. Jeśli SMT Divergence -> odejmij 3 pkt.
+        9. Jeśli makro reżim przeciwny -> odejmij 3 pkt.
+        10. Jeśli cena w PREMIUM przy LONG -> odejmij 2 pkt.
+        11. Jeśli trend M5 zgodny z kierunkiem -> dodaj 1 pkt.
+        12. Jeśli na M5 wystąpił Liquidity Grab w tę samą stronę -> dodaj 2 pkt.
+        13. Jeśli M5 jest przeciwny -> odejmij 2 pkt.
+        Wydaj: [WYNIK: X/10] [POWÓD] [RADA]
+        """
+
+        ai_verdict = await asyncio.to_thread(ask_ai_gold, "smc", learning_context + "\n" + learning_prompt)
+
+        import re
+        match = re.search(r"WYNIK:\s*(\d+(?:\.\d+)?)/10", ai_verdict)
+        if match:
+            score = float(match.group(1))
+            if score < 4.0:  # próg – możesz dostosować
+                await safe_edit(
+                    f"⏸️ *SYGNAŁ ODRZUCONY*\nOcena AI: {score}/10 – zbyt niska jakość setupu.\n\n🤖 *AI:*\n{ai_verdict}")
+                return
 
         balance = db.get_balance(user_id)
         currency = USER_PREFS.get("currency", "USD")
         p = calculate_position(s, balance, currency, TD_API_KEY)
 
+        # Jeśli calculate_position zwróciło "CZEKAJ" z powodu makro, informujemy użytkownika
+        if p.get("direction") == "CZEKAJ":
+            await safe_edit(f"⏸️ *SYGNAŁ ZBLOKOWANY*\n{p.get('reason')}\n\n🤖 *AI:*\n{ai_verdict}")
+            return
 
+        # Logowanie transakcji z rozszerzonym opisem struktury
+        structure_desc = f"Grab:{s['liquidity_grab']}, MSS:{s['mss']}, FVG:{s['fvg_type']}, DBR:{s['dbr_rbd_type']}"
         db.log_trade(
             direction=p['direction'],
             price=p['entry'],
@@ -349,27 +355,32 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tp=p['tp'],
             rsi=s['rsi'],
             trend=s['trend'],
-            structure='DISCOUNT' if s.get('is_discount') else 'PREMIUM'
+            structure=structure_desc
         )
 
         msg = (
             f"🎯 *WERDYKT QUANT PRO*\n"
             f"━━━━━━━━━━━━━━\n"
-            f"🏗️ *STRUKTURA:* `{s.get('structure', 'Prawidłowa')}`\n"
-            f"{confluence_warning}"
-            f"🤖 *ANALIZA AI:* \n_{ai_verdict}_\n"
+            f"🏗️ *STRUKTURA SMC (GŁÓWNY):* \n"
+            f"- Liquidity Grab: {s['liquidity_grab']} ({s['liquidity_grab_dir']}) | MSS: {s['mss']}\n"
+            f"- FVG: {s['fvg']} | OB: {s['ob_price']}$\n"
+            f"- DBR/RBD: {s['dbr_rbd_type']}\n"
+            f"🔍 *POTWIERDZENIE M5:* \n"
+            f"- Trend: {s_lower['trend']} | Grab: {s_lower['liquidity_grab']} | MSS: {s_lower['mss']}\n"
+            f"🌍 *MAKRO:* {macro_context}\n"
+            f"🤖 *ANALIZA AI:* \n{ai_verdict}\n"
             f"━━━━━━━━━━━━━━\n"
             f"🚀 *SYGNAŁ:* `{p['direction']}`\n"
-            f"📍 *WEJŚCIE (OB):* `{p['entry']}$` \n"
+            f"📍 *WEJŚCIE:* `{p['entry']}$` \n"
             f"🛑 *STOP LOSS:* `{p['sl']}$` \n"
             f"✅ *TAKE PROFIT:* `{p['tp']}$` \n"
             f"📊 *LOT:* `{p['lot']}` ({p['logic']})\n"
             f"━━━━━━━━━━━━━━\n"
             f"⚖️ *STREFA:* `{'DISCOUNT' if s['is_discount'] else 'PREMIUM'}` | EQ: `{s['eq_level']}`\n"
-            f"🧭 *TREND M15/H1:* `{s['trend']}` / `{s_higher['trend']}`\n"
+            f"🧭 *TREND M15/H1/M5:* `{s['trend']}` / `{s_higher['trend']}` / `{s_lower['trend']}`\n"
             f"📡 *SMT:* `{s['smt']}`\n"
             f"━━━━━━━━━━━━━━\n"
-            f"📅 *KALENDARZ:* \n_{eco_calendar if eco_calendar else 'Brak ważnych danych.'}_"
+            f"📅 *KALENDARZ:* \n{eco_calendar}"
         )
 
         await safe_edit(msg)
@@ -419,7 +430,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit("📰 *AI filtruje newsy...*")
         try:
             raw_news = await asyncio.to_thread(get_latest_news)
-            # NAPRAWIONO: ask_ai_gold musi być w to_thread (funkcja synchroniczna)
             ai_news = await asyncio.to_thread(ask_ai_gold, "news", raw_news)
             await safe_edit(f"📰 *INTERPRETACJA NEWSÓW:*\n\n{ai_news}")
         except Exception as e:
@@ -446,6 +456,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data.startswith('set_'):
         new_tf = query.data.split('_')[1]
+        # Mapowanie na format akceptowany przez smc_engine (np. 5m, 15m, 1h, 4h)
+        if new_tf == '5min':
+            new_tf = '5m'
         USER_PREFS["tf"] = new_tf
         await safe_edit(f"✅ Interwał zmieniony na: *{new_tf}*")
 
@@ -465,89 +478,24 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =============================================================================
-# on_startup dla aiogram (skaner rynku)
-# =============================================================================
-
-async def on_startup(dispatcher):
-    """Uruchamia skaner rynkowy raz przy starcie aiogram dispatcher."""
-    asyncio.create_task(scan_market_task(dispatcher))
-    print("✅ [SYSTEM] Skaner rynkowy podpięty do bota.")
-
-
-# async def auto_click_pro(context: ContextTypes.DEFAULT_TYPE):
-#     """Sztucznie wywołuje analizę PRO co X minut"""
-#     from telegram import Update
-#
-#     # 1. Asynchroniczna pusta funkcja dla answer()
-#     async def async_noop(*args, **kwargs):
-#         pass
-#
-#     # 2. Wrapper dla send_message, który ignoruje argumenty edycji i wysyła nową wiadomość
-#     async def send_msg_wrapper(text, *args, **kwargs):
-#         # Wyciągamy parse_mode i reply_markup jeśli są w kwargs, resztę ignorujemy
-#         p_mode = kwargs.get('parse_mode', 'Markdown')
-#         r_markup = kwargs.get('reply_markup', None)
-#         return await context.bot.send_message(
-#             chat_id=CHAT_ID,
-#             text=text,
-#             parse_mode=p_mode,
-#             reply_markup=r_markup
-#         )
-#
-#     # 3. Tworzymy 'udawany' obiekt Update i CallbackQuery
-#     mock_update = type('obj', (object,), {
-#         'callback_query': type('obj', (object,), {
-#             'data': 'smc_pro',
-#             'answer': async_noop,
-#             'message': type('obj', (object,), {
-#                 'chat_id': CHAT_ID,
-#                 'message_id': 0
-#             }),
-#             'from_user': type('obj', (object,), {'id': 999}),
-#             # TUTAJ: używamy wrappera zamiast bezpośredniego send_message
-#             'edit_message_text': send_msg_wrapper
-#         }),
-#         'effective_user': type('obj', (object,), {'id': 999}),
-#         'effective_chat': type('obj', (object,), {'id': CHAT_ID})
-#     })
-#
-#     # 4. Wywołanie handlera
-#     try:
-#         # Import lokalny, żeby uniknąć Circular Import
-#         from src.main import handle_buttons
-#         await handle_buttons(mock_update, context)
-#         print("✅ [AUTOPILOT] Cykl analizy wykonany i wysłany na Telegram.")
-#     except Exception as e:
-#         print(f"❌ [AUTOPILOT ERROR] Błąd podczas emulacji: {e}")
-#
-#     # Wywołujemy Twój istniejący handler
-#     try:
-#         from src.main import handle_buttons # Upewnij się, że import jest poprawny
-#         await handle_buttons(mock_update, context)
-#         print("✅ [AUTOPILOT] Sztuczne kliknięcie wykonane pomyślnie.")
-#     except Exception as e:
-#         print(f"❌ [AUTOPILOT ERROR] Błąd podczas emulacji: {e}")
-
-# =============================================================================
 # URUCHOMIENIE — python-telegram-bot z job_queue
 # =============================================================================
 
 def run_bot():
     """
-    Startuje bota z poprawionymi limitami czasu dla słabych połączeń.
+    Startuje bota z poprawionymi limitami czasu i pulą połączeń.
     """
-    print("🚀 Przygotowuję silniki AI (FinBERT)...")
-    try:
-        from src.sentiment import _get_ai_instance
-        _get_ai_instance()
-        print("✅ Modele AI załadowane do RAM.")
-    except Exception as e:
-        print(f"⚠️ Uwaga: Błąd ładowania modeli AI: {e}")
 
     # Flask webhook w osobnym wątku
     threading.Thread(target=run_flask, daemon=True).start()
 
-    request_config = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+    # Konfiguracja HTTP z większą pulą połączeń i dłuższymi timeoutami
+    request_config = HTTPXRequest(
+        connect_timeout=30.0,
+        read_timeout=120.0,  # 2 minuty — AI potrzebuje czasu
+        write_timeout=60.0,  # długie wiadomości / zdjęcia
+        pool_timeout=30.0  # czas oczekiwania na wolne połączenie
+    )
 
     app = (
         ApplicationBuilder()
@@ -560,32 +508,36 @@ def run_bot():
     if app.job_queue:
         job_settings = {"misfire_grace_time": 60}
 
+        if scan_market_task is not None:
+            app.job_queue.run_repeating(
+                scan_market_task,
+                interval=300,
+                first=10,
+                job_kwargs=job_settings
+            )
+        else:
+            print("ERROR: scan_market_task is None")
+
+        # Resolver transakcji
+        if resolve_trades_task is not None:
+            app.job_queue.run_repeating(
+                resolve_trades_task,
+                interval=120,
+                first=15,
+                job_kwargs=job_settings
+            )
+        else:
+            print("ERROR: resolve_trades_task is None")
+
+            # NOWE: automatyczna analiza co 15 minut (900 sekund)
         app.job_queue.run_repeating(
-            scan_market_task,
-            interval=300,
-            first=10,
+            auto_analyze_and_learn,
+            interval=900,  # co 15 minut
+            first=30,  # pierwsze uruchomienie za 30 sekund
             job_kwargs=job_settings
         )
 
-    # if app.job_queue:
-    #     job_settings = {"misfire_grace_time": 60}
-    #
-    #     # 1. AUTOPILOT - Sztuczne klikanie PRO (Nauka otwierania)
-    #     app.job_queue.run_repeating(
-    #         auto_click_pro,  # Ta funkcja, którą opisałem wcześniej
-    #         interval=900,  # Co 15 minut
-    #         first=10,
-    #         job_kwargs=job_settings
-    #     )
 
-        # 2. RESOLVER - Sprawdzanie wyników (Nauka na błędach)
-        from src.scanner import resolve_trades_task  # Import tutaj rozwiązuje Circular Import!
-        app.job_queue.run_repeating(
-            resolve_trades_task,
-            interval=120,  # Co 2 minuty sprawdza ceny
-            first=15,
-            job_kwargs=job_settings
-        )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("cap", cap_cmd))
@@ -597,13 +549,5 @@ def run_bot():
     app.run_polling()
 
 
-# =============================================================================
-# ENTRY POINT
-# =============================================================================
-
 if __name__ == '__main__':
-    # NAPRAWIONO: uruchamiamy run_bot() (python-telegram-bot),
-    # a nie aiogram executor — który był martwy przez całą aplikację.
-    # Jeśli chcesz używać aiogram executor zamiast tego, zamień na:
-    #   aiogram_executor.start_polling(dp, on_startup=on_startup, skip_updates=True)
     run_bot()

@@ -1,6 +1,7 @@
 import feedparser
 import requests
 import re
+from src.cache import cached
 
 # Definiujemy kluczowe źródła dla Tradera Złota
 RSS_SOURCES = {
@@ -8,7 +9,7 @@ RSS_SOURCES = {
     "Reuters_Business": "https://news.google.com/rss/search?q=Gold+Price+Reuters&hl=en-US&gl=US&ceid=US:en",
     "FXStreet_Gold": "https://www.fxstreet.com/rss/news/commodities/gold"
 }
-
+@cached('news', ttl=180)
 def get_latest_news() -> str:
     """
     Agreguje newsy z wielu źródeł, filtruje je i przygotowuje głęboki kontekst dla AI.
@@ -43,7 +44,7 @@ def get_latest_news() -> str:
     unique_news = list(set(combined_news))[:8]
     return "\n".join(unique_news)
 
-
+@cached('calendar', ttl=300)
 def get_economic_calendar() -> str:
     """
     Pobiera nadchodzące wydarzenia High Impact z ForexFactory.
