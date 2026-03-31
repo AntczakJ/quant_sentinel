@@ -1,0 +1,90 @@
+"""
+ai_engine.py — integracja z modelami OpenAI (GPT-4o).
+
+Odpowiada za:
+  - Interpretację newsów rynkowych (byczy/niedźwiedzi)
+  - Analizę sentymentu rynkowego na podstawie danych technicznych
+  - Generowanie decyzji tradingowych (TRADE/CZEKAJ) z uwzględnieniem
+    historii strat (AI feedback loop)
+
+Wszystkie zapytania są wysyłane do modelu GPT-4o przez oficjalne SDK OpenAI.
+Klucz API jest pobierany z config.py (który czyta go z pliku .env).
+"""
+
+from openai import OpenAI
+from src.config import OPENAI_KEY
+
+# Inicjalizujemy klienta OpenAI raz przy imporcie modułu
+client = OpenAI(api_key=OPENAI_KEY)
+
+# Słownik systemowych promptów dla różnych kontekstów analizy.
+# Każdy kontekst ma swój specjalistyczny prompt który optymalizuje odpowiedź AI.
+# Słownik systemowych promptów - wersja AGRESYWNY TRADER
+PROMPTS = {
+    "news": (
+        "Jesteś rygorystycznym analitykiem GOLD (XAU/USD). "
+        "Zinterpretuj newsy pod kątem wpływu na cenę złota. "
+        "Format: [BYCZE/NIEDŹWIEDZIE/NEUTRALNE] -> Krótkie uzasadnienie (1 zdanie). "
+        "Jeśli news dotyczy silnego dolara, złoto leci w dół."
+    ),
+    "sentiment": (
+        "Jesteś traderem Quant. Twoim kluczowym wskaźnikiem jest korelacja XAU/USD z USD/JPY. "
+        "Zasada: Silny wzrost USD/JPY oznacza potężnego Dolara -> SPRZEDAWAJ ZŁOTO. "
+        "Jeśli USD/JPY spada, szukaj okazji do KUPNA ZŁOTA. "
+        "Na podstawie danych wydaj jasny komunikat: [KIERUNEK] + uzasadnienie korelacji."
+    ),
+    "analysis": (
+        "Jesteś Szefem Analiz w funduszu Hedgingowym. Otrzymujesz newsy z Reuters, Investing i FXStreet. "
+        "Twoim zadaniem jest ocenić KONKLUENCJĘ (zgodność):\n"
+        "1. Jeśli newsy techniczne (FXStreet) mówią o oporze, a newsy fundamentalne (Reuters) o silnym dolarze -> ZABROŃ KUPNA.\n"
+        "2. Szukaj rozbieżności: Jeśli technika mówi BULL, ale newsy krzyczą o jastrzębim FED -> Obniż ocenę do 3/10.\n"
+        "Bądź bezlitosny dla słabych setupów."
+    ),
+    "trading_signal": (
+        "Jesteś ekspertem GOLD (XAU/USD). Musisz wydać sygnał uwzględniając siłę dolara przez pryzmat USD/JPY. "
+        "Format:\n"
+        "🎯 SYGNAŁ: [KUPUJ/SPRZEDAJ/CZEKAJ]\n"
+        "💵 DOLAR (USD/JPY): (Opisz czy pcha złoto w dół czy w górę)\n"
+        "🛡️ RISK: (Np. 'Wysoki - RSI 75')\n"
+        "💡 RADA: (Krótka techniczna wskazówka)."
+    )
+}
+
+
+def ask_ai_gold(context_type: str, raw_data: str) -> str:
+    """
+    Wysyła zapytanie do GPT-4o i zwraca interpretację danych rynkowych.
+
+    Parametry:
+        context_type — typ analizy: "news", "sentiment" lub "analysis"
+                       Decyduje który prompt systemowy zostanie użyty.
+        raw_data     — surowe dane do analizy (tekst z newsami, wartościami
+                       wskaźników lub historią strat)
+
+    Zwraca:
+        Odpowiedź modelu jako string, lub komunikat błędu jeśli API jest niedostępne.
+
+    Ustawienia modelu:
+        - model: gpt-4o (najlepsze rozumienie korelacji rynkowych)
+        - temperature: 0.5 (balans między logiką a kreatywnością; niższe = bardziej deterministyczne)
+        - max_tokens: domyślnie bez limitu (odpowiedzi są krótkie z natury promptu)
+    """
+    if not OPENAI_KEY:
+        return "❌ Brak klucza OpenAI w configu"
+
+    # Używamy zdefiniowanego promptu lub generycznego jeśli typ nie jest znany
+    system_prompt = PROMPTS.get(context_type, "Analizuj dane rynkowe.")
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"DANE RYNKOWE: {raw_data}"}
+            ],
+            temperature=0.5  # Niższa temperatura = bardziej logiczne, powtarzalne odpowiedzi
+        )
+        return response.choices[0].message.content
+
+    except Exception as e:
+        return f"⚠️ Błąd AI: {str(e)}"
