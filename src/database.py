@@ -168,6 +168,19 @@ class NewsDB:
                                   CURRENT_TIMESTAMP
                               )
                               """)
+            # 7. Tabela statystyk sesji
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS session_stats (
+                    pattern TEXT,
+                    session TEXT,
+                    count INTEGER DEFAULT 0,
+                    wins INTEGER DEFAULT 0,
+                    losses INTEGER DEFAULT 0,
+                    win_rate REAL DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (pattern, session)
+                )
+            """)
 
     def migrate(self):
         """Dodaje brakujące kolumny do istniejącej bazy."""
@@ -183,6 +196,8 @@ class NewsDB:
                     self.conn.execute("ALTER TABLE trades ADD COLUMN condition_at_loss TEXT")
                 if 'factors' not in columns:
                     self.conn.execute("ALTER TABLE trades ADD COLUMN factors TEXT")
+                if 'session' not in columns:
+                    self.conn.execute("ALTER TABLE trades ADD COLUMN session TEXT")
         except Exception as e:
             print(f"ℹ️ Migracja: {e}")
 
@@ -241,6 +256,59 @@ class NewsDB:
         row = self.cursor.fetchone()
         return row[0] if row else default
 
+    def get_session(self, timestamp: str) -> str:
+        """Zwraca nazwę sesji na podstawie godziny UTC."""
+        # timestamp format: "YYYY-MM-DD HH:MM:SS"
+        hour = int(timestamp[11:13])
+        if 0 <= hour < 8:
+            return "Asia"
+        elif 8 <= hour < 16:
+            return "London"
+        else:
+            return "NewYork"
+
+    def update_session_stats(self, pattern: str, session: str, outcome: str):
+        """Aktualizuje statystyki dla wzorca i sesji."""
+        with self.conn:
+            self.cursor.execute(
+                "SELECT count, wins, losses FROM session_stats WHERE pattern = ? AND session = ?",
+                (pattern, session)
+            )
+            row = self.cursor.fetchone()
+            if row:
+                count, wins, losses = row
+                count += 1
+                if outcome == "PROFIT":
+                    wins += 1
+                else:
+                    losses += 1
+                win_rate = wins / count if count > 0 else 0
+                self.conn.execute(
+                    "UPDATE session_stats SET count=?, wins=?, losses=?, win_rate=?, last_updated=CURRENT_TIMESTAMP WHERE pattern=? AND session=?",
+                    (count, wins, losses, win_rate, pattern, session)
+                )
+            else:
+                wins = 1 if outcome == "PROFIT" else 0
+                losses = 1 if outcome == "LOSS" else 0
+                win_rate = wins / (wins + losses) if wins+losses>0 else 0
+                self.conn.execute(
+                    "INSERT INTO session_stats (pattern, session, count, wins, losses, win_rate) VALUES (?, ?, ?, ?, ?, ?)",
+                    (pattern, session, 1, wins, losses, win_rate)
+                )
+
+    def get_session_stats(self, pattern: str = None):
+        """Zwraca statystyki sesji (dla wzorca lub wszystkich)."""
+        if pattern:
+            self.cursor.execute(
+                "SELECT pattern, session, count, wins, losses, win_rate FROM session_stats WHERE pattern = ? ORDER BY win_rate DESC",
+                (pattern,)
+            )
+        else:
+            self.cursor.execute(
+                "SELECT pattern, session, count, wins, losses, win_rate FROM session_stats ORDER BY pattern, win_rate DESC"
+            )
+        return self.cursor.fetchall()
+
     def init_weights(self):
         """Ustawia domyślne wagi czynników, jeśli jeszcze nie istnieją."""
         default_weights = {
@@ -254,6 +322,15 @@ class NewsDB:
             'weight_macro': 1.5,
             'weight_rsi_opt': 1.0,
             'weight_m5_confluence': 1.0,
+            'weight_bos': 1.5,
+            'weight_choch': 1.5,
+            'weight_ob_count': 0.8,
+            'weight_ob_confluence': 0.8,
+            'weight_choch_h1': 1.2,
+            'weight_supply_demand': 1.5,
+            'weight_rsi_divergence': 1.5,
+            # Poniższe są alternatywnymi nazwami – ale w main.py używamy 'rsi_divergence' i 'choch_h1'
+            # więc nie potrzebujemy osobnych wag dla 'rsi_div' i 'choch_higher'
         }
         for name, val in default_weights.items():
             if self.get_param(name) is None:
@@ -299,13 +376,15 @@ class NewsDB:
         import datetime
         import json
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        session = self.get_session(timestamp)
         factors_json = json.dumps(factors) if factors else None
         with self.conn:
             self.conn.execute("""
                               INSERT INTO trades (timestamp, direction, entry, sl, tp, rsi, trend, structure, pattern,
-                                                  factors)
-                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                              """, (timestamp, direction, price, sl, tp, rsi, trend, structure, pattern, factors_json))
+                                                  factors, session)
+                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              """, (timestamp, direction, price, sl, tp, rsi, trend, structure, pattern, factors_json,
+                                    session))
 
     def get_open_trades(self):
         self.cursor.execute("SELECT id, direction, entry, sl, tp FROM trades WHERE status = 'OPEN'")

@@ -16,7 +16,6 @@ import asyncio
 import datetime
 
 import matplotlib
-from pygments.lexers import factor
 
 matplotlib.use('Agg')  # Backend bez GUI — konieczne na serwerze
 import matplotlib.pyplot as plt
@@ -159,6 +158,27 @@ async def cap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Podaj poprawną liczbę dla kwoty!")
 
 
+async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Komenda /sessions – wyświetla statystyki sesji dla wzorców."""
+    db = NewsDB()
+    stats = db.get_session_stats()
+    if not stats:
+        await update.message.reply_text("Brak danych o sesjach.")
+        return
+
+    msg = "📊 *STATYSTYKI SESJI*\n━━━━━━━━━━━━━━\n"
+    current_pattern = None
+    for pattern, session, count, wins, losses, win_rate in stats:
+        if pattern != current_pattern:
+            if current_pattern is not None:
+                msg += "\n"
+            msg += f"*{pattern}*\n"
+            current_pattern = pattern
+        win_icon = "✅" if win_rate > 0.5 else "❌"
+        msg += f"  {session}: {count} trades, {win_rate:.1%} {win_icon}\n"
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Komenda /stats — wyświetla statystyki systemu:
@@ -266,7 +286,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s, s_higher, s_lower, raw_news, eco_calendar = await asyncio.gather(
             asyncio.to_thread(get_smc_analysis, USER_PREFS['tf']),
             asyncio.to_thread(get_smc_analysis, "1h"),
-            asyncio.to_thread(get_smc_analysis, "5min"),
+            asyncio.to_thread(get_smc_analysis, "5m"),
             asyncio.to_thread(get_latest_news),
             asyncio.to_thread(get_economic_calendar)
         )
@@ -352,11 +372,51 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # --- Teraz budujemy czynniki w oparciu o rzeczywisty kierunek transakcji ---
+        # --- Teraz budujemy czynniki w oparciu o rzeczywisty kierunek transakcji ---
         direction = p['direction']  # "LONG" lub "SHORT"
-
         factors = {}
 
-        # 1. Order block główny
+        # Konfluencja OB (liczba OB w klastrze)
+        ob_confluence = s.get('ob_confluence', 0)
+        if ob_confluence > 0:
+            factors['ob_confluence'] = ob_confluence
+
+        # Strefy Supply/Demand (czy cena blisko strefy)
+        sd_zones = s.get('sd_zones', {})
+        demand_zones = sd_zones.get('demand', [])
+        supply_zones = sd_zones.get('supply', [])
+        current_price = s['price']
+        if direction == "LONG":
+            if any(abs(current_price - low) < 5.0 for low, _ in demand_zones):
+                factors['sd_zone'] = 1
+        elif direction == "SHORT":
+            if any(abs(current_price - high) < 5.0 for _, high in supply_zones):
+                factors['sd_zone'] = 1
+
+        # Dywergencja RSI
+        if (direction == "LONG" and s.get('rsi_div_bull')) or (direction == "SHORT" and s.get('rsi_div_bear')):
+            factors['rsi_divergence'] = 1
+
+        # CHoCH na H1
+        if (direction == "LONG" and s_higher.get('choch_bullish')) or (
+                direction == "SHORT" and s_higher.get('choch_bearish')):
+            factors['choch_h1'] = 1
+
+        # BOS (Break of Structure)
+        if (direction == "LONG" and s.get('bos_bullish')) or (direction == "SHORT" and s.get('bos_bearish')):
+            factors['bos'] = 1
+
+        # CHoCH na bieżącym interwale
+        if (direction == "LONG" and s.get('choch_bullish')) or (direction == "SHORT" and s.get('choch_bearish')):
+            factors['choch'] = 1
+
+        # Liczba Order Blocków (z listy order_blocks)
+        ob_list = s.get('order_blocks', [])
+        if ob_list:
+            ob_count = min(len(ob_list), 3)
+            factors['ob_count'] = ob_count
+
+        # Order block główny
         ob_main = s.get('ob_price')
         if ob_main:
             if direction == "LONG" and ob_main < s['price']:
@@ -364,7 +424,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif direction == "SHORT" and ob_main > s['price']:
                 factors['ob_main'] = 1
 
-        # 2. Order block M5
+        # Order block M5
         ob_m5 = s_lower.get('ob_price')
         if ob_m5:
             if direction == "LONG" and ob_m5 < s['price']:
@@ -372,7 +432,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif direction == "SHORT" and ob_m5 > s['price']:
                 factors['ob_m5'] = 1
 
-        # 3. Order block H1
+        # Order block H1
         ob_h1 = s_higher.get('ob_price')
         if ob_h1:
             if direction == "LONG" and ob_h1 < s['price']:
@@ -380,34 +440,35 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif direction == "SHORT" and ob_h1 > s['price']:
                 factors['ob_h1'] = 1
 
-        # 4. FVG w kierunku
+        # FVG w kierunku
         fvg_type = s.get('fvg_type')
         if (direction == "LONG" and fvg_type == "bullish") or (direction == "SHORT" and fvg_type == "bearish"):
             factors['fvg'] = 1
 
-        # 5. Liquidity Grab + MSS
+        # Liquidity Grab + MSS
         if s.get('liquidity_grab') and s.get('mss'):
-            if (direction == "LONG" and s.get('liquidity_grab_dir') == "bullish") or (direction == "SHORT" and s.get('liquidity_grab_dir') == "bearish"):
+            if (direction == "LONG" and s.get('liquidity_grab_dir') == "bullish") or (
+                    direction == "SHORT" and s.get('liquidity_grab_dir') == "bearish"):
                 factors['grab_mss'] = 1
 
-        # 6. DBR/RBD
+        # DBR/RBD
         dbr_type = s.get('dbr_rbd_type')
         if (direction == "LONG" and dbr_type == "DBR") or (direction == "SHORT" and dbr_type == "RBD"):
             factors['dbr_rbd'] = 1
 
-        # 7. Makro zgodne
+        # Makro zgodne
         macro = s.get('macro_regime')
         if (direction == "LONG" and macro == "zielony") or (direction == "SHORT" and macro == "czerwony"):
             factors['macro'] = 1
 
-        # 8. RSI optymalny
+        # RSI optymalny
         rsi = s.get('rsi')
         if direction == "LONG" and 40 <= rsi <= 50:
             factors['rsi_opt'] = 1
         elif direction == "SHORT" and 50 <= rsi <= 60:
             factors['rsi_opt'] = 1
 
-        # 9. M5 konfluencja (trend zgodny)
+        # M5 konfluencja (trend zgodny)
         if s_lower.get('trend') == s.get('trend'):
             factors['m5_confluence'] = 1
 
@@ -418,7 +479,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             factor_score += present * weight
 
         # Sprawdź warunek: co najmniej jeden order block (dowolny)
-        has_ob = any(f in factors for f in ['ob_main', 'ob_m5', 'ob_h1'])
+        has_ob = factors.get('ob_count', 0) > 0
 
         MIN_SCORE = 5.0
         if not has_ob or factor_score < MIN_SCORE:
@@ -543,7 +604,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith('set_'):
         new_tf = query.data.split('_')[1]
         # Mapowanie na format akceptowany przez smc_engine (np. 5m, 15m, 1h, 4h)
-        if new_tf == '5min':
+        if new_tf == '5m':
             new_tf = '5m'
         USER_PREFS["tf"] = new_tf
         await safe_edit(f"✅ Interwał zmieniony na: *{new_tf}*")
@@ -615,11 +676,11 @@ def run_bot():
         else:
             print("ERROR: resolve_trades_task is None")
 
-            # NOWE: automatyczna analiza co 15 minut (900 sekund)
+        # NOWE: automatyczna analiza co 15 minut (900 sekund)
         app.job_queue.run_repeating(
             auto_analyze_and_learn,
-            interval=900,  # co 15 minut
-            first=30,  # pierwsze uruchomienie za 30 sekund
+            interval=900,
+            first=30,
             job_kwargs=job_settings
         )
 
@@ -630,6 +691,7 @@ def run_bot():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("chart", send_chart))
     app.add_handler(CallbackQueryHandler(handle_buttons))
+    app.add_handler(CommandHandler("sessions", sessions_command))
 
     print("🤖 Bot startuje w trybie POLLING...")
     app.run_polling()

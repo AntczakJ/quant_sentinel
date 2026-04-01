@@ -4,6 +4,8 @@ self_learning.py – mechanizmy samouczenia: optymalizacja parametrów, analiza 
 """
 
 import numpy as np
+import random
+
 from src.database import NewsDB
 import asyncio
 import re
@@ -43,99 +45,83 @@ def get_pattern_adjustment(analysis_data: dict) -> float:
     return max(0.5, min(1.5, adj))
 
 
+import random
+from datetime import datetime
+
 def optimize_parameters():
     """
-    Analizuje ostatnie N transakcji i dostraja parametry:
-    - risk_percent (ryzyko %)
-    - min_profit_usd (minimalny zysk)
-    - min_tp_distance_mult (mnożnik ATR dla minimalnego dystansu TP)
-    - target_rr (docelowy stosunek ryzyka do zysku)
+    Pełny backtest parametrów (risk_percent, min_tp_distance_mult, target_rr)
+    na historycznych transakcjach.
     """
     db = NewsDB()
-    # Pobieramy ostatnie 100 transakcji zakończonych
+    # Pobieramy wszystkie zakończone transakcje w porządku chronologicznym
     db.cursor.execute("""
-        SELECT direction, entry, sl, tp, status, pattern, rsi, trend, structure
+        SELECT timestamp, direction, entry, sl, tp, status
         FROM trades
         WHERE status IN ('PROFIT', 'LOSS')
-        ORDER BY id DESC
-        LIMIT 100
+        ORDER BY timestamp ASC
     """)
     trades = db.cursor.fetchall()
-    if len(trades) < MIN_TRADES_FOR_OPT:
+    if len(trades) < 50:
         return  # za mało danych
 
-    # Obliczamy wskaźniki wydajności dla różnych parametrów
-    # Użyjemy prostego algorytmu: iterujemy po możliwych kombinacjach i wybieramy najlepszy win rate.
-
-    # Aktualne parametry
-    current_risk = db.get_param("risk_percent", 1.0)
-    current_min_profit = db.get_param("min_profit_usd", 10.0)
-    current_min_tp_dist_mult = db.get_param("min_tp_distance_mult", 1.0)
-    current_target_rr = db.get_param("target_rr", 2.5)
-
-    # Definiujemy zakresy do testowania
+    # Parametry do testowania
     risk_values = [0.5, 1.0, 1.5, 2.0]
-    min_profit_values = [5.0, 10.0, 15.0, 20.0]
-    tp_dist_mult_values = [0.5, 1.0, 1.5, 2.0]
-    rr_values = [1.5, 2.0, 2.5, 3.0]
+    min_tp_dist_mult_values = [0.5, 1.0, 1.5, 2.0]
+    target_rr_values = [1.5, 2.0, 2.5, 3.0]
 
-    best_score = -1
+    best_score = -float('inf')
     best_params = {}
 
-    # Dla uproszczenia symulujemy wyniki na podstawie historycznych transakcji
-    # (w rzeczywistości trzeba by przeliczyć pozycje z nowymi parametrami)
-    # Używamy heurystyki: win_rate jest najważniejsza, ale też bierzemy pod uwagę średni zysk/stratę.
-
-    # W praktyce bardziej zaawansowane: symulacja backtestu z nowymi parametrami.
-    # Poniżej prosta wersja – optymalizujemy tylko risk_percent i min_profit, bo mają największy wpływ.
-
+    # Dla każdej kombinacji
     for risk in risk_values:
-        for min_profit in min_profit_values:
-            # Symulacja: dla każdej transakcji sprawdzamy, czy spełnia min_profit
-            # i czy lot byłby odpowiedni.
-            # Uproszczenie: liczymy ile transakcji by przetrwało (potencjalnie więcej)
-            # i jaki byłby łączny wynik.
-            total_profit = 0
-            total_trades = 0
-            for t in trades:
-                direction, entry, sl, tp, status, pattern, rsi, trend, structure = t
-                # Obliczamy dystans SL (ryzyko) w dolarach
-                dist = abs(entry - sl)
-                # Kapitał (przyjmujemy średni kapitał, np. 5000$)
-                balance = 5000  # można pobrać z ustawień użytkownika
-                risk_usd = balance * (risk / 100)
-                lot = risk_usd / (dist * 100) if dist > 0 else 0.01
-                if lot < 0.01:
-                    lot = 0.01
-                # Sprawdzamy minimalny zysk
-                profit_potential = abs(entry - tp) * lot * 100
-                if profit_potential < min_profit:
-                    # Ta transakcja nie zostałaby otwarta przy tych parametrach
+        for mult in min_tp_dist_mult_values:
+            for rr in target_rr_values:
+                equity = 10000.0  # kapitał początkowy
+                total_trades = 0
+                # Symulacja sekwencyjna
+                for trade in trades:
+                    timestamp, direction, entry, sl, tp, status = trade
+                    # Przelicz dystans SL (ryzyko)
+                    dist = abs(entry - sl)
+                    if dist <= 0:
+                        continue
+                    # Oblicz lot na podstawie aktualnego equity
+                    risk_usd = equity * (risk / 100)
+                    lot = risk_usd / (dist * 100)
+                    if lot < 0.01:
+                        lot = 0.01
+                    # Sprawdź czy TP jest wystarczająco daleko (symulacja filtra)
+                    tp_distance = abs(entry - tp)
+                    min_tp_dist = max(tp_distance * mult, 5.0)  # uwzględniamy stały próg 5$
+                    if tp_distance < min_tp_dist:
+                        continue  # transakcja zostałaby odrzucona
+                    # Wyznacz potencjalny zysk/stratę
+                    if status == "PROFIT":
+                        profit = tp_distance * lot * 100
+                        equity += profit
+                    else:
+                        equity -= risk_usd
+                    total_trades += 1
+
+                if total_trades == 0:
                     continue
-                # Jeśli została otwarta, wynik jest taki jak historyczny
-                if status == "PROFIT":
-                    total_profit += profit_potential
-                else:
-                    total_profit -= risk_usd
-                total_trades += 1
 
-            if total_trades == 0:
-                continue
+                # Metryka: średni zysk na transakcję / max drawdown (uproszczenie)
+                avg_profit = (equity - 10000.0) / total_trades
+                score = avg_profit  # można rozszerzyć o Sharpe, drawdown
+                if score > best_score:
+                    best_score = score
+                    best_params = {
+                        "risk_percent": risk,
+                        "min_tp_distance_mult": mult,
+                        "target_rr": rr
+                    }
 
-            avg_profit = total_profit / total_trades
-            score = avg_profit  # możemy też dodać karę za małą liczbę transakcji
-            if score > best_score:
-                best_score = score
-                best_params = {"risk_percent": risk, "min_profit_usd": min_profit}
-
-    # Zapisujemy najlepsze parametry
+    # Zapisz najlepsze parametry
     for name, value in best_params.items():
         db.set_param(name, value)
-
-    # Opcjonalnie: dostrajanie min_tp_distance_mult i target_rr analogicznie
-
-    print(f"📈 [SELF-LEARN] Zoptymalizowano parametry: {best_params} (score: {best_score:.2f})")
-
+    print(f"📈 [BACKTEST] Zoptymalizowano parametry: {best_params} (score: {best_score:.2f})")
 
 def auto_tune_pattern_weights():
     """
@@ -227,6 +213,21 @@ async def auto_analyze_and_learn(context):
         direction = p['direction']
         factors = {}
 
+        # BOS
+        if (direction == "LONG" and s.get('bos_bullish')) or (direction == "SHORT" and s.get('bos_bearish')):
+            factors['bos'] = 1
+
+        # CHoCH
+        if (direction == "LONG" and s.get('choch_bullish')) or (direction == "SHORT" and s.get('choch_bearish')):
+            factors['choch'] = 1
+
+        # Liczba OB (z listy order_blocks)
+        ob_list = s.get('order_blocks', [])
+        if ob_list:
+            ob_count = min(len(ob_list), 3)
+            factors['ob_count'] = ob_count   # maks. 3 punkty
+
+
         # Order block główny
         ob_main = s.get('ob_price')
         if ob_main:
@@ -312,24 +313,35 @@ async def auto_analyze_and_learn(context):
     except Exception as e:
         print(f"❌ [AUTO-LEARN] Błąd: {e}")
 
+import random
+
 def update_factor_weights(trade_id, outcome):
     """
     Aktualizuje wagi czynników na podstawie wyniku transakcji.
-    outcome: "PROFIT" lub "LOSS"
+    Działa jak gradient bandit + epsilon-greedy.
     """
     db = NewsDB()
     factors = db.get_trade_factors(trade_id)
     if not factors:
         return
 
-    learning_rate = 0.05  # mały krok, aby wagi zmieniały się stopniowo
+    learning_rate = 0.05
+    epsilon = 0.1  # szansa na losową zmianę
     for factor, present in factors.items():
         weight_name = f"weight_{factor}"
         current_weight = db.get_param(weight_name, 1.0)
-        if outcome == "PROFIT":
-            new_weight = current_weight + learning_rate * present
+
+        # Eksploracja: losowa zmiana z prawdopodobieństwem epsilon
+        if random.random() < epsilon:
+            delta = random.uniform(-0.1, 0.1)
+            new_weight = current_weight + delta
         else:
-            new_weight = current_weight - learning_rate * present
-        # Ograniczenie do przedziału [0.5, 3.0]
+            # Wykorzystanie: gradient (present * learning_rate)
+            if outcome == "PROFIT":
+                new_weight = current_weight + learning_rate * present
+            else:
+                new_weight = current_weight - learning_rate * present
+
+        # Ograniczenie zakresu
         new_weight = max(0.5, min(3.0, new_weight))
         db.set_param(weight_name, new_weight)

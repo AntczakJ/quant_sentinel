@@ -282,6 +282,224 @@ def get_exchange_rate(base: str = "USD", to: str = "PLN") -> float | None:
     except Exception as e:
         print(f"❌ Błąd w get_exchange_rate: {e}")
         return None
+# ================== NOWE FUNKCJE ==================
+
+def find_order_blocks(df: pd.DataFrame, trend: str, max_blocks: int = 3) -> list:
+    """
+    Wyszukuje kilka ostatnich Order Blocków (OB) dla danego trendu.
+    Zwraca listę słowników: [{'price': float, 'type': 'bullish'/'bearish'}, ...]
+    """
+    df['body'] = abs(df['close'] - df['open'])
+    avg_body = df['body'].tail(20).mean()
+    blocks = []
+
+    for i in range(len(df)-2, max(0, len(df)-50), -1):
+        if len(blocks) >= max_blocks:
+            break
+        if trend == "bull":
+            # Szukamy świecy spadkowej (close < open) przed silną wzrostową
+            if df['close'].iloc[i] < df['open'].iloc[i] and df['body'].iloc[i+1] > avg_body:
+                if df['close'].iloc[i+1] > df['open'].iloc[i+1]:
+                    ob_price = df['low'].iloc[i]
+                    blocks.append({'price': round(ob_price, 2), 'type': 'bullish'})
+        else:
+            # Szukamy świecy wzrostowej przed silną spadkową
+            if df['close'].iloc[i] > df['open'].iloc[i] and df['body'].iloc[i+1] > avg_body:
+                if df['close'].iloc[i+1] < df['open'].iloc[i+1]:
+                    ob_price = df['high'].iloc[i]
+                    blocks.append({'price': round(ob_price, 2), 'type': 'bearish'})
+    return blocks
+
+
+def detect_bos(df: pd.DataFrame, swing_points: dict) -> tuple:
+    """
+    Wykrywa Break of Structure (BOS).
+    Zwraca (bos_bullish, bos_bearish) – bool.
+    BOS bullish: zamknięcie powyżej ostatniego Swing High.
+    BOS bearish: zamknięcie poniżej ostatniego Swing Low.
+    """
+    close = df['close'].iloc[-1]
+    bullish = close > swing_points['swing_high']
+    bearish = close < swing_points['swing_low']
+    return bullish, bearish
+
+
+def detect_choch(df: pd.DataFrame, window: int = 10) -> tuple:
+    """
+    Wykrywa Change of Character (CHoCH) na podstawie ostatnich swingów.
+    Zwraca (choch_bullish, choch_bearish) – bool.
+    Uproszczona wersja: porównuje dwa ostatnie swing high i swing low.
+    """
+    highs = df['high'].values
+    lows = df['low'].values
+    n = len(df)
+    swing_highs = []
+    swing_lows = []
+    for i in range(window, n - window):
+        if all(highs[i] >= highs[i-window:i+window+1]):
+            swing_highs.append(i)
+        if all(lows[i] <= lows[i-window:i+window+1]):
+            swing_lows.append(i)
+
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return False, False
+
+    last_high_idx = swing_highs[-1]
+    prev_high_idx = swing_highs[-2]
+    last_low_idx = swing_lows[-1]
+    prev_low_idx = swing_lows[-2]
+
+    # Bullish CHoCH: wyższy dołek i wyższy szczyt niż poprzednie
+    bullish = (df['low'].iloc[last_low_idx] > df['low'].iloc[prev_low_idx] and
+               df['high'].iloc[last_high_idx] > df['high'].iloc[prev_high_idx])
+
+    # Bearish CHoCH: niższy szczyt i niższy dołek niż poprzednie
+    bearish = (df['high'].iloc[last_high_idx] < df['high'].iloc[prev_high_idx] and
+               df['low'].iloc[last_low_idx] < df['low'].iloc[prev_low_idx])
+
+    return bullish, bearish
+
+# ================== NOWE FUNKCJE (doklej na końcu pliku) ==================
+
+
+
+def detect_advanced_choch(df_main: pd.DataFrame, df_higher: pd.DataFrame, window: int = 10) -> tuple:
+    """
+    Wykrywa Change of Character na podstawie dwóch interwałów.
+    Zwraca (choch_bullish, choch_bearish) – bool dla interwału głównego,
+    oraz (choch_higher_bullish, choch_higher_bearish) dla H1.
+    """
+    # CHoCH na głównym (uproszczone, ale możemy użyć istniejącej funkcji)
+    choch_main_bull, choch_main_bear = detect_choch(df_main, window)
+
+    # CHoCH na H1 (wywołaj detect_choch dla wyższego interwału)
+    choch_higher_bull, choch_higher_bear = detect_choch(df_higher, window)
+
+    # Łączymy: jeżeli którykolwiek z interwałów ma CHoCH, uznajemy za sygnał
+    # (można osobno dodać jako czynnik)
+    return (choch_main_bull, choch_main_bear, choch_higher_bull, choch_higher_bear)
+
+def find_ob_confluence(df: pd.DataFrame, trend: str, threshold: float = 0.5) -> int:
+    """
+    Wykrywa konfluencję Order Blocków – ile OB znajduje się w pobliżu (w granicach threshold %).
+    Zwraca liczbę OB w tym samym obszarze (max 3).
+    """
+    blocks = find_order_blocks(df, trend, max_blocks=5)
+    if len(blocks) < 2:
+        return 0
+    # Grupowanie OB o zbliżonych cenach (np. w granicach 0.5% ceny)
+    groups = []
+    for b in blocks:
+        price = b['price']
+        found = False
+        for g in groups:
+            if abs(g[0] - price) / price < threshold:
+                g.append(price)
+                found = True
+                break
+        if not found:
+            groups.append([price])
+    max_confluence = max(len(g) for g in groups)
+    return min(max_confluence, 3)
+
+def detect_choch_h1(df_h1: pd.DataFrame, df_current: pd.DataFrame) -> tuple:
+    """
+    Wykrywa Change of Character na H1 na podstawie ostatnich swingów.
+    Zwraca (choch_bullish_h1, choch_bearish_h1).
+    """
+    # Używamy funkcji detect_choch ale na danych H1
+    # Można też zrobić własną, porównując ostatnie dwa swingi na H1
+    bullish, bearish = detect_choch(df_h1, window=10)
+    return bullish, bearish
+
+def detect_supply_demand(df: pd.DataFrame) -> dict:
+    """
+    Wykrywa klasyczne strefy Supply (opór) i Demand (wsparcie) na podstawie lokalnych szczytów/dołków.
+    Zwraca słownik z kluczami 'supply' (list) i 'demand' (list).
+    """
+    # Uproszczona wersja: znajdujemy swing high i low, które były poprzedzone ruchem
+    swings = detect_swing_points(df)
+    # Strefa Supply: ostatni swing high
+    supply = [swings['swing_high']] if swings['swing_high'] else []
+    # Strefa Demand: ostatni swing low
+    demand = [swings['swing_low']] if swings['swing_low'] else []
+    # Można dodać więcej stref (np. wcześniejsze)
+    return {'supply': supply, 'demand': demand}
+
+# ================== FUNKCJE POMOCNICZE DLA DYWERGENCJI RSI ==================
+
+def find_swings(values: list, lookback: int = 5, min_swings: int = 2):
+    """
+    Zwraca indeksy lokalnych minimów i maksimów w liście wartości.
+    lookback – liczba świec po obu stronach do porównania.
+    Zwraca (swing_highs, swing_lows) – listy indeksów.
+    """
+    n = len(values)
+    swing_highs = []
+    swing_lows = []
+    for i in range(lookback, n - lookback):
+        # Sprawdzenie, czy punkt i jest lokalnym maksimum
+        if all(values[i] >= values[i - lookback:i + lookback + 1]):
+            swing_highs.append(i)
+        # Sprawdzenie, czy punkt i jest lokalnym minimum
+        if all(values[i] <= values[i - lookback:i + lookback + 1]):
+            swing_lows.append(i)
+    return swing_highs, swing_lows
+
+
+def detect_rsi_divergence(df: pd.DataFrame, lookback: int = 20, swing_lookback: int = 5) -> tuple:
+    """
+    Wykrywa regularną dywergencję RSI (byczą i niedźwiedzią).
+    Zwraca (bullish_div, bearish_div) – bool.
+    """
+    if len(df) < lookback:
+        return False, False
+
+    # Pobieramy ostatnie 'lookback' świec
+    recent = df.tail(lookback)
+    close = recent['close'].values
+    rsi = recent['rsi'].values
+
+    # Znajdź swing high i swing low dla ceny i RSI
+    price_highs, price_lows = find_swings(close, swing_lookback)
+    rsi_highs, rsi_lows = find_swings(rsi, swing_lookback)
+
+    bullish_div = False
+    bearish_div = False
+
+    # Dywergencja bycza: cena robi niższy dołek, RSI wyższy dołek
+    if len(price_lows) >= 2 and len(rsi_lows) >= 2:
+        last_price_low = price_lows[-1]
+        prev_price_low = price_lows[-2]
+        last_rsi_low = rsi_lows[-1]
+        prev_rsi_low = rsi_lows[-2]
+
+        if (close[last_price_low] < close[prev_price_low] and
+            rsi[last_rsi_low] > rsi[prev_rsi_low]):
+            bullish_div = True
+
+    # Dywergencja niedźwiedzia: cena robi wyższy szczyt, RSI niższy szczyt
+    if len(price_highs) >= 2 and len(rsi_highs) >= 2:
+        last_price_high = price_highs[-1]
+        prev_price_high = price_highs[-2]
+        last_rsi_high = rsi_highs[-1]
+        prev_rsi_high = rsi_highs[-2]
+
+        if (close[last_price_high] > close[prev_price_high] and
+            rsi[last_rsi_high] < rsi[prev_rsi_high]):
+            bearish_div = True
+
+    return bullish_div, bearish_div
+
+# ================== MODYFIKACJA get_smc_analysis ==================
+# W funkcji get_smc_analysis, po wywołaniu detect_swing_points(df), dodaj:
+
+# order_blocks = find_order_blocks(df, trend)
+# bos_bullish, bos_bearish = detect_bos(df, swings)
+# choch_bullish, choch_bearish = detect_choch(df)
+
+# Następnie w słowniku zwracanym dodaj nowe klucze:
+
 
 
 def get_smc_analysis(tf: str) -> dict | None:
@@ -366,6 +584,15 @@ def get_smc_analysis(tf: str) -> dict | None:
         else:
             structure = "Stable"
 
+        # ========== NOWE DETEKCJE ==========
+        order_blocks = find_order_blocks(df, trend)
+        bos_bullish, bos_bearish = detect_bos(df, swings)
+        choch_bullish, choch_bearish = detect_choch(df)
+        ob_confluence = find_ob_confluence(df, trend)  # liczba OB w klastrze
+        supply_demand = detect_supply_demand(df)  # klasyczne strefy
+        rsi_div_bull, rsi_div_bear = detect_rsi_divergence(df)  # dywergencja RSI
+        # ===================================
+
         return {
             "price": round(price, 2),
             "rsi": round(current_rsi, 1),
@@ -393,9 +620,20 @@ def get_smc_analysis(tf: str) -> dict | None:
             "dbr_rbd_base_low": dbr_rbd.get("base_low"),
             "dbr_rbd_base_high": dbr_rbd.get("base_high"),
             "smt": smt_warning,
-            "structure": structure
+            "structure": structure,
+            'order_blocks': order_blocks,
+            'bos_bullish': bos_bullish,
+            'bos_bearish': bos_bearish,
+            'choch_bullish': choch_bullish,
+            'choch_bearish': choch_bearish,
+            'ob_confluence': ob_confluence,
+            'supply': supply_demand['supply'],
+            'demand': supply_demand['demand'],
+            'rsi_div_bull': rsi_div_bull,
+            'rsi_div_bear': rsi_div_bear,
         }
 
     except Exception as e:
         print(f"❌ Błąd silnika SMC Master: {e}")
         return None
+
