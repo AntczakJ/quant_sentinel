@@ -85,7 +85,9 @@ class NewsDB:
                                   pattern
                                   TEXT,
                                   factors 
-                                  TEXT          -- nowa kolumna: JSON z obecnymi czynnikami
+                                  TEXT,
+                                  lot REAL,
+                                  profit REAL
                               )
                               """)
 
@@ -200,6 +202,10 @@ class NewsDB:
                     self.conn.execute("ALTER TABLE trades ADD COLUMN factors TEXT")
                 if 'session' not in columns:
                     self.conn.execute("ALTER TABLE trades ADD COLUMN session TEXT")
+                if 'lot' not in columns:
+                    self.conn.execute("ALTER TABLE trades ADD COLUMN lot REAL")
+                if 'profit' not in columns:
+                    self.conn.execute("ALTER TABLE trades ADD COLUMN profit REAL")
         except Exception as e:
             logger.warning(f"ℹ️ Migracja: {e}")
 
@@ -312,29 +318,39 @@ class NewsDB:
         return self.cursor.fetchall()
 
     def init_weights(self):
-        default_weights = {
-            'weight_ob_main': 1.0,  # 2.0 → 1.0
-            'weight_ob_m5': 0.8,  # 1.5 → 0.8
-            'weight_ob_h1': 0.8,  # 1.5 → 0.8
-            'weight_fvg': 0.8,  # 1.5 → 0.8
-            'weight_grab_mss': 1.0,  # 2.0 → 1.0
-            'weight_dbr_rbd': 0.8,  # 1.5 → 0.8
-            'weight_news': 0.5,  # 1.0 → 0.5
-            'weight_macro': 0.8,  # 1.5 → 0.8
-            'weight_rsi_opt': 0.5,  # 1.0 → 0.5
-            'weight_m5_confluence': 0.5,  # 1.0 → 0.5
-            'weight_bos': 0.8,  # 1.5 → 0.8
-            'weight_choch': 0.8,  # 1.5 → 0.8
-            'weight_ob_count': 0.5,  # 0.8 → 0.5
-            'weight_ob_confluence': 0.5,  # 0.8 → 0.5 (jeśli używasz)
-            'weight_choch_h1': 0.7,  # 1.2 → 0.7
-            'weight_supply_demand': 0.8,  # 1.5 → 0.8
-            'weight_rsi_divergence': 0.8,  # 1.5 → 0.8
-            'weight_sd_zone': 0.6,  # 1.0 → 0.6
-            'weight_rsi_div': 0.8,  # 1.5 → 0.8
-            'weight_choch_higher': 0.7,  # 1.5 → 0.7
+        """Ustawia domyślne wagi czynników oraz inne parametry dynamiczne."""
+        # Wagi czynników (z prefiksem weight_)
+        factor_weights = {
+            'weight_ob_main': 2.0,
+            'weight_ob_m5': 1.5,
+            'weight_ob_h1': 1.5,
+            'weight_fvg': 1.5,
+            'weight_grab_mss': 2.0,
+            'weight_dbr_rbd': 1.5,
+            'weight_news': 1.0,
+            'weight_macro': 1.5,
+            'weight_rsi_opt': 1.0,
+            'weight_m5_confluence': 1.0,
+            'weight_bos': 1.5,
+            'weight_choch': 1.5,
+            'weight_ob_count': 0.8,
+            'weight_ob_confluence': 0.8,
+            'weight_choch_h1': 1.2,
+            'weight_supply_demand': 1.5,
+            'weight_rsi_divergence': 1.5,
         }
-        for name, val in default_weights.items():
+        for name, val in factor_weights.items():
+            if self.get_param(name) is None:
+                self.set_param(name, val)
+
+        # Inne parametry dynamiczne (bez prefiksu)
+        other_params = {
+            'min_score': 5.0,  # próg minimalnej oceny setupu
+            'risk_percent': 1.0,  # globalny procent ryzyka
+            'min_tp_distance_mult': 1.0,  # mnożnik ATR dla minimalnego dystansu TP
+            'target_rr': 2.5,  # docelowy stosunek ryzyka do zysku
+        }
+        for name, val in other_params.items():
             if self.get_param(name) is None:
                 self.set_param(name, val)
 
@@ -374,7 +390,8 @@ class NewsDB:
 
     # src/database.py – log_trade
 
-    def log_trade(self, direction, price, sl, tp, rsi, trend, structure="Stable", pattern=None, factors=None):
+    def log_trade(self, direction, price, sl, tp, rsi, trend, structure="Stable", pattern=None, factors=None, lot=None,
+                  profit=None):
         import datetime
         import json
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -383,14 +400,18 @@ class NewsDB:
         with self.conn:
             self.conn.execute("""
                               INSERT INTO trades (timestamp, direction, entry, sl, tp, rsi, trend, structure, pattern,
-                                                  factors, session)
-                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                  factors, session, lot, profit)
+                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                               """, (timestamp, direction, price, sl, tp, rsi, trend, structure, pattern, factors_json,
-                                    session))
+                                    session, lot, profit))
 
     def get_open_trades(self):
         self.cursor.execute("SELECT id, direction, entry, sl, tp FROM trades WHERE status = 'OPEN'")
         return self.cursor.fetchall()
+
+    def update_trade_profit(self, trade_id: int, profit: float):
+        with self.conn:
+            self.conn.execute("UPDATE trades SET profit = ? WHERE id = ?", (profit, trade_id))
 
     def update_trade_status(self, trade_id: int, status: str):
         with self.conn:

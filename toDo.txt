@@ -1,11 +1,3 @@
-1. Dokładność analizy SMC
-Wykrywanie wielu Order Blocków – już masz, ale możesz dodać ważenie konfluencji (im więcej OB w tym samym obszarze, tym wyższa punktacja).
-
-Lepsze CHoCH – obecna detekcja jest uproszczona; można dodać analizę struktury wyższego rzędu (np. zmiana charakteru na H1).
-
-Rozpoznawanie stref Supply/Demand – obok OB warto dodać klasyczne strefy popytu/podaży (metoda DBR/RBD już jest, ale można rozszerzyć).
-
-Wykrywanie dywergencji RSI – silny sygnał, który możesz dodać jako osobny czynnik.
 
 2. Makroekonomia
 Prawdziwy DXY – zamiast USD/JPY możesz pobierać indeks dolara z innego źródła (np. Yahoo Finance, ale wiesz o opóźnieniach; alternatywnie z Twelve Data za pomocą symbolu DXY – sprawdź, czy mają).
@@ -14,21 +6,6 @@ Dodanie VIX – dla oceny nastrojów ryzyka.
 
 Kalendarz ekonomiczny z dokładnymi progami – obecnie tylko 3 wydarzenia; możesz dodać filtrowanie według oczekiwanej zmienności (High/Medium) i wysyłać ostrzeżenia przed ważnymi danymi.
 
-3. Uczenie i optymalizacja
-Backtest parametrów – zamiast prostej symulacji w optimize_parameters(), zrób pełny backtest na historycznych danych (np. dla każdej kombinacji parametrów oblicz zysk/krzywą kapitału).
-
-Uczenie ze wzmocnieniem (RL) – eksperymentalnie możesz użyć prostego algorytmu (np. bandyt) do dynamicznego doboru wag czynników w czasie rzeczywistym.
-
-Zbieranie statystyk o porach dnia/sesjach – analiza, która sesja (azjatycka, londyńska, nowojorska) daje najlepsze wyniki dla danego wzorca.
-
-4. Wydajność i niezawodność
-Caching wyników SMC – obecnie get_smc_analysis jest wywoływane wielokrotnie (dla różnych interwałów, w skanerze, resolverze). Wprowadź krótkotrwały cache (np. 10 sekund), aby uniknąć zbędnych zapytań do API.
-
-Asynchroniczne zapytania równoległe – już masz, ale możesz dodać więcej (np. pobieranie newsów i kalendarza w tym samym czasie).
-
-Obsługa przekroczenia limitu API Twelve Data – dodaj mechanizm opóźniania zapytań w przypadku błędu 429.
-
-Logowanie do pliku – zamiast tylko print, zapisuj logi do pliku z rotacją, aby łatwiej debugować.
 
 5. Zarządzanie ryzykiem
 Trailing stop – po osiągnięciu 50% TP przesuń SL do BE lub na poziom wejścia.
@@ -46,18 +23,6 @@ Webhook dla sygnałów – już masz, ale możesz rozszerzyć o przyjmowanie syg
 
 Panel webowy – proste API Flask + dashboard HTML/CSS do podglądu statystyk, parametrów i historii transakcji.
 
-7. Użyteczność i monitoring
-Nowe komendy Telegram:
-
-/settings – podgląd i zmiana parametrów dynamicznych (np. próg oceny, minimalny dystans TP).
-
-/backtest – uruchomienie szybkiego backtestu na ostatnich N transakcjach.
-
-/portfolio – wykres krzywej kapitału, drawdown.
-
-Wykresy w Telegram – możesz wysyłać obrazki z bieżącą konfiguracją rynku (oznaczone OB, FVG, strefy).
-
-Powiadomienia o błędach – wysyłaj na czat powiadomienia o problemach z API, aby szybko reagować.
 
 8. Przykładowa kolejność wdrożenia (jeśli chcesz działać krok po kroku)
 Cache wyników SMC – od razu przyspieszy działanie.
@@ -69,4 +34,7 @@ Dodanie dywergencji RSI – prosty wskaźnik, który może poprawić selekcję.
 Backtest parametrów – aby lepiej dostroić wagi i progi.
 
 Panel webowy lub komendy Telegram – dla wygody monitorowania.
+
+
+Onada na api
 
