@@ -24,7 +24,6 @@ import json
 from src.logger import logger
 
 
-
 def install_requirements():
     """
     Automatycznie instaluje wszystkie biblioteki z requirements.txt.
