@@ -28,6 +28,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.error import BadRequest
 from telegram.request import HTTPXRequest
+from src.logger import logger
+
 
 from src.self_learning import auto_analyze_and_learn
 
@@ -49,13 +51,13 @@ from src.self_learning import run_learning_cycle
 # =============================================================================
 # INICJALIZACJA AI (warm-up przed startem sieci)
 # =============================================================================
-print("🚀 Przygotowuję silniki AI (to może potrwać chwilę)...")
+logger.info("🚀 Przygotowuję silniki AI (to może potrwać chwilę)...")
 try:
     from src.sentiment import _get_ai_instance
     _get_ai_instance()
-    print("✅ Systemy AI gotowe do pracy.")
+    logger.info("✅ Systemy AI gotowe do pracy.")
 except Exception as e:
-    print(f"⚠️ Ostrzeżenie przy ładowaniu AI: {e}")
+    logger.info(f"⚠️ Ostrzeżenie przy ładowaniu AI: {e}")
 
 # Jedna globalna instancja bazy danych — współdzielona przez wszystkie handlery
 db = NewsDB()
@@ -473,7 +475,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             factors['m5_confluence'] = 1
 
         # Oblicz wagę sumaryczną
-        factor_score = 0
+        factor_score = 1 #tymczasowe
         for factor, present in factors.items():
             weight = db.get_param(f"weight_{factor}", 1.0)
             factor_score += present * weight
@@ -481,7 +483,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Sprawdź warunek: co najmniej jeden order block (dowolny)
         has_ob = factors.get('ob_count', 0) > 0
 
-        MIN_SCORE = 5.0
+        MIN_SCORE = 3.0 #tymczasowe
         if not has_ob or factor_score < MIN_SCORE:
             await safe_edit(
                 f"⏸️ *SYGNAŁ ZBLOKOWANY*\n"
@@ -663,7 +665,7 @@ def run_bot():
                 job_kwargs=job_settings
             )
         else:
-            print("ERROR: scan_market_task is None")
+            logger.error("ERROR: scan_market_task is None")
 
         # Resolver transakcji
         if resolve_trades_task is not None:
@@ -674,7 +676,7 @@ def run_bot():
                 job_kwargs=job_settings
             )
         else:
-            print("ERROR: resolve_trades_task is None")
+            logger.error("ERROR: resolve_trades_task is None")
 
         # NOWE: automatyczna analiza co 15 minut (900 sekund)
         app.job_queue.run_repeating(
@@ -693,7 +695,7 @@ def run_bot():
     app.add_handler(CallbackQueryHandler(handle_buttons))
     app.add_handler(CommandHandler("sessions", sessions_command))
 
-    print("🤖 Bot startuje w trybie POLLING...")
+    logger.info("🤖 Bot startuje w trybie POLLING...")
     app.run_polling()
 
 

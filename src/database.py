@@ -5,6 +5,8 @@ Zawiera pełną logikę newsów, finansów, transakcji oraz Feedback Loop dla AI
 
 import sqlite3
 import os
+from src.logger import logger
+
 
 class NewsDB:
     def __init__(self, db_path="data/sentinel.db"):
@@ -199,7 +201,7 @@ class NewsDB:
                 if 'session' not in columns:
                     self.conn.execute("ALTER TABLE trades ADD COLUMN session TEXT")
         except Exception as e:
-            print(f"ℹ️ Migracja: {e}")
+            logger.warning(f"ℹ️ Migracja: {e}")
 
     # --- ZARZĄDZANIE KAPITAŁEM ---
     def update_pattern_stats(self, pattern: str, outcome: str):
@@ -310,27 +312,27 @@ class NewsDB:
         return self.cursor.fetchall()
 
     def init_weights(self):
-        """Ustawia domyślne wagi czynników, jeśli jeszcze nie istnieją."""
         default_weights = {
-            'weight_ob_main': 2.0,
-            'weight_ob_m5': 1.5,
-            'weight_ob_h1': 1.5,
-            'weight_fvg': 1.5,
-            'weight_grab_mss': 2.0,
-            'weight_dbr_rbd': 1.5,
-            'weight_news': 1.0,
-            'weight_macro': 1.5,
-            'weight_rsi_opt': 1.0,
-            'weight_m5_confluence': 1.0,
-            'weight_bos': 1.5,
-            'weight_choch': 1.5,
-            'weight_ob_count': 0.8,
-            'weight_ob_confluence': 0.8,
-            'weight_choch_h1': 1.2,
-            'weight_supply_demand': 1.5,
-            'weight_rsi_divergence': 1.5,
-            # Poniższe są alternatywnymi nazwami – ale w main.py używamy 'rsi_divergence' i 'choch_h1'
-            # więc nie potrzebujemy osobnych wag dla 'rsi_div' i 'choch_higher'
+            'weight_ob_main': 1.0,  # 2.0 → 1.0
+            'weight_ob_m5': 0.8,  # 1.5 → 0.8
+            'weight_ob_h1': 0.8,  # 1.5 → 0.8
+            'weight_fvg': 0.8,  # 1.5 → 0.8
+            'weight_grab_mss': 1.0,  # 2.0 → 1.0
+            'weight_dbr_rbd': 0.8,  # 1.5 → 0.8
+            'weight_news': 0.5,  # 1.0 → 0.5
+            'weight_macro': 0.8,  # 1.5 → 0.8
+            'weight_rsi_opt': 0.5,  # 1.0 → 0.5
+            'weight_m5_confluence': 0.5,  # 1.0 → 0.5
+            'weight_bos': 0.8,  # 1.5 → 0.8
+            'weight_choch': 0.8,  # 1.5 → 0.8
+            'weight_ob_count': 0.5,  # 0.8 → 0.5
+            'weight_ob_confluence': 0.5,  # 0.8 → 0.5 (jeśli używasz)
+            'weight_choch_h1': 0.7,  # 1.2 → 0.7
+            'weight_supply_demand': 0.8,  # 1.5 → 0.8
+            'weight_rsi_divergence': 0.8,  # 1.5 → 0.8
+            'weight_sd_zone': 0.6,  # 1.0 → 0.6
+            'weight_rsi_div': 0.8,  # 1.5 → 0.8
+            'weight_choch_higher': 0.7,  # 1.5 → 0.7
         }
         for name, val in default_weights.items():
             if self.get_param(name) is None:

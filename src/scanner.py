@@ -10,6 +10,7 @@ Naprawiono:
 import hashlib
 import requests
 
+from src.logger import logger
 from src.config import TOKEN, CHAT_ID, USER_PREFS, LAST_STATUS, TD_API_KEY
 from src.smc_engine import get_smc_analysis
 
@@ -28,7 +29,7 @@ def send_telegram_alert(text: str):
             "parse_mode": "Markdown"
         }, timeout=10)
     except Exception as e:
-        print(f"❌ Błąd wysyłki Telegram: {e}")
+        logger.error(f"❌ Błąd wysyłki Telegram: {e}")
 
 
 async def scan_market_task(context):
@@ -59,7 +60,7 @@ async def scan_market_task(context):
         fail_rate = db.get_fail_rate_for_pattern(current_rsi, current_structure)
 
         if fail_rate > 75:
-            print(f"🚫 [SCANNER] Ignoruję sygnał: RSI {current_rsi} przy {current_structure} ma {fail_rate}% strat.")
+            logger.warning(f"🚫 [SCANNER] Ignoruję sygnał: RSI {current_rsi} przy {current_structure} ma {fail_rate}% strat.")
             return
 
         # ========== 🧠 FILTR WAGI WZORCA ==========
@@ -70,7 +71,7 @@ async def scan_market_task(context):
         from src.self_learning import get_pattern_adjustment
         weight = get_pattern_adjustment({"pattern": pattern})
         if weight < 0.5:
-            print(f"🚫 [SCANNER] Pomijam sygnał {pattern} – niska waga {weight}")
+            logger.warning(f"🚫 [SCANNER] Pomijam sygnał {pattern} – niska waga {weight}")
             return
         # ========================================
 
@@ -119,7 +120,7 @@ async def scan_market_task(context):
                     trend=current_trend,
                     structure=current_structure
                 )  # ← WYPEŁNIA scanner_signals
-                print(f"📡 [SCANNER] Zapisano sygnał {direction} do scanner_signals.")
+                logger.info(f"📡 [SCANNER] Zapisano sygnał {direction} do scanner_signals.")
 
         # --- 2. ALERT NOWEJ STREFY FVG ---
         if (current_fvg not in ["None", "Brak", None] and current_fvg != LAST_STATUS["fvg"]):
@@ -165,16 +166,16 @@ async def scan_market_task(context):
                         trend=current_trend,
                         structure=f"FVG_{current_fvg}"
                     )  # ← WYPEŁNIA scanner_signals
-                    print(f"📡 [SCANNER] Zapisano sygnał FVG {direction} do scanner_signals.")
+                    logger.info(f"📡 [SCANNER] Zapisano sygnał FVG {direction} do scanner_signals.")
 
         # --- 3. AKTUALIZACJA STANU ---
         LAST_STATUS["trend"] = current_trend
         LAST_STATUS["fvg"] = current_fvg
 
-        print("✅ [SCANNER] Skonczono cykl.")
+        logger.info("✅ [SCANNER] Skonczono cykl.")
 
     except Exception as e:
-        print(f"❌ [SCANNER] Błąd: {e}")
+        logger.error(f"❌ [SCANNER] Błąd: {e}")
 
 
 async def resolve_trades_task(context):
@@ -192,14 +193,14 @@ async def resolve_trades_task(context):
 
         price_raw = data.get('price')
         if price_raw is None:
-            print(f"⚠️ [RESOLVER] Twelve Data nie zwróciło ceny: {data}")
+            logger.warning(f"⚠️ [RESOLVER] Twelve Data nie zwróciło ceny: {data}")
             return
 
         current_price = float(price_raw)
-        print(f"🔍 [RESOLVER] Aktualna cena XAU/USD: {current_price}")
+        logger.info(f"🔍 [RESOLVER] Aktualna cena XAU/USD: {current_price}")
 
     except Exception as e:
-        print(f"❌ [RESOLVER] Błąd sieci/ceny: {e}")
+        logger.error(f"❌ [RESOLVER] Błąd sieci/ceny: {e}")
         return
 
     # 2. POBIERANIE I ROZLICZANIE POZYCJI
@@ -275,7 +276,7 @@ async def resolve_trades_task(context):
                         reason=reason,
                         market_condition=market_snapshot
                     )
-                    print(f"📝 [RESOLVER] Zapisano okoliczności straty dla pozycji {t_id}.")
+                    logger.info(f"📝 [RESOLVER] Zapisano okoliczności straty dla pozycji {t_id}.")
 
                 icon = "✅" if status == "PROFIT" else "❌"
                 msg = (
@@ -289,7 +290,7 @@ async def resolve_trades_task(context):
                     text=msg,
                     parse_mode="Markdown"
                 )
-                print(f"💰 [RESOLVER] Zamknięto pozycję {t_id} jako {status}")
+                logger.info(f"💰 [RESOLVER] Zamknięto pozycję {t_id} jako {status}")
 
     except Exception as e:
-        print(f"🚨 [RESOLVER] Błąd podczas sprawdzania pozycji: {e}")
+        logger.error(f"🚨 [RESOLVER] Błąd podczas sprawdzania pozycji: {e}")

@@ -21,6 +21,9 @@ import time
 import requests
 import json
 
+from src.logger import logger
+
+
 
 def install_requirements():
     """
@@ -30,15 +33,15 @@ def install_requirements():
     """
     req_file = "requirements.txt"
     if os.path.exists(req_file):
-        print("📦 Sprawdzam i instaluję biblioteki z requirements.txt...")
+        logger.info("📦 Sprawdzam i instaluję biblioteki z requirements.txt...")
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", req_file])
-            print("✅ Biblioteki gotowe.")
+            logger.info("✅ Biblioteki gotowe.")
         except Exception as e:
-            print(f"❌ Błąd instalacji: {e}")
+            logger.info(f"❌ Błąd instalacji: {e}")
     else:
         # Fallback — instalujemy minimalny zestaw gdy requirements.txt nie istnieje
-        print("⚠️ Nie znaleziono requirements.txt - instaluję zestaw standardowy...")
+        logger.warning("⚠️ Nie znaleziono requirements.txt - instaluję zestaw standardowy...")
         libs = [
             "python-telegram-bot", "yfinance", "pandas-ta",
             "python-dotenv", "requests", "pandas"
@@ -82,9 +85,9 @@ def alert_start():
         }
         try:
             requests.post(url, data=data, timeout=10)
-            print("✅ Wysłano Dashboard na Telegram.")
+            logger.info("✅ Wysłano Dashboard na Telegram.")
         except Exception as e:
-            print(f"❌ Nie udało się wysłać powiadomienia: {e}")
+            logger.info(f"❌ Nie udało się wysłać powiadomienia: {e}")
 
 
 if __name__ == "__main__":
@@ -95,6 +98,6 @@ if __name__ == "__main__":
     threading.Thread(target=alert_start, daemon=True).start()
 
     # Krok 3: uruchom głównego bota
-    print("🚀 QUANT SENTINEL BOOTING...")
+    logger.info("🚀 QUANT SENTINEL BOOTING...")
     from src.main import run_bot
     run_bot()
