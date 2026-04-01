@@ -168,10 +168,12 @@ async def auto_analyze_and_learn(context):
     Wywoływane cyklicznie przez job_queue.
     """
     try:
-        # Pobierz analizy dla trzech interwałów
-        s = get_smc_analysis(USER_PREFS['tf'])
-        s_higher = get_smc_analysis("1h")
-        s_lower = get_smc_analysis("5m")
+        # Pobierz analizy dla trzech interwałów (asynchronicznie)
+        s, s_higher, s_lower = await asyncio.gather(
+            asyncio.to_thread(get_smc_analysis, USER_PREFS['tf']),
+            asyncio.to_thread(get_smc_analysis, "1h"),
+            asyncio.to_thread(get_smc_analysis, "5m")
+        )
         if not s or not s_higher or not s_lower:
             print("⚠️ [AUTO-LEARN] Brak danych – pomijam.")
             return
@@ -192,11 +194,11 @@ async def auto_analyze_and_learn(context):
         MAKRO: {macro_context}
         """
 
-        # Ocena AI
+        # Ocena AI – asynchronicznie
         learning_prompt = """
         OCEŃ SETUP (0-10) według zasad: +4 za Grab+MSS, +2 za makro zgodne, +2 za FVG, +2 za DBR/RBD, +1 za RSI w strefie 40-50 (bull) lub 50-60 (bear), -2 za przeciwny H1, -3 za SMT, -3 za przeciwny makro, -2 za PREMIUM przy LONG. Wydaj: [WYNIK: X/10] [POWÓD] [RADA].
         """
-        ai_verdict = ask_ai_gold("smc", learning_context + "\n" + learning_prompt)
+        ai_verdict = await asyncio.to_thread(ask_ai_gold, "smc", learning_context + "\n" + learning_prompt)
 
         # Wyciągnij ocenę
         score = 0
@@ -221,35 +223,94 @@ async def auto_analyze_and_learn(context):
             print(f"⏸️ [AUTO-LEARN] Pomijam sygnał – niska ocena AI ({score}/10)")
             return
 
-        # Zapis do bazy
-        pattern = f"{p['direction']}_{s.get('structure', 'unknown')}_{s.get('fvg_type', 'None')}"
+        # --- Oblicz czynniki w oparciu o rzeczywisty kierunek transakcji ---
+        direction = p['direction']
+        factors = {}
+
+        # Order block główny
+        ob_main = s.get('ob_price')
+        if ob_main:
+            if direction == "LONG" and ob_main < s['price']:
+                factors['ob_main'] = 1
+            elif direction == "SHORT" and ob_main > s['price']:
+                factors['ob_main'] = 1
+
+        # Order block M5
+        ob_m5 = s_lower.get('ob_price')
+        if ob_m5:
+            if direction == "LONG" and ob_m5 < s['price']:
+                factors['ob_m5'] = 1
+            elif direction == "SHORT" and ob_m5 > s['price']:
+                factors['ob_m5'] = 1
+
+        # Order block H1
+        ob_h1 = s_higher.get('ob_price')
+        if ob_h1:
+            if direction == "LONG" and ob_h1 < s['price']:
+                factors['ob_h1'] = 1
+            elif direction == "SHORT" and ob_h1 > s['price']:
+                factors['ob_h1'] = 1
+
+        # FVG w kierunku
+        fvg_type = s.get('fvg_type')
+        if (direction == "LONG" and fvg_type == "bullish") or (direction == "SHORT" and fvg_type == "bearish"):
+            factors['fvg'] = 1
+
+        # Liquidity Grab + MSS
+        if s.get('liquidity_grab') and s.get('mss'):
+            if (direction == "LONG" and s.get('liquidity_grab_dir') == "bullish") or (direction == "SHORT" and s.get('liquidity_grab_dir') == "bearish"):
+                factors['grab_mss'] = 1
+
+        # DBR/RBD
+        dbr_type = s.get('dbr_rbd_type')
+        if (direction == "LONG" and dbr_type == "DBR") or (direction == "SHORT" and dbr_type == "RBD"):
+            factors['dbr_rbd'] = 1
+
+        # Makro zgodne
+        macro = s.get('macro_regime')
+        if (direction == "LONG" and macro == "zielony") or (direction == "SHORT" and macro == "czerwony"):
+            factors['macro'] = 1
+
+        # RSI optymalny
+        rsi = s.get('rsi')
+        if direction == "LONG" and 40 <= rsi <= 50:
+            factors['rsi_opt'] = 1
+        elif direction == "SHORT" and 50 <= rsi <= 60:
+            factors['rsi_opt'] = 1
+
+        # M5 konfluencja (trend zgodny)
+        if s_lower.get('trend') == s.get('trend'):
+            factors['m5_confluence'] = 1
+
+        # Zapis do bazy (z czynnikami)
+        pattern = f"{direction}_{s.get('structure', 'unknown')}_{s.get('fvg_type', 'None')}"
         db.log_trade(
-            direction=p['direction'],
+            direction=direction,
             price=p['entry'],
             sl=p['sl'],
             tp=p['tp'],
             rsi=s['rsi'],
             trend=s['trend'],
             structure=pattern,
-            pattern=pattern
+            pattern=pattern,
+            factors=factors
         )
-        print(f"📡 [AUTO-LEARN] Zapisano sygnał {p['direction']} do bazy (ocena AI: {score}/10)")
+        print(f"📡 [AUTO-LEARN] Zapisano sygnał {direction} do bazy (ocena AI: {score}/10, czynniki: {list(factors.keys())})")
 
         # Opcjonalnie: wysyłaj powiadomienie na czat (np. tylko gdy score > 8)
         if score > 8:
             from src.scanner import send_telegram_alert
             msg = (
                 f"🤖 *AUTOMATYCZNY SYGNAŁ* (ocena {score}/10)\n"
-                f"🚀 {p['direction']} @ {p['entry']}$\n"
+                f"🚀 {direction} @ {p['entry']}$\n"
                 f"🛑 SL: {p['sl']}$ | ✅ TP: {p['tp']}$\n"
-                f"📊 Lot: {p['lot']} | {p['logic']}"
+                f"📊 Lot: {p['lot']} | {p['logic']}\n"
+                f"🧠 Czynniki: {', '.join(factors.keys())}"
             )
             send_telegram_alert(msg)
 
     except Exception as e:
         print(f"❌ [AUTO-LEARN] Błąd: {e}")
-
-# self_learning.py – dopisz na końcu
 
 def update_factor_weights(trade_id, outcome):
     """
