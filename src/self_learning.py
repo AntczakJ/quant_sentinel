@@ -7,6 +7,8 @@ import numpy as np
 import random
 
 from src.database import NewsDB
+from src.logger import logger
+
 import asyncio
 import re
 from src.smc_engine import get_smc_analysis
@@ -121,7 +123,7 @@ def optimize_parameters():
     # Zapisz najlepsze parametry
     for name, value in best_params.items():
         db.set_param(name, value)
-    print(f"📈 [BACKTEST] Zoptymalizowano parametry: {best_params} (score: {best_score:.2f})")
+    logger.info(f"📈 [BACKTEST] Zoptymalizowano parametry: {best_params} (score: {best_score:.2f})")
 
 def auto_tune_pattern_weights():
     """
@@ -161,7 +163,7 @@ async def auto_analyze_and_learn(context):
             asyncio.to_thread(get_smc_analysis, "5m")
         )
         if not s or not s_higher or not s_lower:
-            print("⚠️ [AUTO-LEARN] Brak danych – pomijam.")
+            logger.warning("⚠️ [AUTO-LEARN] Brak danych – pomijam.")
             return
 
         # Kontekst makro
@@ -200,13 +202,13 @@ async def auto_analyze_and_learn(context):
         p = calculate_position(s, balance, currency, TD_API_KEY)
 
         if p.get("direction") == "CZEKAJ":
-            print(f"⏸️ [AUTO-LEARN] Sygnał odrzucony: {p.get('reason')}")
+            logger.info(f"⏸️ [AUTO-LEARN] Sygnał odrzucony: {p.get('reason')}")
             return
 
         # Opcjonalnie: pomiń sygnały z niską oceną AI
         MIN_SCORE = 5.0
         if score < MIN_SCORE:
-            print(f"⏸️ [AUTO-LEARN] Pomijam sygnał – niska ocena AI ({score}/10)")
+            logger.info(f"⏸️ [AUTO-LEARN] Pomijam sygnał – niska ocena AI ({score}/10)")
             return
 
         # --- Oblicz czynniki w oparciu o rzeczywisty kierunek transakcji ---
@@ -296,7 +298,7 @@ async def auto_analyze_and_learn(context):
             pattern=pattern,
             factors=factors
         )
-        print(f"📡 [AUTO-LEARN] Zapisano sygnał {direction} do bazy (ocena AI: {score}/10, czynniki: {list(factors.keys())})")
+        logger.info(f"📡 [AUTO-LEARN] Zapisano sygnał {direction} do bazy (ocena AI: {score}/10, czynniki: {list(factors.keys())})")
 
         # Opcjonalnie: wysyłaj powiadomienie na czat (np. tylko gdy score > 8)
         if score > 8:
@@ -311,7 +313,7 @@ async def auto_analyze_and_learn(context):
             send_telegram_alert(msg)
 
     except Exception as e:
-        print(f"❌ [AUTO-LEARN] Błąd: {e}")
+        logger.error(f"❌ [AUTO-LEARN] Błąd: {e}")
 
 import random
 

@@ -3,6 +3,9 @@ import requests
 import re
 from src.cache import cached
 
+from src.logger import logger
+
+
 # Definiujemy kluczowe źródła dla Tradera Złota
 RSS_SOURCES = {
     "Investing_Commodities": "https://www.investing.com/rss/news_95.rss",
@@ -35,7 +38,7 @@ def get_latest_news() -> str:
                     combined_news.append(f"[{source_name}] {clean_title}")
                     
         except Exception as e:
-            print(f"⚠️ Błąd źródła {source_name}: {e}")
+            logger.warning(f"⚠️ Błąd źródła {source_name}: {e}")
 
     if not combined_news:
         return "Brak krytycznych newsów (Rynek stabilny/oczekujący)."

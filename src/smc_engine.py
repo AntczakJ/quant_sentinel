@@ -19,6 +19,30 @@ import pandas_ta as ta
 import numpy as np
 from src.config import TD_API_KEY
 
+# src/smc_engine.py – dodaj na początku, po importach
+import time
+import requests
+from src.logger import logger   # (logger z punktu 4)
+from src.cache import cached_with_key
+
+
+def request_with_retry(url, max_retries=3, backoff=2):
+    """Wykonuje zapytanie GET z obsługą rate limit (429)."""
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 429:
+                wait = backoff ** attempt
+                logger.warning(f"Rate limit (429) – czekam {wait}s...")
+                time.sleep(wait)
+                continue
+            return response.json()
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(backoff ** attempt)
+    return {}
+
 
 def get_usdjpy_history(tf: str, length: int = 30) -> tuple:
     """
@@ -27,7 +51,7 @@ def get_usdjpy_history(tf: str, length: int = 30) -> tuple:
     try:
         td_tf = tf if "min" in tf else tf.replace("m", "min")
         url = f"https://api.twelvedata.com/time_series?symbol=USD/JPY&interval={td_tf}&apikey={TD_API_KEY}&outputsize={length}"
-        data = requests.get(url, timeout=10).json()
+        data = request_with_retry(url)
         if 'values' not in data:
             return [], 0
         df = pd.DataFrame(data['values'])
@@ -37,7 +61,7 @@ def get_usdjpy_history(tf: str, length: int = 30) -> tuple:
         current = prices[-1] if prices else 0
         return prices, current
     except Exception as e:
-        print(f"Błąd pobierania USD/JPY: {e}")
+        logger.error(f"Błąd pobierania USD/JPY: {e}")
         return [], 0
 
 
@@ -276,11 +300,11 @@ def get_exchange_rate(base: str = "USD", to: str = "PLN") -> float | None:
         response = requests.get(url, timeout=10)
         data = response.json()
         if 'price' not in data:
-            print(f"⚠️ Błąd pobierania kursu {symbol}: {data.get('message')}")
+            logger.warning(f"⚠️ Błąd pobierania kursu {symbol}: {data.get('message')}")
             return None
         return float(data['price'])
     except Exception as e:
-        print(f"❌ Błąd w get_exchange_rate: {e}")
+        logger.error(f"❌ Błąd w get_exchange_rate: {e}")
         return None
 # ================== NOWE FUNKCJE ==================
 
@@ -501,6 +525,12 @@ def detect_rsi_divergence(df: pd.DataFrame, lookback: int = 20, swing_lookback: 
 # Następnie w słowniku zwracanym dodaj nowe klucze:
 
 
+from src.cache import cached_with_key
+
+def _smc_cache_key(tf: str) -> str:
+    return f"smc_{tf}"
+
+@cached_with_key(_smc_cache_key, ttl=10)
 
 def get_smc_analysis(tf: str) -> dict | None:
     """
@@ -511,9 +541,9 @@ def get_smc_analysis(tf: str) -> dict | None:
 
         # 1. POBIERANIE DANYCH ZŁOTA
         url_gold = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={td_tf}&apikey={TD_API_KEY}&outputsize=100"
-        data_gold = requests.get(url_gold, timeout=10).json()
+        data_gold = request_with_retry(url_gold)
         if 'values' not in data_gold:
-            print(f"Błąd Twelve Data: {data_gold.get('message')}")
+            logger.warning(f"Błąd Twelve Data: {data_gold.get('message')}")
             return None
 
         df = pd.DataFrame(data_gold['values'])
@@ -634,6 +664,6 @@ def get_smc_analysis(tf: str) -> dict | None:
         }
 
     except Exception as e:
-        print(f"❌ Błąd silnika SMC Master: {e}")
+        logger.error(f"❌ Błąd silnika SMC Master: {e}")
         return None
 

@@ -12,6 +12,7 @@ lub send_telegram_alert() z scanner.py, żeby nie mnożyć punktów wejścia do 
 import os
 import requests
 from dotenv import load_dotenv
+from src.logger import logger
 
 # Wczytujemy .env — potrzebne gdy notifier.py jest uruchamiany poza kontekstem main.py
 load_dotenv()
@@ -38,4 +39,4 @@ def send_alert(message: str):
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"Błąd wysyłania: {e}")
+        logger.error(f"Błąd wysyłania: {e}")

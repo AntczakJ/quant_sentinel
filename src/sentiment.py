@@ -23,6 +23,7 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from openai import OpenAI
 
 from src.cache import cached
+from src.logger import logger
 
 
 class AISystem:
@@ -33,7 +34,7 @@ class AISystem:
     """
 
     def __init__(self):
-        print("⏳ Ładowanie modelu FinBERT... (może potrwać kilkanaście sekund)")
+        logger.info("⏳ Ładowanie modelu FinBERT... (może potrwać kilkanaście sekund)")
 
         # Pobiera i ładuje tokenizer i model FinBERT z HuggingFace Hub
         # Model jest zapisywany w cache lokalnie po pierwszym pobraniu
@@ -43,7 +44,7 @@ class AISystem:
         # Klucz OpenAI pobierany z .env przez zmienne środowiskowe
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-        print("✅ FinBERT załadowany.")
+        logger.info("✅ FinBERT załadowany.")
 
     def get_fast_sentiment(self, text: str) -> str:
         """
