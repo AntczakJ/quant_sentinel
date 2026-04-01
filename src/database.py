@@ -82,6 +82,8 @@ class NewsDB:
                                   TEXT,
                                   pattern
                                   TEXT
+                                  factors 
+                                  TEXT          -- nowa kolumna: JSON z obecnymi czynnikami
                               )
                               """)
 
