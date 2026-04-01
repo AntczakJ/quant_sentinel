@@ -23,3 +23,7 @@ requests
 python-dotenv
 feedparser
 flask
+
+# --- BAZA DANYCH ---
+libsql
+libsql-client
