@@ -13,7 +13,6 @@ Odpowiada za:
 import io
 import threading
 import asyncio
-import datetime
 
 import matplotlib
 
@@ -21,10 +20,9 @@ matplotlib.use('Agg')  # Backend bez GUI — konieczne na serwerze
 import matplotlib.pyplot as plt
 import yfinance as yf
 import requests
-import httpx
 
 # --- python-telegram-bot (główna obsługa menu i komend) ---
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.error import BadRequest
 from telegram.request import HTTPXRequest
@@ -45,8 +43,6 @@ from src.sentiment import get_sentiment_data
 from src.news import get_latest_news, get_economic_calendar
 
 from flask import Flask, request as flask_request
-from src.self_learning import run_learning_cycle
-
 
 # =============================================================================
 # INICJALIZACJA AI (warm-up przed startem sieci)
@@ -634,6 +630,7 @@ def run_bot():
     """
     Startuje bota z poprawionymi limitami czasu i pulą połączeń.
     """
+    logger.info("Test zapisu logu")
 
     # Flask webhook w osobnym wątku
     threading.Thread(target=run_flask, daemon=True).start()

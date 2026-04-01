@@ -14,9 +14,6 @@ Klucz API jest pobierany z config.py (który czyta go z pliku .env).
 from openai import OpenAI
 from src.config import OPENAI_KEY
 
-from src.logger import logger
-
-
 # Inicjalizujemy klienta OpenAI raz przy imporcie modułu
 client = OpenAI(api_key=OPENAI_KEY)
 

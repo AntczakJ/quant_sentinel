@@ -3,9 +3,6 @@
 self_learning.py – mechanizmy samouczenia: optymalizacja parametrów, analiza wzorców.
 """
 
-import numpy as np
-import random
-
 from src.database import NewsDB
 from src.logger import logger
 
@@ -46,9 +43,6 @@ def get_pattern_adjustment(analysis_data: dict) -> float:
     adj = stats['win_rate'] * 1.5
     return max(0.5, min(1.5, adj))
 
-
-import random
-from datetime import datetime
 
 def optimize_parameters():
     """

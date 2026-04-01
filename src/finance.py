@@ -9,8 +9,6 @@ Zmiany:
 """
 
 import requests
-from src.logger import logger
-
 
 
 def get_fx_rate(base: str = "USD", target: str = "PLN") -> float:

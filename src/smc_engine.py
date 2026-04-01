@@ -13,7 +13,6 @@ Odpowiada za:
   - Obliczanie reżimu makro na podstawie USD/JPY Z-score i ATR
 """
 
-import requests
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
@@ -22,8 +21,7 @@ from src.config import TD_API_KEY
 # src/smc_engine.py – dodaj na początku, po importach
 import time
 import requests
-from src.logger import logger   # (logger z punktu 4)
-from src.cache import cached_with_key
+from src.logger import logger
 
 
 def request_with_retry(url, max_retries=3, backoff=2):
