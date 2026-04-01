@@ -22,3 +22,4 @@ mplfinance            # opcjonalnie – tylko do wykresów; jeśli nie potrzebuj
 requests
 python-dotenv
 feedparser
+flask
