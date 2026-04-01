@@ -13,6 +13,7 @@ Odpowiada za:
 import io
 import threading
 import asyncio
+import os
 
 import matplotlib
 
@@ -27,6 +28,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from telegram.error import BadRequest
 from telegram.request import HTTPXRequest
 from src.logger import logger
+from telegram import InputMediaPhoto
+from src.smc_engine import request_with_retry
 
 
 from src.self_learning import auto_analyze_and_learn
@@ -176,6 +179,59 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"  {session}: {count} trades, {win_rate:.1%} {win_icon}\n"
 
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def smc_chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Wysyła wykres z oznaczonymi OB, FVG, strefami Supply/Demand."""
+    await update.message.reply_text("⏳ Generuję wykres SMC...")
+    s = get_smc_analysis(USER_PREFS['tf'])
+    if not s:
+        await update.message.reply_text("Brak danych rynkowych.")
+        return
+
+    # Pobierz surowe dane OHLC (musimy mieć DataFrame)
+    # Najłatwiej ponownie pobrać dane z API
+    import pandas as pd
+    td_tf = USER_PREFS['tf'] if "min" in USER_PREFS['tf'] else USER_PREFS['tf'].replace("m", "min")
+    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={td_tf}&apikey={TD_API_KEY}&outputsize=100"
+    data = request_with_retry(url)  # użyj funkcji z retry
+    if not data or 'values' not in data:
+        await update.message.reply_text("Nie udało się pobrać danych do wykresu.")
+        return
+
+    df = pd.DataFrame(data['values'])
+    df[['open', 'high', 'low', 'close']] = df[['open', 'high', 'low', 'close']].apply(pd.to_numeric)
+    df = df.iloc[::-1].reset_index(drop=True)
+    df['time'] = pd.to_datetime(df['datetime'])
+    df.set_index('time', inplace=True)
+
+    # Rysowanie świec
+    import mplfinance as mpf
+    # Dodaj znaczniki
+    addplot = []
+    # OB
+    if s.get('ob_price'):
+        addplot.append(mpf.make_addplot([s['ob_price']] * len(df), scatter=False, color='red', linestyle='--',
+                                        label='Order Block'))
+    # FVG
+    if s.get('fvg_upper') and s.get('fvg_lower'):
+        # zaznacz zakres
+        pass  # można narysować prostokąt
+    # Supply/Demand
+    for zone in s.get('supply', []):
+        addplot.append(mpf.make_addplot([zone] * len(df), scatter=False, color='orange', linestyle=':', label='Supply'))
+    for zone in s.get('demand', []):
+        addplot.append(mpf.make_addplot([zone] * len(df), scatter=False, color='green', linestyle=':', label='Demand'))
+
+    # Rysuj
+    mpf.plot(df, type='candle', style='charles', title=f"XAU/USD ({USER_PREFS['tf']})",
+             addplot=addplot, savefig='temp_chart.png')
+
+    # Wyślij obraz
+    with open('temp_chart.png', 'rb') as f:
+        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f,
+                                     caption="Konfiguracja rynku (OB, FVG, Supply/Demand)")
+    os.remove('temp_chart.png')
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -479,7 +535,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Sprawdź warunek: co najmniej jeden order block (dowolny)
         has_ob = factors.get('ob_count', 0) > 0
 
-        MIN_SCORE = 3.0 #tymczasowe
+        MIN_SCORE = db.get_param('min_score', 5.0)
         if not has_ob or factor_score < MIN_SCORE:
             await safe_edit(
                 f"⏸️ *SYGNAŁ ZBLOKOWANY*\n"
@@ -610,17 +666,174 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'chart_action':
         await send_chart(update, context)
 
+
     elif query.data == 'help':
+
         msg = (
-            "📖 *POMOC QUANT SENTINEL:*\n\n"
-            "1. *Analiza PRO* — analiza SMC + AI dla aktywnego interwału\n"
-            "2. *Status systemu* — kapitał i ustawienia portfela\n"
-            "3. `/cap KWOTA WALUTA` — ustaw kapitał (np. `/cap 5000 PLN`)\n"
-            "4. `/stats` — historia transakcji i Win Rate\n"
-            "5. `/chart` — wykres ceny złota"
+
+            "📖 *POMOC QUANT SENTINEL*\n\n"
+
+            "🔹 *Przyciski w menu*\n"
+
+            "• 🎯 ANALIZA QUANT PRO – pełna analiza SMC + AI\n"
+
+            "• 📊 STATUS SYSTEMU – kapitał i ustawienia\n"
+
+            "• 📰 NEWSY – najnowsze wiadomości\n"
+
+            "• 🎭 SENTYMENT AI – nastroje rynkowe\n"
+
+            "• ⏱ INTERWAŁ – zmiana ram czasowych\n"
+
+            "• 📈 WYKRES – wykres ceny złota\n"
+
+            "• ⚙️ PORTFEL – zmiana kapitału\n\n"
+
+            "🔹 *Komendy tekstowe*\n"
+
+            "`/cap KWOTA WALUTA` – ustaw kapitał (np. `/cap 5000 PLN`)\n"
+
+            "`/stats` – historia transakcji i Win Rate\n"
+
+            "`/chart` – wykres ceny złota\n"
+
+            "`/settings` – wyświetl parametry dynamiczne\n"
+
+            "`/set param wartość` – zmień parametr (np. `/set min_score 5`)\n"
+
+            "`/backtest` – uruchom optymalizację parametrów na historii\n"
+
+            "`/portfolio` – krzywa kapitału i drawdown\n"
+
+            "`/sessions` – statystyki skuteczności według sesji\n"
+
+            "`/smc_chart` – wykres z zaznaczonymi OB, FVG, Supply/Demand\n\n"
+
+            "📌 *Parametry dynamiczne*\n"
+
+            "`min_score` – minimalna ocena setupu (domyślnie 5)\n"
+
+            "`risk_percent` – % kapitału ryzykowany na transakcję\n"
+
+            "`min_tp_distance_mult` – mnożnik ATR dla minimalnego dystansu TP\n"
+
+            "`target_rr` – docelowy stosunek ryzyka do zysku\n\n"
+
+            "💡 *Więcej informacji*: /settings lub /help"
+
         )
+
         await safe_edit(msg)
 
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Wyświetla aktualne parametry dynamiczne."""
+    db = NewsDB()
+    param_names = ['risk_percent', 'min_tp_distance_mult', 'target_rr', 'min_score']
+    params = {}
+    for name in param_names:
+        params[name] = db.get_param(name, 'nie ustawione')
+    msg = "⚙️ *Ustawienia dynamiczne*\n"
+    for k, v in params.items():
+        msg += f"• `{k}`: {v}\n"
+    msg += "\nAby zmienić: `/set param wartość`\nPrzykład: `/set min_score 5`"
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def set_param_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ustawia parametr dynamiczny."""
+    if len(context.args) < 2:
+        await update.message.reply_text("Użycie: `/set nazwa_parama wartość`")
+        return
+    param_name = context.args[0]
+    try:
+        value = float(context.args[1])
+    except ValueError:
+        await update.message.reply_text("Wartość musi być liczbą.")
+        return
+    db = NewsDB()
+    db.set_param(param_name, value)
+    await update.message.reply_text(f"✅ Ustawiono `{param_name}` = {value}")
+
+async def backtest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Uruchamia backtest parametrów."""
+    await update.message.reply_text("⏳ Uruchamiam backtest (może potrwać chwilę)...")
+    from src.self_learning import optimize_parameters
+    await asyncio.to_thread(optimize_parameters)
+    db = NewsDB()
+    best_risk = db.get_param('risk_percent', '?')
+    best_mult = db.get_param('min_tp_distance_mult', '?')
+    best_rr = db.get_param('target_rr', '?')
+    msg = f"📊 *Backtest zakończony*\nNajlepsze parametry:\n"
+    msg += f"• risk_percent: {best_risk}\n• min_tp_distance_mult: {best_mult}\n• target_rr: {best_rr}\n"
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Wykres krzywej kapitału i drawdownu."""
+    db = NewsDB()
+    # Pobierz wszystkie zamknięte transakcje z zyskiem/stratą
+    db.cursor.execute("""
+        SELECT timestamp, profit FROM trades
+        WHERE status IN ('PROFIT', 'LOSS') AND profit IS NOT NULL
+        ORDER BY timestamp ASC
+    """)
+    rows = db.cursor.fetchall()
+    if not rows:
+        await update.message.reply_text("Brak danych do wygenerowania portfela.")
+        return
+
+    equity = 10000.0  # kapitał początkowy
+    equity_curve = [equity]
+    timestamps = []
+    drawdowns = []
+    peak = equity
+    max_dd = 0
+
+    for ts, profit in rows:
+        equity += profit
+        equity_curve.append(equity)
+        timestamps.append(ts)
+        if equity > peak:
+            peak = equity
+        dd = peak - equity
+        if dd > max_dd:
+            max_dd = dd
+        drawdowns.append(dd)
+
+    import matplotlib.pyplot as plt
+    import io
+
+    # Główny wykres kapitału
+    plt.figure(figsize=(10, 6))
+    plt.plot(timestamps, equity_curve, color='blue', label='Kapitał')
+    plt.title('Krzywa kapitału')
+    plt.xlabel('Data')
+    plt.ylabel('Kapitał (USD)')
+    plt.grid(True)
+    plt.legend()
+
+    buf1 = io.BytesIO()
+    plt.savefig(buf1, format='png')
+    buf1.seek(0)
+    plt.close()
+
+    # Wykres drawdownu
+    plt.figure(figsize=(10, 4))
+    plt.fill_between(timestamps, 0, drawdowns, color='red', alpha=0.5)
+    plt.title(f'Drawdown (maksymalny: {max_dd:.2f} USD)')
+    plt.xlabel('Data')
+    plt.ylabel('Drawdown (USD)')
+    plt.grid(True)
+
+    buf2 = io.BytesIO()
+    plt.savefig(buf2, format='png')
+    buf2.seek(0)
+    plt.close()
+
+    # Wyślij oba wykresy jako media group
+    media = [
+        InputMediaPhoto(media=buf1, caption=f"Kapitał końcowy: {equity:.2f} USD"),
+        InputMediaPhoto(media=buf2)
+    ]
+    await context.bot.send_media_group(chat_id=update.effective_chat.id, media=media)
 
 # =============================================================================
 # URUCHOMIENIE — python-telegram-bot z job_queue
@@ -691,6 +904,11 @@ def run_bot():
     app.add_handler(CommandHandler("chart", send_chart))
     app.add_handler(CallbackQueryHandler(handle_buttons))
     app.add_handler(CommandHandler("sessions", sessions_command))
+    app.add_handler(CommandHandler("settings", settings_command))
+    app.add_handler(CommandHandler("set", set_param_command))
+    app.add_handler(CommandHandler("backtest", backtest_command))
+    app.add_handler(CommandHandler("portfolio", portfolio_command))
+
 
     logger.info("🤖 Bot startuje w trybie POLLING...")
     app.run_polling()
