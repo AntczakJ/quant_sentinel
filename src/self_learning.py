@@ -248,3 +248,27 @@ async def auto_analyze_and_learn(context):
 
     except Exception as e:
         print(f"❌ [AUTO-LEARN] Błąd: {e}")
+
+# self_learning.py – dopisz na końcu
+
+def update_factor_weights(trade_id, outcome):
+    """
+    Aktualizuje wagi czynników na podstawie wyniku transakcji.
+    outcome: "PROFIT" lub "LOSS"
+    """
+    db = NewsDB()
+    factors = db.get_trade_factors(trade_id)
+    if not factors:
+        return
+
+    learning_rate = 0.05  # mały krok, aby wagi zmieniały się stopniowo
+    for factor, present in factors.items():
+        weight_name = f"weight_{factor}"
+        current_weight = db.get_param(weight_name, 1.0)
+        if outcome == "PROFIT":
+            new_weight = current_weight + learning_rate * present
+        else:
+            new_weight = current_weight - learning_rate * present
+        # Ograniczenie do przedziału [0.5, 3.0]
+        new_weight = max(0.5, min(3.0, new_weight))
+        db.set_param(weight_name, new_weight)
