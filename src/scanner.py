@@ -31,11 +31,6 @@ def send_telegram_alert(text: str):
         print(f"❌ Błąd wysyłki Telegram: {e}")
 
 
-def _hash(text: str) -> str:
-    """Generuje hash dla deduplikacji alertów w processed_news."""
-    return hashlib.md5(text.encode()).hexdigest()
-
-
 async def scan_market_task(context):
     """
     Zadanie cykliczne (co 5 min).
@@ -245,6 +240,10 @@ async def resolve_trades_task(context):
 
             if status:
                 db.update_trade_status(t_id, status)
+
+                if status in ("PROFIT", "LOSS"):
+                    from src.self_learning import update_factor_weights
+                    update_factor_weights(t_id, status)
 
                 db.cursor.execute("SELECT pattern FROM trades WHERE id = ?", (t_id,))
                 pattern = db.cursor.fetchone()

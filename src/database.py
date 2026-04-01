@@ -81,7 +81,7 @@ class NewsDB:
                                   condition_at_loss
                                   TEXT,
                                   pattern
-                                  TEXT
+                                  TEXT,
                                   factors 
                                   TEXT          -- nowa kolumna: JSON z obecnymi czynnikami
                               )
@@ -181,6 +181,8 @@ class NewsDB:
                     self.conn.execute("ALTER TABLE trades ADD COLUMN failure_reason TEXT")
                 if 'condition_at_loss' not in columns:
                     self.conn.execute("ALTER TABLE trades ADD COLUMN condition_at_loss TEXT")
+                if 'factors' not in columns:
+                    self.conn.execute("ALTER TABLE trades ADD COLUMN factors TEXT")
         except Exception as e:
             print(f"ℹ️ Migracja: {e}")
 
@@ -239,6 +241,33 @@ class NewsDB:
         row = self.cursor.fetchone()
         return row[0] if row else default
 
+    def init_weights(self):
+        """Ustawia domyślne wagi czynników, jeśli jeszcze nie istnieją."""
+        default_weights = {
+            'weight_ob_main': 2.0,
+            'weight_ob_m5': 1.5,
+            'weight_ob_h1': 1.5,
+            'weight_fvg': 1.5,
+            'weight_grab_mss': 2.0,
+            'weight_dbr_rbd': 1.5,
+            'weight_news': 1.0,
+            'weight_macro': 1.5,
+            'weight_rsi_opt': 1.0,
+            'weight_m5_confluence': 1.0,
+        }
+        for name, val in default_weights.items():
+            if self.get_param(name) is None:
+                self.set_param(name, val)
+
+    def get_trade_factors(self, trade_id: int) -> dict:
+        """Zwraca słownik czynników dla danej transakcji (zapisanego jako JSON)."""
+        self.cursor.execute("SELECT factors FROM trades WHERE id = ?", (trade_id,))
+        row = self.cursor.fetchone()
+        if row and row[0]:
+            import json
+            return json.loads(row[0])
+        return {}
+
 
     def update_balance(self, user_id: int, amount: float):
         with self.conn:
@@ -266,14 +295,17 @@ class NewsDB:
 
     # src/database.py – log_trade
 
-    def log_trade(self, direction, price, sl, tp, rsi, trend, structure="Stable", pattern=None):
+    def log_trade(self, direction, price, sl, tp, rsi, trend, structure="Stable", pattern=None, factors=None):
         import datetime
+        import json
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        factors_json = json.dumps(factors) if factors else None
         with self.conn:
             self.conn.execute("""
-                              INSERT INTO trades (timestamp, direction, entry, sl, tp, rsi, trend, structure, pattern)
-                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                              """, (timestamp, direction, price, sl, tp, rsi, trend, structure, pattern))
+                              INSERT INTO trades (timestamp, direction, entry, sl, tp, rsi, trend, structure, pattern,
+                                                  factors)
+                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              """, (timestamp, direction, price, sl, tp, rsi, trend, structure, pattern, factors_json))
 
     def get_open_trades(self):
         self.cursor.execute("SELECT id, direction, entry, sl, tp FROM trades WHERE status = 'OPEN'")

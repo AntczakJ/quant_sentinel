@@ -16,6 +16,8 @@ import asyncio
 import datetime
 
 import matplotlib
+from pygments.lexers import factor
+
 matplotlib.use('Agg')  # Backend bez GUI — konieczne na serwerze
 import matplotlib.pyplot as plt
 import yfinance as yf
@@ -58,6 +60,8 @@ except Exception as e:
 
 # Jedna globalna instancja bazy danych — współdzielona przez wszystkie handlery
 db = NewsDB()
+db.init_weights()   # upewnia, że wagi istnieją
+
 
 # =============================================================================
 # FLASK WEBHOOK — obsługa alertów z TradingView
@@ -262,7 +266,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s, s_higher, s_lower, raw_news, eco_calendar = await asyncio.gather(
             asyncio.to_thread(get_smc_analysis, USER_PREFS['tf']),
             asyncio.to_thread(get_smc_analysis, "1h"),
-            asyncio.to_thread(get_smc_analysis, "5min"),  # dodajemy M5
+            asyncio.to_thread(get_smc_analysis, "5min"),
             asyncio.to_thread(get_latest_news),
             asyncio.to_thread(get_economic_calendar)
         )
@@ -329,24 +333,105 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ai_verdict = await asyncio.to_thread(ask_ai_gold, "smc", learning_context + "\n" + learning_prompt)
 
         import re
-        match = re.search(r"WYNIK:\s*(\d+(?:\.\d+)?)/10", ai_verdict)
-        if match:
-            score = float(match.group(1))
-            if score < 4.0:  # próg – możesz dostosować
-                await safe_edit(
-                    f"⏸️ *SYGNAŁ ODRZUCONY*\nOcena AI: {score}/10 – zbyt niska jakość setupu.\n\n🤖 *AI:*\n{ai_verdict}")
-                return
+        ai_match = re.search(r"WYNIK:\s*(\d+(?:\.\d+)?)/10", ai_verdict)
+        ai_score = float(ai_match.group(1)) if ai_match else 0
+        if ai_score < 4.0:
+            await safe_edit(
+                f"⏸️ *SYGNAŁ ODRZUCONY*\nOcena AI: {ai_score}/10 – zbyt niska jakość setupu.\n\n🤖 *AI:*\n{ai_verdict}")
+            return
 
         balance = db.get_balance(user_id)
         currency = USER_PREFS.get("currency", "USD")
+
+        # --- Obliczenie pozycji (to daje rzeczywisty kierunek) ---
         p = calculate_position(s, balance, currency, TD_API_KEY)
 
-        # Jeśli calculate_position zwróciło "CZEKAJ" z powodu makro, informujemy użytkownika
+        # Jeśli calculate_position zwróciło "CZEKAJ" z powodu makro lub innych filtrów
         if p.get("direction") == "CZEKAJ":
             await safe_edit(f"⏸️ *SYGNAŁ ZBLOKOWANY*\n{p.get('reason')}\n\n🤖 *AI:*\n{ai_verdict}")
             return
 
-        # Logowanie transakcji z rozszerzonym opisem struktury
+        # --- Teraz budujemy czynniki w oparciu o rzeczywisty kierunek transakcji ---
+        direction = p['direction']  # "LONG" lub "SHORT"
+
+        factors = {}
+
+        # 1. Order block główny
+        ob_main = s.get('ob_price')
+        if ob_main:
+            if direction == "LONG" and ob_main < s['price']:
+                factors['ob_main'] = 1
+            elif direction == "SHORT" and ob_main > s['price']:
+                factors['ob_main'] = 1
+
+        # 2. Order block M5
+        ob_m5 = s_lower.get('ob_price')
+        if ob_m5:
+            if direction == "LONG" and ob_m5 < s['price']:
+                factors['ob_m5'] = 1
+            elif direction == "SHORT" and ob_m5 > s['price']:
+                factors['ob_m5'] = 1
+
+        # 3. Order block H1
+        ob_h1 = s_higher.get('ob_price')
+        if ob_h1:
+            if direction == "LONG" and ob_h1 < s['price']:
+                factors['ob_h1'] = 1
+            elif direction == "SHORT" and ob_h1 > s['price']:
+                factors['ob_h1'] = 1
+
+        # 4. FVG w kierunku
+        fvg_type = s.get('fvg_type')
+        if (direction == "LONG" and fvg_type == "bullish") or (direction == "SHORT" and fvg_type == "bearish"):
+            factors['fvg'] = 1
+
+        # 5. Liquidity Grab + MSS
+        if s.get('liquidity_grab') and s.get('mss'):
+            if (direction == "LONG" and s.get('liquidity_grab_dir') == "bullish") or (direction == "SHORT" and s.get('liquidity_grab_dir') == "bearish"):
+                factors['grab_mss'] = 1
+
+        # 6. DBR/RBD
+        dbr_type = s.get('dbr_rbd_type')
+        if (direction == "LONG" and dbr_type == "DBR") or (direction == "SHORT" and dbr_type == "RBD"):
+            factors['dbr_rbd'] = 1
+
+        # 7. Makro zgodne
+        macro = s.get('macro_regime')
+        if (direction == "LONG" and macro == "zielony") or (direction == "SHORT" and macro == "czerwony"):
+            factors['macro'] = 1
+
+        # 8. RSI optymalny
+        rsi = s.get('rsi')
+        if direction == "LONG" and 40 <= rsi <= 50:
+            factors['rsi_opt'] = 1
+        elif direction == "SHORT" and 50 <= rsi <= 60:
+            factors['rsi_opt'] = 1
+
+        # 9. M5 konfluencja (trend zgodny)
+        if s_lower.get('trend') == s.get('trend'):
+            factors['m5_confluence'] = 1
+
+        # Oblicz wagę sumaryczną
+        factor_score = 0
+        for factor, present in factors.items():
+            weight = db.get_param(f"weight_{factor}", 1.0)
+            factor_score += present * weight
+
+        # Sprawdź warunek: co najmniej jeden order block (dowolny)
+        has_ob = any(f in factors for f in ['ob_main', 'ob_m5', 'ob_h1'])
+
+        MIN_SCORE = 5.0
+        if not has_ob or factor_score < MIN_SCORE:
+            await safe_edit(
+                f"⏸️ *SYGNAŁ ZBLOKOWANY*\n"
+                f"Ocena: {factor_score:.1f} / {MIN_SCORE} | Order block: {'tak' if has_ob else 'nie'}\n"
+                f"Nie spełniono kryteriów wejścia.\n\n"
+                f"🧠 *Czynniki aktywne:* {', '.join(factors.keys()) if factors else 'brak'}\n"
+                f"🤖 *AI:*\n{ai_verdict}"
+            )
+            return
+
+        # Logowanie transakcji z rozszerzonym opisem struktury i czynnikami
         structure_desc = f"Grab:{s['liquidity_grab']}, MSS:{s['mss']}, FVG:{s['fvg_type']}, DBR:{s['dbr_rbd_type']}"
         db.log_trade(
             direction=p['direction'],
@@ -355,7 +440,8 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tp=p['tp'],
             rsi=s['rsi'],
             trend=s['trend'],
-            structure=structure_desc
+            structure=structure_desc,
+            factors=factors
         )
 
         msg = (
