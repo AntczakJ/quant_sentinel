@@ -241,6 +241,15 @@ async def resolve_trades_task(context):
             if status:
                 db.update_trade_status(t_id, status)
 
+                # ========== NOWE: aktualizacja statystyk sesji ==========
+                if status in ("PROFIT", "LOSS"):
+                    db.cursor.execute("SELECT pattern, session FROM trades WHERE id = ?", (t_id,))
+                    row = db.cursor.fetchone()
+                    if row and row[0]:
+                        pattern = row[0]
+                        session = row[1] or "Unknown"
+                        db.update_session_stats(pattern, session, status)
+
                 if status in ("PROFIT", "LOSS"):
                     from src.self_learning import update_factor_weights
                     update_factor_weights(t_id, status)
