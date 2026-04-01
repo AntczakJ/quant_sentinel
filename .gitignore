@@ -11,11 +11,7 @@ __pycache__/
 *.so
 .pytest_cache/
 
-# Bazy danych (lokalne)
-data/*.db
-data/*.sqlite
-*.db
-*.sqlite
+
 
 # Pliki konfiguracyjne z kluczami
 .env
