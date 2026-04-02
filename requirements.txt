@@ -23,6 +23,9 @@ requests
 python-dotenv
 feedparser
 flask
+tensorflow
+scikit-learn
+xgboost
 
 # --- BAZA DANYCH ---
 libsql

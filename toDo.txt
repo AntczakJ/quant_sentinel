@@ -35,6 +35,55 @@ Backtest parametrów – aby lepiej dostroić wagi i progi.
 
 Panel webowy lub komendy Telegram – dla wygody monitorowania.
 
+. Automatyzacja handlu (integraja z brokerem)
+Połączenie z MetaTrader 5 lub Oanda – bot sam otwierałby i zamykał pozycje na podstawie sygnałów.
+
+Zarządzanie ryzykiem w czasie rzeczywistym – trailing stop, częściowe zamykanie, maksymalna dzienna strata.
+
+2. Zaawansowane uczenie maszynowe
+Prognozowanie kierunku – zamiast tylko SMC, użyj modeli (LSTM, XGBoost) na historycznych świecach.
+
+Reinforcement learning – agent uczący się, kiedy wchodzić i wychodzić.
+
+Optymalizacja parametrów – bayesowska zamiast brute‑force.
+
+3. Rozszerzona analiza techniczna
+Dodanie wskaźników – Ichimoku, Volume Profile, Profile of Order Flow.
+
+Więcej formacji świecowych – pin bar, engulfing, inside bar jako osobne czynniki.
+
+4. Źródła danych
+Alternatywne źródła – jeśli chcesz uniezależnić się od Twelve Data, możesz dodać więcej providerów (Alpha Vantage, ForexFeed, własne źródło).
+
+Newsy i sentyment – pobieranie z Twittera, Reddit, serwisów finansowych przez API lub scraping.
+
+5. Dashboard webowy
+Podgląd na żywo – strona z wykresami, statystykami, parametrami (Flask + React lub prostsze HTML).
+
+REST API – udostępnienie sygnałów innym aplikacjom.
+
+6. Wielu użytkowników
+Obsługa wielu kont Telegram – każdy użytkownik ma własny kapitał, ustawienia, historię.
+
+7. Backtesting i optymalizacja offline
+Rozbudowany backtest – z uwzględnieniem prowizji, slippage, ograniczeń czasowych.
+
+Walidacja out‑of‑sample – dzielenie danych na treningowe i testowe.
+
+8. Nowe czynniki SMC
+Wykrywanie stref Supply/Demand wg metody DBR/RBD – już masz, ale można ulepszyć.
+
+Zaawansowane Order Blocks – uwzględniające objętość (jeśli dostępna).
+
+9. Powiadomienia warunkowe
+Alerty SMS/Telegram o bardzo silnych sygnałach (ocena AI > 8, konfluencja > 6).
+
+Powiadomienia o ważnych wydarzeniach – decyzje FED, dane makro.
+
+10. Optymalizacja wydajności
+Użycie Redis do cache – zamiast prostego słownika.
+
+Asynchroniczne zapytania do API – już masz, ale można dodać więcej równoległości.
 
 Onada na api
 

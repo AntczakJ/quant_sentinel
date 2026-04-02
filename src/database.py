@@ -276,6 +276,18 @@ class NewsDB:
             'weight_m5_confluence': 1.0, 'weight_bos': 1.5, 'weight_choch': 1.5,
             'weight_ob_count': 0.8, 'weight_ob_confluence': 0.8, 'weight_choch_h1': 1.2,
             'weight_supply_demand': 1.5, 'weight_rsi_divergence': 1.5,
+            'weight_ichimoku_bull': 1.2,
+            'weight_near_poc': 1.0,
+            'weight_engulfing_bull': 1.3,
+            'weight_engulfing_bear': 1.3,
+            'weight_pin_bar_bull': 1.2,
+            'weight_pin_bar_bear': 1.2,
+            'weight_inside_bar': 0.8,
+            'weight_ml_bull': 1.5,
+            'weight_ml_bear': 1.5,
+            'weight_rl_buy': 1.5,
+            'weight_rl_sell': 1.5,
+            
         }
         for name, val in factor_weights.items():
             if self.get_param(name) is None:
