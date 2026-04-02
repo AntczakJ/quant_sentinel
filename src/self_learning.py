@@ -11,7 +11,7 @@ import re
 from src.smc_engine import get_smc_analysis
 from src.finance import calculate_position
 from src.ai_engine import ask_ai_gold
-from src.config import USER_PREFS, TD_API_KEY
+from src.config import USER_PREFS, TD_API_KEY, ENABLE_BAYES
 
 # Minimalna liczba transakcji do uruchomienia optymalizacji
 MIN_TRADES_FOR_OPT = 20
@@ -137,11 +137,50 @@ def auto_tune_pattern_weights():
             db.set_param(f"pattern_weight_{pattern}", 1.0)
 
 def run_learning_cycle():
-    """
-    Główna funkcja wywoływana cyklicznie (co X transakcji lub co dzień).
-    """
     optimize_parameters()
     auto_tune_pattern_weights()
+    if ENABLE_BAYES:
+        from src.bayesian_opt import BayesianOptimizer
+        from src.database import NewsDB
+        import numpy as np
+
+        def objective(params):
+            risk = params.get('risk_percent', 1.0)
+            # (opcjonalnie: min_score – wymagałoby przechowywania oceny AI)
+            db = NewsDB()
+            db.cursor.execute("""
+                SELECT direction, entry, sl, tp, status
+                FROM trades
+                WHERE status IN ('PROFIT', 'LOSS')
+                ORDER BY timestamp ASC
+            """)
+            trades = db.cursor.fetchall()
+            if len(trades) < 5:
+                return 0.0
+
+            equity = 10000.0  # kapitał początkowy
+            for direction, entry, sl, tp, status in trades:
+                dist = abs(entry - sl)
+                if dist <= 0:
+                    continue
+                risk_usd = equity * (risk / 100)
+                lot = risk_usd / (dist * 100)
+                if lot < 0.01:
+                    lot = 0.01
+                if status == "PROFIT":
+                    profit = abs(entry - tp) * lot * 100
+                    equity += profit
+                else:
+                    equity -= risk_usd
+            return equity  # możesz też zwrócić (equity - 10000) / len(trades) – średni zysk
+
+        bounds = {'risk_percent': (0.5, 2.0)}   # zakres dla optymalizowanego parametru
+        opt = BayesianOptimizer(bounds, objective, n_init=5, n_iter=10)
+        best_params, best_score = opt.optimize()
+        db = NewsDB()
+        for name, val in best_params.items():
+            db.set_param(name, val)
+        logger.info(f"Bayesian optimization finished: {best_params} -> {best_score:.2f}")
 
 
 async def auto_analyze_and_learn(context):

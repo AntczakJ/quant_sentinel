@@ -44,6 +44,17 @@ LAST_STATUS = {
     "fvg": None     # Ostatnia zaobserwowana strefa Fair Value Gap
 }
 
+# ================== Data sources ==================
+DATA_PROVIDER = os.getenv("DATA_PROVIDER", "twelve_data")   # 'twelve_data' or 'alpha_vantage'
+ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY")
+
+# ================== Machine Learning ==================
+ENABLE_ML = os.getenv("ENABLE_ML", "False").lower() == "true"
+ENABLE_RL = os.getenv("ENABLE_RL", "False").lower() == "true"
+ENABLE_BAYES = os.getenv("ENABLE_BAYES", "False").lower() == "true"
+ENABLE_ADVANCED_INDICATORS = os.getenv("ENABLE_ADVANCED_INDICATORS", "True").lower() == "true"
+ENABLE_PATTERNS = os.getenv("ENABLE_PATTERNS", "True").lower() == "true"
+
 
 def get_sym() -> str:
     """Zwraca symbol waluty portfela użytkownika (np. 'zł', '$', '€')."""
