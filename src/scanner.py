@@ -11,7 +11,7 @@ import hashlib
 import requests
 
 from src.logger import logger
-from src.config import TOKEN, CHAT_ID, USER_PREFS, LAST_STATUS, TD_API_KEY
+from src.config import TOKEN, CHAT_ID, USER_PREFS, LAST_STATUS, LAST_STATUS_LOCK, TD_API_KEY
 from src.smc_engine import get_smc_analysis
 
 def _hash(text: str) -> str:
@@ -92,7 +92,10 @@ async def scan_market_task(context):
 
 
         # --- 1. ALERT ZMIANY TRENDU ---
-        if LAST_STATUS.get("trend") is not None and current_trend != LAST_STATUS["trend"]:
+        with LAST_STATUS_LOCK:
+            last_trend = LAST_STATUS.get("trend")
+
+        if last_trend is not None and current_trend != last_trend:
             alert_key = _hash(f"trend_{current_trend}_{current_structure}")
 
             if not db.is_news_processed(alert_key):
@@ -123,7 +126,10 @@ async def scan_market_task(context):
                 logger.info(f"📡 [SCANNER] Zapisano sygnał {direction} do scanner_signals.")
 
         # --- 2. ALERT NOWEJ STREFY FVG ---
-        if (current_fvg not in ["None", "Brak", None] and current_fvg != LAST_STATUS["fvg"]):
+        with LAST_STATUS_LOCK:
+            last_fvg = LAST_STATUS.get("fvg")
+
+        if (current_fvg not in ["None", "Brak", None] and current_fvg != last_fvg):
             fvg_lower = current_fvg.lower()
 
             if "bull" in fvg_lower or "up" in fvg_lower:
@@ -168,9 +174,10 @@ async def scan_market_task(context):
                     )  # ← WYPEŁNIA scanner_signals
                     logger.info(f"📡 [SCANNER] Zapisano sygnał FVG {direction} do scanner_signals.")
 
-        # --- 3. AKTUALIZACJA STANU ---
-        LAST_STATUS["trend"] = current_trend
-        LAST_STATUS["fvg"] = current_fvg
+        # --- 3. AKTUALIZACJA STANU (THREAD-SAFE) ---
+        with LAST_STATUS_LOCK:
+            LAST_STATUS["trend"] = current_trend
+            LAST_STATUS["fvg"] = current_fvg
 
         logger.info("✅ [SCANNER] Skonczono cykl.")
 

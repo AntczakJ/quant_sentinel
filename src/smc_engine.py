@@ -11,12 +11,14 @@ Odpowiada za:
   - Pobieranie kursu USD/JPY jako proxy siły dolara
   - Detekcja Swing High/Low, Liquidity Grab, Market Structure Shift, Order Blocks, DBR/RBD
   - Obliczanie reżimu makro na podstawie USD/JPY Z-score i ATR
+  - Caching wyników (TTL 60 sekund) dla optymalizacji wydajności
 """
 
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
 from src.config import TD_API_KEY
+from src.cache import cached_with_key
 
 # src/smc_engine.py – dodaj na początku, po importach
 import time
@@ -385,22 +387,6 @@ def detect_choch(df: pd.DataFrame, window: int = 10) -> tuple:
 
 
 
-def detect_advanced_choch(df_main: pd.DataFrame, df_higher: pd.DataFrame, window: int = 10) -> tuple:
-    """
-    Wykrywa Change of Character na podstawie dwóch interwałów.
-    Zwraca (choch_bullish, choch_bearish) – bool dla interwału głównego,
-    oraz (choch_higher_bullish, choch_higher_bearish) dla H1.
-    """
-    # CHoCH na głównym (uproszczone, ale możemy użyć istniejącej funkcji)
-    choch_main_bull, choch_main_bear = detect_choch(df_main, window)
-
-    # CHoCH na H1 (wywołaj detect_choch dla wyższego interwału)
-    choch_higher_bull, choch_higher_bear = detect_choch(df_higher, window)
-
-    # Łączymy: jeżeli którykolwiek z interwałów ma CHoCH, uznajemy za sygnał
-    # (można osobno dodać jako czynnik)
-    return (choch_main_bull, choch_main_bear, choch_higher_bull, choch_higher_bear)
-
 def find_ob_confluence(df: pd.DataFrame, trend: str, threshold: float = 0.5) -> int:
     """
     Wykrywa konfluencję Order Blocków – ile OB znajduje się w pobliżu (w granicach threshold %).
@@ -423,16 +409,6 @@ def find_ob_confluence(df: pd.DataFrame, trend: str, threshold: float = 0.5) -> 
             groups.append([price])
     max_confluence = max(len(g) for g in groups)
     return min(max_confluence, 3)
-
-def detect_choch_h1(df_h1: pd.DataFrame, df_current: pd.DataFrame) -> tuple:
-    """
-    Wykrywa Change of Character na H1 na podstawie ostatnich swingów.
-    Zwraca (choch_bullish_h1, choch_bearish_h1).
-    """
-    # Używamy funkcji detect_choch ale na danych H1
-    # Można też zrobić własną, porównując ostatnie dwa swingi na H1
-    bullish, bearish = detect_choch(df_h1, window=10)
-    return bullish, bearish
 
 def detect_supply_demand(df: pd.DataFrame) -> dict:
     """
@@ -530,9 +506,13 @@ def _smc_cache_key(tf: str) -> str:
 
 @cached_with_key(_smc_cache_key, ttl=10)
 
+@cached_with_key(lambda tf: f"smc_analysis_{tf}", ttl=60)
 def get_smc_analysis(tf: str) -> dict | None:
     """
     Główna funkcja – rozszerzona o nowe wskaźniki SMC i makro.
+    
+    Wyniki są cachowane przez 60 sekund dla optymalizacji wydajności.
+    Klucz cache: "smc_analysis_<interwał>"
     """
     try:
         td_tf = tf if "min" in tf else tf.replace("m", "min")

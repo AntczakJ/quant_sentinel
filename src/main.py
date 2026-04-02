@@ -11,7 +11,6 @@ import re
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import yfinance as yf
 import requests
 import pandas as pd
 
@@ -41,7 +40,6 @@ from src.indicators import ichimoku, volume_profile
 from src.candlestick_patterns import engulfing, pin_bar, inside_bar
 from src.ml_models import ml
 from src.rl_agent import DQNAgent
-from src.bayesian_opt import BayesianOptimizer
 
 # =============================================================================
 # INICJALIZACJA
@@ -145,38 +143,6 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"  {session}: {count} trades, {win_rate:.1%} {win_icon}\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def smc_chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Generuję wykres SMC...")
-    s = get_smc_analysis(USER_PREFS['tf'])
-    if not s:
-        await update.message.reply_text("Brak danych rynkowych.")
-        return
-    td_tf = USER_PREFS['tf'] if "min" in USER_PREFS['tf'] else USER_PREFS['tf'].replace("m", "min")
-    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={td_tf}&apikey={TD_API_KEY}&outputsize=100"
-    data = request_with_retry(url)
-    if not data or 'values' not in data:
-        await update.message.reply_text("Nie udało się pobrać danych do wykresu.")
-        return
-    df = pd.DataFrame(data['values'])
-    df[['open','high','low','close']] = df[['open','high','low','close']].apply(pd.to_numeric)
-    df = df.iloc[::-1].reset_index(drop=True)
-    df['time'] = pd.to_datetime(df['datetime'])
-    df.set_index('time', inplace=True)
-    import mplfinance as mpf
-    addplot = []
-    if s.get('ob_price'):
-        addplot.append(mpf.make_addplot([s['ob_price']]*len(df), scatter=False, color='red', linestyle='--', label='Order Block'))
-    for zone in s.get('supply', []):
-        addplot.append(mpf.make_addplot([zone]*len(df), scatter=False, color='orange', linestyle=':', label='Supply'))
-    for zone in s.get('demand', []):
-        addplot.append(mpf.make_addplot([zone]*len(df), scatter=False, color='green', linestyle=':', label='Demand'))
-    mpf.plot(df, type='candle', style='charles', title=f"XAU/USD ({USER_PREFS['tf']})",
-             addplot=addplot, savefig='temp_chart.png')
-    with open('temp_chart.png', 'rb') as f:
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f,
-                                     caption="Konfiguracja rynku (OB, FVG, Supply/Demand)")
-    os.remove('temp_chart.png')
-
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     balance = db.get_balance(user_id)
@@ -196,25 +162,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
            f"🕒 *OSTATNIE SYGNAŁY:*\n{history_text if history_text else '_Brak historii_'}\n")
     target = update.message if update.message else update.callback_query.message
     await target.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu())
-
-async def send_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    target = update.message if update.message else update.callback_query.message
-    status_msg = await target.reply_text("⏳ Generuję wykres Gold...")
-    try:
-        df = yf.download("GC=F", period="2d", interval=USER_PREFS['tf'], progress=False)
-        plt.figure(figsize=(10,6))
-        plt.plot(df.index, df['Close'], color='#f39c12', label='Gold Price')
-        plt.title(f"GOLD/USD ({USER_PREFS['tf']}) - Live Analysis")
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        plt.close()
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=buf, caption=f"📊 Wykres Gold ({USER_PREFS['tf']})")
-        await status_msg.delete()
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Błąd wykresu: {e}")
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     param_names = ['risk_percent', 'min_tp_distance_mult', 'target_rr', 'min_score']
@@ -325,25 +272,30 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit("❌ Błąd danych rynkowych.")
             return
 
-        # Inicjalizacja zmiennej na surowe dane (zabezpieczenie)
-        df_raw = None
-
         # Pobierz surowe świece do zaawansowanej analizy
         provider = get_provider()
         df_raw = provider.get_candles("XAU/USD", USER_PREFS['tf'], count=100)
-        if df_raw is not None and not df_raw.empty:
-            if ENABLE_ADVANCED_INDICATORS:
-                ichi = ichimoku(df_raw)
-                cloud_bull = (df_raw['close'].iloc[-1] > ichi['senkou_span_a'].iloc[-1] and
-                              df_raw['close'].iloc[-1] > ichi['senkou_span_b'].iloc[-1])
-                vp = volume_profile(df_raw)
-                near_poc = abs(vp['poc'] - s['price']) / s['price'] < 0.01
-            if ENABLE_PATTERNS:
-                engulf = engulfing(df_raw)
-                pin = pin_bar(df_raw)
-                inside = inside_bar(df_raw)
+        
+        # Bezpieczne sprawdzenie czy dane istnieją
+        has_valid_data = df_raw is not None and not df_raw.empty and len(df_raw) >= 10
+        
+        if has_valid_data:
+            try:
+                if ENABLE_ADVANCED_INDICATORS:
+                    ichi = ichimoku(df_raw)
+                    cloud_bull = (df_raw['close'].iloc[-1] > ichi['senkou_span_a'].iloc[-1] and
+                                  df_raw['close'].iloc[-1] > ichi['senkou_span_b'].iloc[-1])
+                    vp = volume_profile(df_raw)
+                    near_poc = abs(vp['poc'] - s['price']) / s['price'] < 0.01
+                if ENABLE_PATTERNS:
+                    engulf = engulfing(df_raw)
+                    pin = pin_bar(df_raw)
+                    inside = inside_bar(df_raw)
+            except Exception as e:
+                logger.warning(f"⚠️ Błąd przy obliczeniu zaawansowanych wskaźników: {e}")
+                has_valid_data = False
         else:
-            logger.warning("Brak danych surowych do zaawansowanej analizy")
+            logger.debug(f"Brak wystarczających danych surowych (otrzymano {len(df_raw) if df_raw is not None else 0} świec)")
 
         # Kontekst makro
         macro_context = (f"Reżim: {s['macro_regime'].upper()} | USD/JPY Z-score: {s['usdjpy_zscore']} | "
@@ -374,10 +326,10 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         NEWSY: {raw_news[:500]}
         HISTORIA OSTATNICH STRAT: {db.get_recent_lessons(5)}
         """
-        # Dodatkowe informacje z zaawansowanej analizy
-        if ENABLE_ADVANCED_INDICATORS and 'cloud_bull' in locals():
+        # Dodatkowe informacje z zaawansowanej analizy (bezpieczne sprawdzenie)
+        if ENABLE_ADVANCED_INDICATORS and has_valid_data and 'cloud_bull' in locals():
             learning_context += f"\nWSKAŹNIKI ZAAWANSOWANE:\n- Cena powyżej chmury Ichimoku: {cloud_bull}\n- Cena blisko POC: {near_poc}\n"
-        if ENABLE_PATTERNS and 'engulf' in locals():
+        if ENABLE_PATTERNS and has_valid_data and 'engulf' in locals():
             learning_context += f"\nFORMACJE ŚWIECOWE:\n- Engulfing: {engulf}\n- Pin Bar: {pin}\n- Inside Bar: {inside}\n"
 
         learning_prompt = """
@@ -421,24 +373,27 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         factors = {}                         # słownik czynników
 
         # ========== AGENT RL ==========
-        if rl_agent is not None and df_raw is not None and not df_raw.empty:
-            close_prices = df_raw['close'].values
-            if len(close_prices) >= 20:
-                state = rl_agent.build_state(close_prices, balance=1.0, position=0)
-                action = rl_agent.act(state)
-                if (direction == "LONG" and action == 1) or (direction == "SHORT" and action == 2):
-                    factors['rl_action'] = 1
-            else:
-                logger.debug("Not enough close prices for RL agent")
+        if rl_agent is not None and has_valid_data:
+            try:
+                close_prices = df_raw['close'].values
+                if len(close_prices) >= 20:
+                    state = rl_agent.build_state(close_prices, balance=1.0, position=0)
+                    action = rl_agent.act(state)
+                    if (direction == "LONG" and action == 1) or (direction == "SHORT" and action == 2):
+                        factors['rl_action'] = 1
+                else:
+                    logger.debug(f"Not enough close prices for RL agent: {len(close_prices)}")
+            except Exception as e:
+                logger.debug(f"⚠️ Błąd RL Agent: {e}")
         # =================================
 
         # ========== ZAAWANSOWANE CZYNNIKI ==========
-        if ENABLE_ADVANCED_INDICATORS and 'cloud_bull' in locals():
+        if ENABLE_ADVANCED_INDICATORS and has_valid_data and 'cloud_bull' in locals():
             if cloud_bull:
                 factors['ichimoku_bull'] = 1
             if near_poc:
                 factors['near_poc'] = 1
-        if ENABLE_PATTERNS and 'engulf' in locals():
+        if ENABLE_PATTERNS and has_valid_data and 'engulf' in locals():
             if engulf == 'bullish':
                 factors['engulfing_bull'] = 1
             elif engulf == 'bearish':
@@ -449,14 +404,17 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 factors['pin_bar_bear'] = 1
             if inside:
                 factors['inside_bar'] = 1
-        if ENABLE_ML and df_raw is not None and not df_raw.empty:
-            prob_xgb = ml.predict_xgb(df_raw)
-            prob_lstm = ml.predict_lstm(df_raw)
-            ml_signal = (prob_xgb + prob_lstm) / 2
-            if direction == "LONG" and ml_signal > 0.6:
-                factors['ml_bull'] = 1
-            elif direction == "SHORT" and ml_signal < 0.4:
-                factors['ml_bear'] = 1
+        if ENABLE_ML and has_valid_data:
+            try:
+                prob_xgb = ml.predict_xgb(df_raw)
+                prob_lstm = ml.predict_lstm(df_raw)
+                ml_signal = (prob_xgb + prob_lstm) / 2
+                if direction == "LONG" and ml_signal > 0.6:
+                    factors['ml_bull'] = 1
+                elif direction == "SHORT" and ml_signal < 0.4:
+                    factors['ml_bear'] = 1
+            except Exception as e:
+                logger.debug(f"⚠️ Błąd ML models: {e}")
         # =========================================
 
         # Konfluencja OB
@@ -640,19 +598,16 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_tf = '5m'
         USER_PREFS["tf"] = new_tf
         await safe_edit(f"✅ Interwał zmieniony na: *{new_tf}*")
-    elif query.data == 'chart_action':
-        await send_chart(update, context)
     elif query.data == 'help':
         msg = ("📖 *POMOC QUANT SENTINEL*\n\n🔹 *Przyciski w menu*\n"
                "• 🎯 ANALIZA QUANT PRO – pełna analiza SMC + AI\n• 📊 STATUS SYSTEMU – kapitał i ustawienia\n"
                "• 📰 NEWSY – najnowsze wiadomości\n• 🎭 SENTYMENT AI – nastroje rynkowe\n"
-               "• ⏱ INTERWAŁ – zmiana ram czasowych\n• 📈 WYKRES – wykres ceny złota\n"
-               "• ⚙️ PORTFEL – zmiana kapitału\n\n🔹 *Komendy tekstowe*\n"
+               "• ⏱ INTERWAŁ – zmiana ram czasowych\n• ⚙️ PORTFEL – zmiana kapitału\n\n🔹 *Komendy tekstowe*\n"
                "`/cap KWOTA WALUTA` – ustaw kapitał (np. `/cap 5000 PLN`)\n"
-               "`/stats` – historia transakcji i Win Rate\n`/chart` – wykres ceny złota\n"
+               "`/stats` – historia transakcji i Win Rate\n"
                "`/settings` – wyświetl parametry dynamiczne\n`/set param wartość` – zmień parametr (np. `/set min_score 5`)\n"
                "`/backtest` – uruchom optymalizację parametrów na historii\n`/portfolio` – krzywa kapitału i drawdown\n"
-               "`/sessions` – statystyki skuteczności według sesji\n`/smc_chart` – wykres z zaznaczonymi OB, FVG, Supply/Demand\n\n"
+               "`/sessions` – statystyki skuteczności według sesji\n\n"
                "📌 *Parametry dynamiczne*\n`min_score` – minimalna ocena setupu (domyślnie 5)\n"
                "`risk_percent` – % kapitału ryzykowany na transakcję\n"
                "`min_tp_distance_mult` – mnożnik ATR dla minimalnego dystansu TP\n"
@@ -669,15 +624,31 @@ def run_bot():
     app = ApplicationBuilder().token(TOKEN).request(request_config).get_updates_request(request_config).build()
     if app.job_queue:
         job_settings = {"misfire_grace_time": 60}
-        if scan_market_task is not None:
-            app.job_queue.run_repeating(scan_market_task, interval=300, first=10, job_kwargs=job_settings)
-        if resolve_trades_task is not None:
-            app.job_queue.run_repeating(resolve_trades_task, interval=120, first=15, job_kwargs=job_settings)
-        app.job_queue.run_repeating(auto_analyze_and_learn, interval=900, first=30, job_kwargs=job_settings)
+        
+        # Sprawdzenie czy zadania istnieją i logowanie
+        try:
+            if scan_market_task is not None:
+                logger.info("📡 Rejestrowanie zadania: scan_market_task (co 5 min)")
+                app.job_queue.run_repeating(scan_market_task, interval=300, first=10, job_kwargs=job_settings)
+            else:
+                logger.warning("⚠️ scan_market_task = None, nie będzie skanowania rynku")
+                
+            if resolve_trades_task is not None:
+                logger.info("📊 Rejestrowanie zadania: resolve_trades_task (co 2 min)")
+                app.job_queue.run_repeating(resolve_trades_task, interval=120, first=15, job_kwargs=job_settings)
+            else:
+                logger.warning("⚠️ resolve_trades_task = None, nie będzie rozwiązywania tradów")
+                
+            logger.info("🧠 Rejestrowanie zadania: auto_analyze_and_learn (co 15 min)")
+            app.job_queue.run_repeating(auto_analyze_and_learn, interval=900, first=30, job_kwargs=job_settings)
+        except Exception as e:
+            logger.error(f"❌ Błąd rejestrowania zadań: {e}")
+    else:
+        logger.warning("⚠️ Job queue nie dostępny!")
+        
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("cap", cap_cmd))
     app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("chart", send_chart))
     app.add_handler(CommandHandler("sessions", sessions_command))
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("set", set_param_command))

@@ -13,9 +13,10 @@ Klucz API jest pobierany z config.py (który czyta go z pliku .env).
 
 from openai import OpenAI
 from src.config import OPENAI_KEY
+from src.logger import logger
 
 # Inicjalizujemy klienta OpenAI raz przy imporcie modułu
-client = OpenAI(api_key=OPENAI_KEY)
+client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
 # Słownik systemowych promptów dla różnych kontekstów analizy.
 # Każdy kontekst ma swój specjalistyczny prompt który optymalizuje odpowiedź AI.
@@ -80,7 +81,12 @@ def ask_ai_gold(context_type: str, raw_data: str) -> str:
         - max_tokens: domyślnie bez limitu (odpowiedzi są krótkie z natury promptu)
     """
     if not OPENAI_KEY:
-        return "❌ Brak klucza OpenAI w configu"
+        logger.warning("❌ Brak klucza OpenAI - analiza AI niedostępna")
+        return "❌ Brak klucza OpenAI - kontaktuj administratora"
+
+    if client is None:
+        logger.warning("❌ Klient OpenAI nie został inicjalizowany")
+        return "❌ Błąd inicjalizacji OpenAI - spróbuj później"
 
     # Używamy zdefiniowanego promptu lub generycznego jeśli typ nie jest znany
     system_prompt = PROMPTS.get(context_type, "Analizuj dane rynkowe.")
@@ -97,4 +103,6 @@ def ask_ai_gold(context_type: str, raw_data: str) -> str:
         return response.choices[0].message.content
 
     except Exception as e:
-        return f"⚠️ Błąd AI: {str(e)}"
+        error_msg = f"⚠️ Błąd AI ({type(e).__name__}): {str(e)}"
+        logger.error(error_msg)
+        return "⚠️ Błąd komunikacji z OpenAI - spróbuj później"

@@ -12,6 +12,7 @@ Struktura .env:
 """
 
 import os
+import threading
 from dotenv import load_dotenv
 
 # Wczytuje zmienne środowiskowe z pliku .env znajdującego się w katalogu głównym projektu
@@ -39,6 +40,8 @@ USER_PREFS = {
 # --- PAMIĘĆ SKANERA ---
 # Przechowuje ostatnio zaobserwowany stan rynku przez scanner.py.
 # Używane do wykrywania zmian trendu i nowych stref FVG między skanami.
+# THREAD-SAFE: chroni dostęp za pomocą Lock
+LAST_STATUS_LOCK = threading.Lock()
 LAST_STATUS = {
     "trend": None,  # Ostatni zaobserwowany trend ("bull" lub "bear")
     "fvg": None     # Ostatnia zaobserwowana strefa Fair Value Gap

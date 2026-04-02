@@ -5,7 +5,6 @@ python-telegram-bot[job_queue]==20.0
 pandas
 pandas_ta
 numpy
-yfinance               # opcjonalnie – tylko do wykresów /chart; jeśli nie używasz, usuń
 
 # --- AI I SENTIMENT (FinBERT) ---
 transformers
@@ -16,7 +15,6 @@ openai
 # --- GRAFIKA I WYKRESY ---
 matplotlib
 Pillow
-mplfinance            # opcjonalnie – tylko do wykresów; jeśli nie potrzebujesz, usuń
 
 # --- NARZĘDZIA DODATKOWE ---
 requests
