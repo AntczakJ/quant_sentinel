@@ -98,5 +98,12 @@ if __name__ == "__main__":
 
     # Krok 3: uruchom głównego bota
     logger.info("🚀 QUANT SENTINEL BOOTING...")
-    from src.main import run_bot
-    run_bot()
+    try:
+        from src.main import run_bot
+        run_bot()
+    except KeyboardInterrupt:
+        logger.info("⚠️ Bot przerwany przez użytkownika (Ctrl+C)")
+    except Exception as e:
+        logger.error(f"❌ KRYTYCZNY BŁĄD: {e}")
+        logger.error("Sprawdź logi powyżej i upewnij się że wszystkie zmienne .env są ustawione")
+        sys.exit(1)

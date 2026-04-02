@@ -21,8 +21,7 @@ def main_menu() -> InlineKeyboardMarkup:
       Rząd 1: Analiza Quant PRO (główna funkcja)
       Rząd 2: Status systemu | Newsy
       Rząd 3: Sentyment AI | Interwał
-      Rząd 4: Wykres | Portfel
-      Rząd 5: Pomoc
+      Rząd 4: Portfel | Pomoc
     """
     keyboard = [
         [
@@ -37,10 +36,9 @@ def main_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton("⏱ INTERWAŁ", callback_data='menu_tf'),
         ],
         [
-            InlineKeyboardButton("📈 WYKRES", callback_data='chart_action'),
             InlineKeyboardButton("⚙️ PORTFEL", callback_data='change_cap'),
-        ],
-        [InlineKeyboardButton("📖 POMOC", callback_data='help')]
+            InlineKeyboardButton("📖 POMOC", callback_data='help')
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
