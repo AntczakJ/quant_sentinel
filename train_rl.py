@@ -12,7 +12,7 @@ from src.rl_agent import TradingEnv, DQNAgent
 from src.logger import logger
 
 # Ustawienia trenowania
-EPISODES = 100          # liczba epizodów (przebiegów symulacji)
+EPISODES = 5          # liczba epizodów (przebiegów symulacji)
 SEQ_LEN = 20            # długość okna stanu (liczba świec)
 INITIAL_BALANCE = 10000
 TRANSACTION_COST = 0.001
@@ -53,18 +53,22 @@ def main():
         state = env.reset()
         total_reward = 0
         done = False
+        step = 0
         while not done:
             action = agent.act(state)
             next_state, reward, done, _ = env.step(action)
             agent.remember(state, action, reward, next_state, done)
             state = next_state
             total_reward += reward
-            agent.replay(batch_size=32)
-        scores.append(total_reward)
-        # Wyświetl postęp co 10 epizodów
-        if (episode + 1) % 10 == 0:
-            avg_score = np.mean(scores[-10:])
-            logger.info(f"Epizod {episode+1}/{EPISODES} – średnia nagroda (10 ostatnich): {avg_score:.2f}")
+            step += 1
+            if step % 10 == 0:
+                agent.replay(batch_size=32)
+
+        scores.append(total_reward)  # ← DODANE
+        # Wyświetlaj co epizod (nie co 10, bo masz tylko 5)
+        avg = np.mean(scores[-min(5, len(scores)):])
+        logger.info(
+            f"Epizod {episode + 1}/{EPISODES} – nagroda: {total_reward:.4f} – średnia: {avg:.4f} – epsilon: {agent.epsilon:.3f}")
 
     # 5. Zapisz model
     os.makedirs("models", exist_ok=True)

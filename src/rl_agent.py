@@ -29,23 +29,32 @@ class TradingEnv:
         if len(window) < 20:
             window = np.pad(window, (20-len(window),0), 'constant')
         return np.concatenate([window, [self.balance/self.initial_balance, self.position]])
+
     def step(self, action):
-        if self.index >= len(self.data)-1:
+        if self.index >= len(self.data) - 1:
             self.done = True
             return self._state(), 0, self.done, {}
+
         price = self.data['close'].iloc[self.index]
-        next_price = self.data['close'].iloc[self.index+1]
+        next_price = self.data['close'].iloc[self.index + 1]
         change = (next_price - price) / price
-        if action == 1 and self.position == 0:  # buy
+
+        # Otwieranie pozycji
+        if action == 1 and self.position == 0:  # kup
             self.position = 1
             self.balance -= self.transaction_cost * price
         elif action == 2 and self.position == 0:  # short
             self.position = -1
             self.balance -= self.transaction_cost * price
+        # Zamykanie pozycji (akcja 0 = czekaj/zamknij)
+        elif action == 0 and self.position != 0:
+            self.position = 0
+
         reward = change if self.position == 1 else (-change if self.position == -1 else 0)
         self.balance += reward * price
         self.index += 1
-        if self.index >= len(self.data)-1:
+
+        if self.index >= len(self.data) - 1:
             self.done = True
         return self._state(), reward, self.done, {}
 
@@ -79,13 +88,23 @@ class DQNAgent:
         if len(self.memory) < batch_size:
             return
         minibatch = random.sample(self.memory, batch_size)
-        for state, action, reward, next_state, done in minibatch:
+
+        states = np.array([s for s, a, r, ns, d in minibatch])
+        next_states = np.array([ns for s, a, r, ns, d in minibatch])
+
+        # Jedno predict na cały batch zamiast osobno dla każdej próbki
+        q_values = self.model.predict(states, verbose=0)
+        q_next = self.model.predict(next_states, verbose=0)
+
+        for i, (state, action, reward, next_state, done) in enumerate(minibatch):
             target = reward
             if not done:
-                target += self.gamma * np.amax(self.model.predict(next_state.reshape(1,-1), verbose=0)[0])
-            target_f = self.model.predict(state.reshape(1,-1), verbose=0)
-            target_f[0][action] = target
-            self.model.fit(state.reshape(1,-1), target_f, epochs=1, verbose=0)
+                target += self.gamma * np.amax(q_next[i])
+            q_values[i][action] = target
+
+        # Jedno fit na cały batch
+        self.model.fit(states, q_values, epochs=1, verbose=0, batch_size=batch_size)
+
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
     def save(self, path):
