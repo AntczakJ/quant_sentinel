@@ -3,11 +3,12 @@
 self_learning.py – mechanizmy samouczenia: optymalizacja parametrów, analiza wzorców.
 """
 
-from src.database import NewsDB
-from src.logger import logger
-
 import asyncio
 import re
+import random
+
+from src.database import NewsDB
+from src.logger import logger
 from src.smc_engine import get_smc_analysis
 from src.finance import calculate_position
 from src.ai_engine import ask_ai_gold
@@ -188,6 +189,8 @@ async def auto_analyze_and_learn(context):
     Automatycznie wykonuje analizę Quant PRO i zapisuje sygnał do bazy.
     Wywoływane cyklicznie przez job_queue.
     """
+    from src.logger import logger as job_logger  # Importuj logger lokalnie dla job_queue
+
     try:
         # Pobierz analizy dla trzech interwałów (asynchronicznie)
         s, s_higher, s_lower = await asyncio.gather(
@@ -196,7 +199,7 @@ async def auto_analyze_and_learn(context):
             asyncio.to_thread(get_smc_analysis, "5m")
         )
         if not s or not s_higher or not s_lower:
-            logger.warning("⚠️ [AUTO-LEARN] Brak danych – pomijam.")
+            job_logger.warning("⚠️ [AUTO-LEARN] Brak danych – pomijam.")
             return
 
         # Kontekst makro
@@ -235,13 +238,13 @@ async def auto_analyze_and_learn(context):
         p = calculate_position(s, balance, currency, TD_API_KEY)
 
         if p.get("direction") == "CZEKAJ":
-            logger.info(f"⏸️ [AUTO-LEARN] Sygnał odrzucony: {p.get('reason')}")
+            job_logger.info(f"⏸️ [AUTO-LEARN] Sygnał odrzucony: {p.get('reason')}")
             return
 
         # Opcjonalnie: pomiń sygnały z niską oceną AI
         MIN_SCORE = 5.0
         if score < MIN_SCORE:
-            logger.info(f"⏸️ [AUTO-LEARN] Pomijam sygnał – niska ocena AI ({score}/10)")
+            job_logger.info(f"⏸️ [AUTO-LEARN] Pomijam sygnał – niska ocena AI ({score}/10)")
             return
 
         # --- Oblicz czynniki w oparciu o rzeczywisty kierunek transakcji ---
@@ -331,7 +334,7 @@ async def auto_analyze_and_learn(context):
             pattern=pattern,
             factors=factors
         )
-        logger.info(f"📡 [AUTO-LEARN] Zapisano sygnał {direction} do bazy (ocena AI: {score}/10, czynniki: {list(factors.keys())})")
+        job_logger.info(f"📡 [AUTO-LEARN] Zapisano sygnał {direction} do bazy (ocena AI: {score}/10, czynniki: {list(factors.keys())})")
 
         # Opcjonalnie: wysyłaj powiadomienie na czat (np. tylko gdy score > 8)
         if score > 8:
@@ -346,9 +349,12 @@ async def auto_analyze_and_learn(context):
             send_telegram_alert(msg)
 
     except Exception as e:
-        logger.error(f"❌ [AUTO-LEARN] Błąd: {e}")
+        try:
+            job_logger.error(f"❌ [AUTO-LEARN] Błąd: {e}")
+        except:
+            # Fallback jeśli logger nie dostępny
+            print(f"❌ [AUTO-LEARN] Błąd: {e}")
 
-import random
 
 def update_factor_weights(trade_id, outcome):
     """

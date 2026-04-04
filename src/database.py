@@ -172,6 +172,17 @@ class NewsDB:
         except Exception as e:
             logger.warning(f"Migration: {e}")
 
+        # Create indexes for performance
+        try:
+            self._execute("CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_trades_pattern ON trades(pattern)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_scanner_timestamp ON scanner_signals(timestamp)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_pattern_stats_win_rate ON pattern_stats(win_rate)")
+            logger.info("Database indexes created successfully")
+        except Exception as e:
+            logger.warning(f"Index creation: {e}")
+
     # ----- Helper methods -----
     def get_session(self, timestamp: str) -> str:
         hour = int(timestamp[11:13])
@@ -287,7 +298,7 @@ class NewsDB:
             'weight_ml_bear': 1.5,
             'weight_rl_buy': 1.5,
             'weight_rl_sell': 1.5,
-            
+
         }
         for name, val in factor_weights.items():
             if self.get_param(name) is None:
@@ -372,7 +383,7 @@ class NewsDB:
 
     def get_recent_lessons(self, limit=5):
         self.cursor.execute("""
-            SELECT direction, entry, rsi, trend, status FROM trades 
+            SELECT direction, entry, rsi, trend, status FROM trades
             WHERE status = 'LOSS' ORDER BY id DESC LIMIT ?
         """, (limit,))
         return self.cursor.fetchall()
@@ -382,6 +393,26 @@ class NewsDB:
             INSERT INTO scanner_signals (direction, entry, sl, tp, rsi, trend, structure, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')
         """, (direction, entry, sl, tp, rsi, trend, structure))
+
+    def get_latest_scanner_signal(self):
+        """Get the most recent scanner signal (PENDING or latest regardless of status)"""
+        self.cursor.execute("""
+            SELECT id, direction, entry, sl, tp, rsi, trend, structure
+            FROM scanner_signals
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        return self.cursor.fetchone()
+
+    def get_all_scanner_signals(self, limit=50):
+        """Get all scanner signals, ordered by most recent first"""
+        self.cursor.execute("""
+            SELECT id, direction, entry, sl, tp, rsi, trend, structure, status, timestamp
+            FROM scanner_signals
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (limit,))
+        return self.cursor.fetchall()
 
     def check_trade_outcomes(self, current_gold_price):
         self.cursor.execute("SELECT id, direction, sl, tp, rsi, trend, structure FROM scanner_signals WHERE status = 'PENDING'")
@@ -401,7 +432,7 @@ class NewsDB:
     def get_fail_rate_for_pattern(self, rsi, structure):
         try:
             self.cursor.execute("""
-                SELECT status FROM trades 
+                SELECT status FROM trades
                 WHERE rsi BETWEEN ? AND ? AND structure = ?
             """, (rsi - 5, rsi + 5, structure))
             results = self.cursor.fetchall()
@@ -417,4 +448,4 @@ class NewsDB:
         return self.cursor.fetchone() is not None
 
     def mark_news_as_processed(self, title_hash: str):
-        self._execute("INSERT INTO processed_news (title_hash) VALUES (?)", (title_hash,))  
+        self._execute("INSERT INTO processed_news (title_hash) VALUES (?)", (title_hash,))

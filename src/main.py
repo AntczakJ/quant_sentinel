@@ -275,10 +275,10 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Pobierz surowe świece do zaawansowanej analizy
         provider = get_provider()
         df_raw = provider.get_candles("XAU/USD", USER_PREFS['tf'], count=100)
-        
+
         # Bezpieczne sprawdzenie czy dane istnieją
         has_valid_data = df_raw is not None and not df_raw.empty and len(df_raw) >= 10
-        
+
         if has_valid_data:
             try:
                 if ENABLE_ADVANCED_INDICATORS:
@@ -624,28 +624,28 @@ def run_bot():
     app = ApplicationBuilder().token(TOKEN).request(request_config).get_updates_request(request_config).build()
     if app.job_queue:
         job_settings = {"misfire_grace_time": 60}
-        
+
         # Sprawdzenie czy zadania istnieją i logowanie
         try:
             if scan_market_task is not None:
-                logger.info("📡 Rejestrowanie zadania: scan_market_task (co 5 min)")
-                app.job_queue.run_repeating(scan_market_task, interval=300, first=10, job_kwargs=job_settings)
+                logger.info("📡 Rejestrowanie zadania: scan_market_task (co 15 min)")
+                app.job_queue.run_repeating(scan_market_task, interval=900, first=30, job_kwargs=job_settings)
             else:
                 logger.warning("⚠️ scan_market_task = None, nie będzie skanowania rynku")
-                
+
             if resolve_trades_task is not None:
-                logger.info("📊 Rejestrowanie zadania: resolve_trades_task (co 2 min)")
-                app.job_queue.run_repeating(resolve_trades_task, interval=120, first=15, job_kwargs=job_settings)
+                logger.info("📊 Rejestrowanie zadania: resolve_trades_task (co 10 min)")
+                app.job_queue.run_repeating(resolve_trades_task, interval=600, first=45, job_kwargs=job_settings)
             else:
                 logger.warning("⚠️ resolve_trades_task = None, nie będzie rozwiązywania tradów")
-                
-            logger.info("🧠 Rejestrowanie zadania: auto_analyze_and_learn (co 15 min)")
-            app.job_queue.run_repeating(auto_analyze_and_learn, interval=900, first=30, job_kwargs=job_settings)
+
+            logger.info("🧠 Rejestrowanie zadania: auto_analyze_and_learn (co 30 min)")
+            app.job_queue.run_repeating(auto_analyze_and_learn, interval=1800, first=60, job_kwargs=job_settings)
         except Exception as e:
             logger.error(f"❌ Błąd rejestrowania zadań: {e}")
     else:
         logger.warning("⚠️ Job queue nie dostępny!")
-        
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("cap", cap_cmd))
     app.add_handler(CommandHandler("stats", stats_command))

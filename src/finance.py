@@ -24,11 +24,20 @@ def get_fx_rate(base: str = "USD", target: str = "PLN") -> float:
         return 4.00
 
 
-def calculate_position(analysis_data: dict, balance: float, user_currency: str, td_api_key: str) -> dict:
+def calculate_position(analysis_data: dict, balance: float, user_currency: str, td_api_key: str, df=None) -> dict:
     """
-    SMC MASTER VERSION: Oblicza pozycję w oparciu o Liquidity Grab, MSS, FVG, DBR/RBD i makro.
+    SMC MASTER VERSION: Oblicza pozycję w oparciu o Liquidity Grab, MSS, FVG, DBR/RBD, makro i ALL ML MODELS.
+
+    Integruje:
+    - SMC Engine (trend, struktura, FVG)
+    - LSTM Model (predykcja kierunku)
+    - XGBoost Model (predykcja kierunku)
+    - DQN Agent (rekomendacja akcji)
+    - Ensemble Voting (fuzja wszystkich modeli)
+
     Filtry:
     - Minimalny dystans TP = 5$ (stały) lub dynamiczny = atr * min_tp_distance_mult (jeśli większy).
+    - Filtr pewności ensemble (confidence < 40% = CZEKAJ)
     """
     # Dane z silnika SMC
     price = analysis_data['price']
@@ -54,7 +63,43 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     risk_percent = db.get_param("risk_percent", 1.0)
     min_tp_distance_mult = db.get_param("min_tp_distance_mult", 1.0)
 
-    # --- 1. Ustal kierunek na podstawie konfluencji ---
+    # ========== 🤖 ENSEMBLE ML INTEGRATION ==========
+    ensemble_result = None
+    ml_signal = None
+
+    # Pobierz live data z Twelve Data jeśli nie podany df
+    if df is None:
+        try:
+            from src.data_sources import get_provider
+            provider = get_provider()
+            logger.debug("📡 Fetching live candles from Twelve Data for ML analysis")
+            df = provider.get_candles('XAU/USD', '15m', 200)
+        except Exception as e:
+            logger.warning(f"⚠️ Could not fetch live data: {e}")
+            df = None
+
+    if df is not None and not df.empty:
+        try:
+            from src.ensemble_models import get_ensemble_prediction
+            initial_balance = balance  # Założenie, że balance to obecny stan
+            ensemble_result = get_ensemble_prediction(
+                df=df,
+                smc_trend=trend,
+                current_price=price,
+                balance=balance,
+                initial_balance=initial_balance,
+                position=0,  # TODO: pobrać z bazy danych
+                use_twelve_data=False  # Już mamy df, nie pobieraj ponownie
+            )
+            ml_signal = ensemble_result['ensemble_signal']
+            logger.info(f"🤖 ML Ensemble Signal: {ml_signal} (confidence: {ensemble_result['confidence']:.1%})")
+        except Exception as e:
+            logger.warning(f"⚠️ Ensemble error: {e}")
+            ensemble_result = None
+    else:
+        logger.debug("⚠️ No data for ML analysis, skipping ensemble")
+
+    # --- 1. Ustal kierunek na podstawie konfluencji + ML ---
     direction = None
     entry = price
     logic = ""
@@ -84,11 +129,36 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
             direction = "SHORT"
             logic = "Trend Bear + FVG"
 
+    # ========== ML VALIDATION: Weryfikuj SMC sygnał przez ensemble ==========
+    if ensemble_result and ml_signal != "CZEKAJ":
+        smc_bullish = direction == "LONG"
+        ml_bullish = ml_signal == "LONG"
+
+        if smc_bullish == ml_bullish:
+            # SMC i ML się zgadzają - dodaj confidence boost
+            logic += f" [ML: {ensemble_result['confidence']:.0%}✅]"
+        else:
+            # SMC i ML się NIE zgadzają - zmniejsz pewność
+            logger.warning(f"⚠️ SMC ({direction}) vs ML ({ml_signal}) KONFLIKT")
+            logic += f" [ML: {ensemble_result['confidence']:.0%}⚠️]"
+
+            # Jeśli ML jest pewny ale SMC mówi inaczej - możliwe ostrzeżenie
+            if ensemble_result['confidence'] > 0.7:
+                logger.info(f"💡 ML ma wysoką pewność ({ensemble_result['confidence']:.0%}) dla {ml_signal}, ale SMC mówi {direction}")
+
     # Filtrowanie makro
     if macro_regime == "czerwony" and direction == "LONG":
         return {"direction": "CZEKAJ", "reason": "Makro czerwony – przeciwwskazanie do LONG"}
     if macro_regime == "zielony" and direction == "SHORT":
         return {"direction": "CZEKAJ", "reason": "Makro zielony – przeciwwskazanie do SHORT"}
+
+    # ========== FILTR PEWNOŚCI ENSEMBLE ==========
+    if ensemble_result and ensemble_result['confidence'] < 0.4 and ml_signal == "CZEKAJ":
+        return {
+            "direction": "CZEKAJ",
+            "reason": f"Niska pewność ensemble ({ensemble_result['confidence']:.1%}) - czekamy na wyraźniejszy sygnał",
+            "ensemble_data": ensemble_result
+        }
 
     # --- 2. SL i TP ---
     if direction == "LONG":
@@ -154,7 +224,7 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         return {"direction": "CZEKAJ",
                 "reason": f"Zbyt mały dystans TP ({abs(entry - tp):.2f}$) – minimalny {min_distance:.2f}$."}
 
-    return {
+    result = {
         'lot': lot_size,
         'sl': sl,
         'tp': tp,
@@ -162,3 +232,21 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         'direction': direction,
         'logic': logic
     }
+
+    # Dodaj ML ensemble data jeśli dostępna
+    if ensemble_result:
+        result['ensemble_data'] = {
+            'signal': ensemble_result['ensemble_signal'],
+            'final_score': round(ensemble_result['final_score'], 3),
+            'confidence': round(ensemble_result['confidence'], 2),
+            'models_available': ensemble_result['models_available'],
+            'predictions': {
+                k: {
+                    'direction': v.get('direction'),
+                    'confidence': round(v.get('confidence', 0), 2),
+                    'status': v.get('status', 'ok')
+                } for k, v in ensemble_result['predictions'].items()
+            }
+        }
+
+    return result

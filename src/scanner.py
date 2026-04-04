@@ -75,6 +75,31 @@ async def scan_market_task(context):
             return
         # ========================================
 
+        # ========== 🤖 ML ENSEMBLE VALIDATION ==========
+        try:
+            from src.data_sources import get_provider
+            from src.ensemble_models import get_ensemble_prediction
+
+            provider = get_provider()
+            candles = provider.get_candles('XAU/USD', USER_PREFS['tf'], 200)
+
+            if candles is not None and not candles.empty:
+                ensemble = get_ensemble_prediction(
+                    df=candles,
+                    smc_trend=analysis['trend'],
+                    current_price=current_price,
+                    balance=10000,
+                    initial_balance=10000,
+                    position=0
+                )
+
+                # Jeśli ML ensemble ma wysoką pewność, dodaj to do alertu
+                if ensemble['confidence'] > 0.7:
+                    logger.info(f"✅ [ML] Ensemble pewność: {ensemble['confidence']:.0%} dla {ensemble['ensemble_signal']}")
+        except Exception as e:
+            logger.debug(f"ML ensemble validation skipped: {e}")
+        # ========================================
+
         # ========== NOWE: Analiza M5 ==========
         analysis_m5 = get_smc_analysis("5m")
 

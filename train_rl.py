@@ -12,7 +12,7 @@ from src.rl_agent import TradingEnv, DQNAgent
 from src.logger import logger
 
 # Ustawienia trenowania
-EPISODES = 5          # liczba epizodów (przebiegów symulacji)
+EPISODES = 200          # liczba epizodów (przebiegów symulacji)
 SEQ_LEN = 20            # długość okna stanu (liczba świec)
 INITIAL_BALANCE = 10000
 TRANSACTION_COST = 0.001
