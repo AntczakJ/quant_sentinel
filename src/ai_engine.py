@@ -16,7 +16,12 @@ from src.config import OPENAI_KEY
 from src.logger import logger
 
 # Inicjalizujemy klienta OpenAI raz przy imporcie modułu
-client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
+if OPENAI_KEY:
+    client = OpenAI(api_key=OPENAI_KEY)
+    logger.info(f"✅ OpenAI client initialized (key: {OPENAI_KEY[:20]}...)")
+else:
+    client = None
+    logger.warning("⚠️ OpenAI API key not found in .env - AI features will be unavailable")
 
 # Słownik systemowych promptów dla różnych kontekstów analizy.
 # Każdy kontekst ma swój specjalistyczny prompt który optymalizuje odpowiedź AI.

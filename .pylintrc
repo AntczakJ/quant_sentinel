@@ -1,0 +1,15 @@
+[MASTER]
+max-line-length = 120
+disable =
+    C0111,  # missing-docstring
+    C0103,  # invalid-name (allows snake_case)
+    W0703,  # broad-except
+    R0913,  # too-many-arguments
+    R0914,  # too-many-locals
+
+[DESIGN]
+max-attributes = 7
+
+[FORMAT]
+indent-string = '    '
+

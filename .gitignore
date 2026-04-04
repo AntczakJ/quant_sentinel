@@ -1,48 +1,103 @@
-# Środowisko wirtualne
+# ==================== PYTHON & VIRTUAL ENV ====================
 .venv/
 venv/
 ENV/
 env/
-
-# Pliki Pythona
-__pycache__/
 *.py[cod]
 *$py.class
 *.so
+__pycache__/
 .pytest_cache/
+*.egg-info/
+dist/
+build/
 
+# ==================== MACHINE LEARNING MODELS ====================
+# Keep these in your local development - they are trained models
+# Uncomment if you want to not track them in git:
+# models/*.h5
+# models/*.keras
+# models/*.pkl
+# models/*.joblib
 
+# ==================== CACHE & ARTIFACTS ====================
+cache/
+*.cache
+.cache
+__pycache__/
 
-# Pliki konfiguracyjne z kluczami
+# ==================== DATABASE ====================
+# Keep database backups locally but don't track the main DB
+# Uncomment if needed:
+# data/sentinel.db
+# data/*.db.bak
+data/sentinel_backup_*.db
+
+# ==================== SENSITIVE & CONFIGURATION ====================
 .env
 .env.*
+.env.local
+.env.*.local
 *.key
 *.pem
+secrets/
+credentials/
 
-# IDE i edytory
+# ==================== LOGS & RUNTIME ====================
+logs/
+*.log
+*.log.*
+logs/sentinel.log
+
+# ==================== IDE & EDITORS ====================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+.project
+.classpath
+*.sublime-project
+*.sublime-workspace
+.vim/
 
-# Logi
-*.log
-logs/
+# ==================== GENERATED REPORTS & ANALYSIS ====================
+docs/reports/
+docs/analysis/
+reports/
+*.csv.backup
+analysis_output/
 
-# Pliki tymczasowe
+# ==================== TEMPORARY FILES ====================
 *.tmp
 *.bak
 *.orig
+*.temp
+*~
+.~*
 
-# Testy i niepotrzebne skrypty
-test_*.py
-*_test.py
-test_price.py
+# ==================== FRONTEND ====================
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
 
-# Webhook (jeśli nieużywany)
-webhook_reciever.py   # opcjonalnie – jeśli go usunąłeś, nie potrzebujesz
+# ==================== OS ====================
+.DS_Store
+Thumbs.db
+Desktop.ini
 
-# Pliki projektu (opcjonalnie, jeśli nie chcesz ich udostępniać)
-CLAUDE.md
+# ==================== PACKAGE MANAGERS ====================
+package-lock.json
+yarn.lock
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ==================== KEEP IN GIT (important for development) ====================
+# Un-ignore if you want to track these:
+!.gitkeep
+!models/.gitkeep
+!data/.gitkeep
+!logs/.gitkeep
+!cache/.gitkeep
