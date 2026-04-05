@@ -271,7 +271,14 @@ async def get_candles(
 
     try:
         provider = get_provider()
-        df = await asyncio.to_thread(provider.get_candles, symbol, interval, fetch_limit)
+        try:
+            df = await asyncio.wait_for(
+                asyncio.to_thread(provider.get_candles, symbol, interval, fetch_limit),
+                timeout=12.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ Provider timeout (12s) — using mock data for {symbol}")
+            df = None
 
         # If provider returns None, use mock data
         if df is None or df.empty:
@@ -342,7 +349,14 @@ async def get_ticker(symbol: str = Query("XAU/USD", description="Trading symbol 
     """
     try:
         provider = get_provider()
-        data = await asyncio.to_thread(provider.get_current_price, symbol)
+        try:
+            data = await asyncio.wait_for(
+                asyncio.to_thread(provider.get_current_price, symbol),
+                timeout=12.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ Provider timeout (12s) — using mock ticker for {symbol}")
+            data = None
 
         # If provider returns None (rate limited or error), use mock data
         if data is None:
@@ -405,7 +419,14 @@ async def get_indicators(
 
     try:
         provider = get_provider()
-        df = await asyncio.to_thread(provider.get_candles, symbol, interval, 100)
+        try:
+            df = await asyncio.wait_for(
+                asyncio.to_thread(provider.get_candles, symbol, interval, 100),
+                timeout=12.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ Provider timeout (12s) — using mock indicators for {symbol}")
+            df = None
 
         # If provider returns None, use mock data
         if df is None or df.empty:

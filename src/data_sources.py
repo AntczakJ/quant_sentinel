@@ -64,14 +64,15 @@ class TwelveDataProvider(DataProvider):
 
         logger.info("🚀 TwelveDataProvider initialized with rate limiting (55 credits/min)")
 
-    def _check_429_and_wait(self, attempt: int = 0, max_attempts: int = 3):
+    def _check_429_and_wait(self, attempt: int = 0, max_attempts: int = 2):
         """Handle 429 Too Many Requests error"""
         if attempt >= max_attempts:
             logger.error("❌ Max retry attempts exhausted after 429 errors")
             return False
 
-        # Exponential backoff: 2s, 4s, 8s
+        # Short backoff: 2s, 4s (max)
         wait_time = 2 ** (attempt + 1)
+        wait_time = min(wait_time, 4)  # cap at 4s to avoid request timeout
         logger.warning(f"⚠️ Rate limited (429). Waiting {wait_time}s before retry (attempt {attempt + 1}/{max_attempts})")
         time.sleep(wait_time)
         return True
@@ -94,9 +95,9 @@ class TwelveDataProvider(DataProvider):
             logger.error(f"❌ Cannot execute request: {error}")
             return {}
 
-        # Wait for credits if needed (with timeout)
-        if not self.rate_limiter.wait_for_credits(cost, max_wait_seconds=65):
-            logger.error(f"❌ Timeout waiting for {cost} credits")
+        # Wait for credits if needed (with short timeout to avoid blocking API responses)
+        if not self.rate_limiter.wait_for_credits(cost, max_wait_seconds=5):
+            logger.warning(f"⚠️ Credits unavailable for {cost} credits — returning empty (fallback to mock)")
             return {}
 
         # Use credits
@@ -109,14 +110,14 @@ class TwelveDataProvider(DataProvider):
 
         # Make request with session (connection pooling)
         params['apikey'] = self.api_key
-        max_retries = 3
+        max_retries = 2
 
         for attempt in range(max_retries):
             try:
                 response = session.get(
                     f"{self.base}/{endpoint}",
                     params=params,
-                    timeout=10
+                    timeout=8
                 )
 
                 # Handle 429 rate limit errors

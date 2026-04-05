@@ -4,6 +4,7 @@ api/routers/signals.py - Trading signal endpoints
 
 import sys
 import os
+import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from typing import List
@@ -23,16 +24,8 @@ _XGB_DIR_MAP = {"LONG": "UP", "SHORT": "DOWN"}
 _signal_cache = {"current": None, "history": []}
 
 def initialize_default_signal():
-    """Initialize default signal for testing"""
-    try:
-        # Pobierz live price z Twelve Data
-        from src.data_sources import get_provider
-        provider = get_provider()
-        ticker = provider.get_current_price('XAU/USD')
-        current_price = ticker['price'] if ticker else 2050.0  # Fallback
-    except Exception as e:
-        logger.warning(f"Could not fetch current price: {e}")
-        current_price = 2050.0  # Fallback price
+    """Initialize default signal for testing — no API call at startup"""
+    current_price = 3100.0  # Fallback price (nie wywołuj API przy starcie)
 
     default_signal = SignalResponse(
         timestamp=datetime.now(timezone.utc),
@@ -61,18 +54,22 @@ _signal_cache["current"] = initialize_default_signal()
     summary="Get current trading signal",
     description="Get latest signal from all three models with consensus"
 )
-def get_current_signal():
+async def get_current_signal():
     """Get current combined signal from RL, LSTM, and XGBoost models"""
     try:
-        # Pobierz live price
+        # Pobierz live price z timeoutem
+        current_price = 3100.0
         try:
             from src.data_sources import get_provider
             provider = get_provider()
-            ticker = provider.get_current_price('XAU/USD')
-            current_price = ticker['price'] if ticker else 2050.0
-        except Exception as e:
-            logger.warning(f"Could not fetch current price: {e}")
-            current_price = 2050.0
+            ticker = await asyncio.wait_for(
+                asyncio.to_thread(provider.get_current_price, 'XAU/USD'),
+                timeout=8.0
+            )
+            if ticker and ticker.get('price'):
+                current_price = float(ticker['price'])
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"Could not fetch current price (using fallback): {e}")
 
         # Try to get latest signal from database first
         try:
