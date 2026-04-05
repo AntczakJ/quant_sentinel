@@ -1,30 +1,40 @@
 /**
  * src/components/dashboard/TradeHistory.tsx - Recent trades history
+ * Enhanced with filter tabs, win rate visual, and R:R display.
  */
 
-import { useEffect, useState } from 'react';
+import { useState, useMemo, memo } from 'react';
+import { TrendingUp, TrendingDown, Filter } from 'lucide-react';
+import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { analysisAPI } from '../../api/client';
-import { TrendingUp, TrendingDown } from 'lucide-react';
 
 interface Trade {
   id: number;
   direction: string;
-  entry: string | number;  // ← Can be "$2050.50" or 2050.50
-  sl: string | number;     // ← Can be "$2048.50" or 2048.50
-  tp: string | number;     // ← Can be "$2055.00" or 2055.00
+  entry: string | number;
+  sl: string | number;
+  tp: string | number;
   status: string;
   profit?: string | number;
   timestamp: string;
   result: string;
 }
 
+interface TradesResponse {
+  trades: Trade[];
+  total: number;
+  wins: number;
+  losses: number;
+}
+
+type FilterTab = 'ALL' | 'WIN' | 'LOSS' | 'PENDING';
+
 // Helper to safely parse timestamps from SQLite (e.g. "2025-04-05 12:30:00")
 function safeParseDate(raw: string | null | undefined): Date | null {
-  if (!raw) return null;
-  // Normalise SQLite format → ISO: replace first space between date and time with 'T', append 'Z'
+  if (!raw) {return null;}
   let iso = raw.trim();
   iso = iso.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
-  if (!/[Zz+\-]/.test(iso.slice(-6))) iso += 'Z';
+  if (!/[Zz+\-]/.test(iso.slice(-6))) {iso += 'Z';}
   const d = new Date(iso);
   return isNaN(d.getTime()) ? null : d;
 }
@@ -33,51 +43,47 @@ function safeParseDate(raw: string | null | undefined): Date | null {
 function formatPrice(value: string | number | undefined): string {
   if (!value) { return '$0.00'; }
   if (typeof value === 'string') {
-    // Already formatted like "$2050.50"
     if (value.startsWith('$')) { return value; }
-    // Try to parse as number
     const num = parseFloat(value);
     return !isNaN(num) ? `$${num.toFixed(2)}` : value;
   }
-  // It's a number
   return `$${value.toFixed(2)}`;
 }
 
-export function TradeHistory() {
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState({ total: 0, wins: 0, losses: 0 });
+function parseNumericPrice(val: string | number | undefined): number {
+  if (!val) return 0;
+  if (typeof val === 'number') return val;
+  return parseFloat(val.replace('$', '')) || 0;
+}
 
-  useEffect(() => {
-    const fetchTrades = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const data = await analysisAPI.getRecentTrades(20);
-        setTrades((data.trades || []).slice(0, 10));
-        setStats({
-          total: data.total || 0,
-          wins: data.wins || 0,
-          losses: data.losses || 0,
-        });
-      } catch (err) {
-        console.error('Error fetching trades:', err);
-        setError('Failed to load trades');
-      } finally {
-        setLoading(false);
-      }
-    };
+export const TradeHistory = memo(function TradeHistory() {
+  const [filter, setFilter] = useState<FilterTab>('ALL');
 
-    void fetchTrades();
+  const { data, isLoading } = usePollingQuery<TradesResponse>(
+    'trade-history',
+    () => analysisAPI.getRecentTrades(30),
+    60_000,
+  );
 
+  const trades = data?.trades ?? [];
+  const stats = useMemo(() => ({
+    total: data?.total ?? 0,
+    wins: data?.wins ?? 0,
+    losses: data?.losses ?? 0,
+  }), [data]);
 
-    // Refresh every 60 seconds (trades don't change often)
-    const interval = setInterval(fetchTrades, 60000);
-    return () => clearInterval(interval);
-  }, []);
+  const filteredTrades = useMemo(() => {
+    if (filter === 'ALL') return trades.slice(0, 15);
+    return trades.filter(t => {
+      if (filter === 'WIN') return t.result?.includes('WIN');
+      if (filter === 'LOSS') return t.result?.includes('LOSS');
+      return t.result?.includes('PENDING');
+    }).slice(0, 15);
+  }, [trades, filter]);
 
-  if (loading && trades.length === 0) {
+  const winRate = stats.total > 0 ? (stats.wins / stats.total) * 100 : 0;
+
+  if (isLoading && trades.length === 0) {
     return (
       <div className="flex items-center justify-center h-40 text-gray-400">
         <span>Loading trades...</span>
@@ -85,17 +91,9 @@ export function TradeHistory() {
     );
   }
 
-  if (error && trades.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-40 bg-red-900/10 border border-red-500/30 rounded-lg">
-        <span className="text-red-400 text-xs">{error}</span>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-3">
-      {/* Stats Summary */}
+      {/* Stats Summary + Win Rate Bar */}
       <div className="grid grid-cols-3 gap-2 text-xs">
         <div className="bg-dark-surface rounded p-2 border border-dark-secondary">
           <div className="text-gray-400">Total</div>
@@ -111,14 +109,64 @@ export function TradeHistory() {
         </div>
       </div>
 
+      {/* Win Rate Progress Bar */}
+      {stats.total > 0 && (
+        <div className="bg-dark-surface rounded p-2 border border-dark-secondary">
+          <div className="flex justify-between text-xs mb-1">
+            <span className="text-gray-400">Win Rate</span>
+            <span className={`font-bold ${winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+              {winRate.toFixed(1)}%
+            </span>
+          </div>
+          <div className="relative h-1.5 bg-red-900/40 rounded-full overflow-hidden">
+            <div
+              className={`absolute left-0 top-0 h-full rounded-full transition-all duration-500 ${
+                winRate >= 50 ? 'bg-green-500' : 'bg-amber-500'
+              }`}
+              style={{ width: `${Math.min(winRate, 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Filter Tabs */}
+      <div className="flex items-center gap-1">
+        <Filter size={10} className="text-gray-500" />
+        {(['ALL', 'WIN', 'LOSS', 'PENDING'] as FilterTab[]).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setFilter(tab)}
+            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+              filter === tab
+                ? tab === 'WIN' ? 'bg-green-600/30 text-green-400 border border-green-600/40'
+                : tab === 'LOSS' ? 'bg-red-600/30 text-red-400 border border-red-600/40'
+                : 'bg-blue-600/30 text-blue-400 border border-blue-600/40'
+                : 'bg-dark-secondary text-gray-500 border border-transparent hover:text-gray-400'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
       {/* Trades List */}
       <div className="space-y-2 max-h-[480px] overflow-y-auto pr-0.5 scrollbar-thin scrollbar-thumb-dark-secondary">
-        {trades.length === 0 ? (
-          <div className="text-center text-gray-400 text-xs py-4">Brak transakcji</div>
+        {filteredTrades.length === 0 ? (
+          <div className="text-center text-gray-400 text-xs py-4">
+            {filter === 'ALL' ? 'Brak transakcji' : `Brak transakcji: ${filter}`}
+          </div>
         ) : (
-          trades.map((trade) => {
-            const isWin = trade.result.includes('WIN');
-            const isLoss = trade.result.includes('LOSS');
+          filteredTrades.map((trade) => {
+            const isWin = trade.result?.includes('WIN');
+            const isLoss = trade.result?.includes('LOSS');
+
+            // Calculate R:R ratio
+            const entry = parseNumericPrice(trade.entry);
+            const sl = parseNumericPrice(trade.sl);
+            const tp = parseNumericPrice(trade.tp);
+            const risk = Math.abs(entry - sl);
+            const reward = Math.abs(tp - entry);
+            const rr = risk > 0 ? (reward / risk) : 0;
 
             return (
               <div
@@ -161,7 +209,7 @@ export function TradeHistory() {
                     >
                       {trade.result}
                     </span>
-                    {trade.profit && trade.profit !== null && (
+                    {trade.profit != null && (
                       <div className={isWin ? 'text-accent-green' : 'text-accent-red'}>
                         {formatPrice(trade.profit)}
                       </div>
@@ -170,9 +218,14 @@ export function TradeHistory() {
                 </div>
 
                 {/* Trade Details */}
-                <div className="grid grid-cols-2 gap-1 text-xs text-gray-500 mt-1 pt-1 border-t border-current border-opacity-20">
+                <div className="grid grid-cols-3 gap-1 text-xs text-gray-500 mt-1 pt-1 border-t border-current border-opacity-20">
                   <div>SL: {formatPrice(trade.sl)}</div>
                   <div>TP: {formatPrice(trade.tp)}</div>
+                  {rr > 0 && (
+                    <div className={`text-right font-mono ${rr >= 2 ? 'text-green-400' : rr >= 1 ? 'text-amber-400' : 'text-red-400'}`}>
+                      R:R {rr.toFixed(1)}
+                    </div>
+                  )}
                 </div>
 
                 {/* Timestamp */}
@@ -192,20 +245,6 @@ export function TradeHistory() {
           })
         )}
       </div>
-
-      {/* Win Rate */}
-      {stats.total > 0 && (
-        <div className="text-xs text-gray-400 pt-2 border-t border-dark-secondary">
-          <div className="flex justify-between items-center">
-            <span>Win Rate:</span>
-            <span className="text-accent-green font-bold">
-              {((stats.wins / stats.total) * 100).toFixed(1)}%
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   );
-}
-
-
+});

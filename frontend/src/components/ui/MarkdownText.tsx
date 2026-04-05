@@ -15,11 +15,11 @@ function parseInline(line: string): React.ReactNode[] {
   const parts = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**'))
-      return <strong key={i} className="text-white font-semibold">{part.slice(2, -2)}</strong>;
+      {return <strong key={i} className="text-white font-semibold">{part.slice(2, -2)}</strong>;}
     if (part.startsWith('*') && part.endsWith('*'))
-      return <em key={i} className="text-gray-300 italic">{part.slice(1, -1)}</em>;
+      {return <em key={i} className="text-gray-300 italic">{part.slice(1, -1)}</em>;}
     if (part.startsWith('`') && part.endsWith('`'))
-      return <code key={i} className="bg-dark-bg text-accent-green px-1.5 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;
+      {return <code key={i} className="bg-dark-bg text-accent-green px-1.5 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;}
     return <span key={i}>{part}</span>;
   });
 }

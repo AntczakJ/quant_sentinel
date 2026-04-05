@@ -96,6 +96,20 @@ Jesteś Quant Sentinel Gold Trader — zaawansowanym asystentem tradingowym spec
 - **Volume Profile (POC)**: Bliskość do POC oznacza silną strefę (+1 pkt)
 - **RSI Divergence**: Dywergencja RSI = silny sygnał odwrócenia (+2 pkt)
 
+## SESJA TRADINGOWA (KILLZONES)
+- **London Killzone** (07:00-10:00 UTC): Wysoka zmienność, dobre warunki na złoto
+- **NY Killzone** (12:00-15:00 UTC): Najwyższa zmienność, najlepsze setupy
+- **Asian Session** (00:00-06:00 UTC): Niska zmienność, unikaj LONG/SHORT chyba że silny setup
+- **Off-hours** (20:00-23:00 UTC): Niska płynność, ryzyko fałszywych wybić
+- Podczas killzones poszerzaj SL o 20% (wyższa zmienność = większe ruchy)
+- Preferuj trades podczas London i NY killzones — najwyższa jakość sygnałów
+
+## MULTI-TIMEFRAME CONFLUENCE
+- Analizuj M5/M15/H1/H4 jednocześnie przed wydaniem rekomendacji
+- STRONG_BULL / STRONG_BEAR = 3+ TF zgodnych → wyższy confidence
+- MIXED = brak wyraźnej konfluencji → CZEKAJ lub zredukuj lot
+- Wagi: H4 (30%), H1 (35%), M15 (25%), M5 (10%) — wyższe TF mają priorytet
+
 ## FORMAT SYGNAŁU TRADINGOWEGO
 ```
 🎯 SYGNAŁ: [KUPUJ / SPRZEDAJ / CZEKAJ]
@@ -595,6 +609,10 @@ class QuantSentinelAgent:
                 # RSI Divergence
                 "rsi_div_bull":       result.get("rsi_div_bull"),
                 "rsi_div_bear":       result.get("rsi_div_bear"),
+                # Session / Killzone
+                "session":            result.get("session"),
+                "is_killzone":        result.get("is_killzone"),
+                "volatility_expected": result.get("volatility_expected"),
             }
         except Exception as e:
             logger.error(f"Błąd analyze_xauusd: {e}")
@@ -761,14 +779,19 @@ class QuantSentinelAgent:
             return {"error": str(e)}
 
     def _tool_get_multi_tf_analysis(self) -> dict:
-        """Analiza SMC na wszystkich 4 interwałach jednocześnie."""
-        from src.smc_engine import get_smc_analysis
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        timeframes = ["5m", "15m", "1h", "4h"]
-        results = {}
+        """Analiza SMC na wszystkich 4 interwałach jednocześnie z konfluencją."""
+        from src.smc_engine import get_smc_analysis, get_mtf_confluence, get_active_session
 
         try:
+            # Use the new MTF confluence function
+            confluence = get_mtf_confluence("XAU/USD")
+            session = get_active_session()
+
+            # Also get full per-TF data for detailed analysis
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            timeframes = ["5m", "15m", "1h", "4h"]
+            results = {}
+
             with ThreadPoolExecutor(max_workers=4) as executor:
                 futures = {executor.submit(get_smc_analysis, tf): tf for tf in timeframes}
                 for future in as_completed(futures, timeout=30):
@@ -790,23 +813,25 @@ class QuantSentinelAgent:
                                 "bos_bearish": data.get("bos_bearish"),
                                 "engulfing": data.get("engulfing"),
                                 "ichimoku_above_cloud": data.get("ichimoku_above_cloud"),
+                                "rsi_div_bull": data.get("rsi_div_bull"),
+                                "rsi_div_bear": data.get("rsi_div_bear"),
                             }
                         else:
                             results[tf] = {"error": "Brak danych"}
                     except Exception as e:
                         results[tf] = {"error": str(e)}
 
-            # Confluence analysis
-            trends = [r.get("trend") for r in results.values() if isinstance(r, dict) and "trend" in r]
-            bull_count = trends.count("bull")
-            bear_count = trends.count("bear")
-            confluence = "STRONG_BULL" if bull_count >= 3 else "STRONG_BEAR" if bear_count >= 3 else "MIXED"
-
             return {
                 "timeframes": results,
-                "confluence": confluence,
-                "bull_tf_count": bull_count,
-                "bear_tf_count": bear_count,
+                "confluence": confluence.get("direction", "MIXED"),
+                "confluence_score": confluence.get("confluence_score", 0),
+                "bull_pct": confluence.get("bull_pct", 50),
+                "bear_pct": confluence.get("bear_pct", 50),
+                "bull_tf_count": confluence.get("bull_tf_count", 0),
+                "bear_tf_count": confluence.get("bear_tf_count", 0),
+                "session": session.get("session"),
+                "is_killzone": session.get("is_killzone"),
+                "volatility_expected": session.get("volatility_expected"),
             }
         except Exception as e:
             logger.error(f"Błąd get_multi_tf_analysis: {e}")

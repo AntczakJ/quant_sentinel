@@ -1,7 +1,11 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App.tsx'
+import { initPerformanceMonitoring } from './hooks/usePerformanceMonitor'
 import './index.css'
+
+// Initialize Web Vitals monitoring (dev only — logs FCP, LCP, CLS, TTFB)
+initPerformanceMonitoring();
 
 // Suppress Chrome extension errors
 window.addEventListener('error', (e) => {

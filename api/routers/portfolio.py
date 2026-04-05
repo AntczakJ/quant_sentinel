@@ -30,28 +30,34 @@ class BalanceUpdate(BaseModel):
 
 
 def _get_portfolio():
-    """Pobierz portfolio z bazy danych (persistentne)"""
+    """Pobierz portfolio z bazy danych (persistentne) — single batch query"""
     try:
         db = NewsDB()
+        params = db.get_portfolio_params()
 
-        # Próbuj pobrać istniejące portfolio
-        balance = db.get_param("portfolio_balance", None)
+        balance = params.get("portfolio_balance")
         if balance is not None:
-            # Odczytaj walutę — przechowywana jako tekst w osobnej kolumnie
+            balance = float(balance)
+            initial = float(params.get("portfolio_initial_balance", balance) or balance)
+            equity = float(params.get("portfolio_equity", balance) or balance)
+            pnl = float(params.get("portfolio_pnl", 0) or 0)
+
+            # Currency stored as text
             try:
-                db.cursor.execute("SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'")
-                row = db.cursor.fetchone()
+                row = db._query_one(
+                    "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
+                )
                 currency = str(row[0]) if row and row[0] else "PLN"
             except Exception:
                 currency = "PLN"
 
             return {
-                "balance": float(balance),
-                "initial_balance": float(db.get_param("portfolio_initial_balance", balance) or balance),
-                "equity": float(db.get_param("portfolio_equity", balance) or balance),
-                "pnl": float(db.get_param("portfolio_pnl", 0) or 0),
+                "balance": balance,
+                "initial_balance": initial,
+                "equity": equity,
+                "pnl": pnl,
                 "currency": currency,
-                "current_price": float(db.get_param("current_price", 2050.0) or 2050.0)
+                "current_price": float(params.get("current_price", 2050.0) or 2050.0)
             }
     except Exception as e:
         logger.debug(f"Could not load portfolio from database: {e}")

@@ -2,13 +2,13 @@
  * src/components/dashboard/PortfolioStats.tsx - Portfolio performance
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { useTradingStore } from '../../store/tradingStore';
 import { portfolioAPI, signalsAPI } from '../../api/client';
 import type { Portfolio } from '../../types/trading';
 import { Edit2, Plus, Loader2 } from 'lucide-react';
 
-export function PortfolioStats() {
+export const PortfolioStats = memo(function PortfolioStats() {
   const { setPortfolio } = useTradingStore();
   const [portfolio, setPortfolioState] = useState<Portfolio | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,7 +26,7 @@ export function PortfolioStats() {
         const data = await portfolioAPI.getStatus();
         setPortfolioState(data);
         setPortfolio(data);
-        if (!showEditBalance && !newBalance) setNewBalance(data.balance.toString());
+        if (!showEditBalance && !newBalance) {setNewBalance(data.balance.toString());}
       } catch (err) {
         console.error('Error fetching portfolio:', err);
         setError('Failed to load portfolio');
@@ -35,7 +35,7 @@ export function PortfolioStats() {
       }
     };
     void fetchPortfolio();
-    const interval = setInterval(() => { if (!showEditBalance) void fetchPortfolio(); }, 60000);
+    const interval = setInterval(() => { if (!showEditBalance) {void fetchPortfolio();} }, 60000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setPortfolio, showEditBalance]);
@@ -44,7 +44,7 @@ export function PortfolioStats() {
     const fetchWinRate = async () => {
       try {
         const stats = await signalsAPI.getStats();
-        if (stats.total > 0) setWinRate(stats.win_rate * 100);
+        if (stats.total > 0) {setWinRate(stats.win_rate * 100);}
       } catch { /* ignore */ }
     };
     void fetchWinRate();
@@ -69,7 +69,7 @@ export function PortfolioStats() {
   };
 
   const handleAddTrade = async () => {
-    if (addingTrade) return;
+    if (addingTrade) {return;}
     try {
       setAddingTrade(true);
       const result = await portfolioAPI.quickTrade();
@@ -95,7 +95,7 @@ export function PortfolioStats() {
   if (error && !portfolio) {
     return <div className="flex items-center justify-center h-32 text-red-400 text-xs">{error}</div>;
   }
-  if (!portfolio) return null;
+  if (!portfolio) {return null;}
 
   const pnlPositive = portfolio.pnl >= 0;
   const pnlColor = pnlPositive ? 'text-green-400' : 'text-red-400';
@@ -191,4 +191,4 @@ export function PortfolioStats() {
       </div>
     </div>
   );
-}
+});

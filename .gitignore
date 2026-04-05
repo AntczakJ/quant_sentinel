@@ -1,39 +1,15 @@
-# ==================== PYTHON & VIRTUAL ENV ====================
-.venv/
-venv/
-ENV/
-env/
-*.py[cod]
-*$py.class
-*.so
-__pycache__/
-.pytest_cache/
-*.egg-info/
-dist/
-build/
+# ==============================================================
+#  quant_sentinel — .gitignore
+#  Cel: po `git pull` na nowym urządzeniu masz od razu:
+#    - kod źródłowy (src/, api/, frontend/src/)
+#    - wytrenowane modele (models/)
+#    - bazę danych (data/sentinel.db)
+#    - skrypty treningowe (train_all.py, train_rl.py)
+#    - requirements.txt
+#  NIE ma: .env (sekrety), .venv (środowisko), __pycache__, buildy
+# ==============================================================
 
-# ==================== MACHINE LEARNING MODELS ====================
-# Keep these in your local development - they are trained models
-# Uncomment if you want to not track them in git:
-# models/*.h5
-# models/*.keras
-# models/*.pkl
-# models/*.joblib
-
-# ==================== CACHE & ARTIFACTS ====================
-cache/
-*.cache
-.cache
-__pycache__/
-
-# ==================== DATABASE ====================
-# Keep database backups locally but don't track the main DB
-# Uncomment if needed:
-# data/sentinel.db
-# data/*.db.bak
-data/sentinel_backup_*.db
-
-# ==================== SENSITIVE & CONFIGURATION ====================
+# ── SEKRETY I KONFIGURACJA LOKALNA ────────────────────────────
 .env
 .env.*
 .env.local
@@ -43,61 +19,121 @@ data/sentinel_backup_*.db
 secrets/
 credentials/
 
-# ==================== LOGS & RUNTIME ====================
+# ── PYTHON — ŚRODOWISKO WIRTUALNE ─────────────────────────────
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# ── PYTHON — CACHE I ARTEFAKTY ────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+*.egg-info/
+*.egg
+MANIFEST
+.eggs/
+
+# ── PYTHON — DYSTRYBUCJA / BUILD ──────────────────────────────
+build/
+dist/
+*.whl
+*.tar.gz
+
+# ── LOGI I PLIKI RUNTIME ──────────────────────────────────────
 logs/
 *.log
 *.log.*
-logs/sentinel.log
 
-# ==================== IDE & EDITORS ====================
+# ── CACHE APLIKACJI (nie modele — te są potrzebne) ───────────
+cache/
+*.cache
+.cache/
+persistent_cache/
+
+# ── BAZA DANYCH — KOPIE ZAPASOWE ──────────────────────────────
+# data/sentinel.db        → ŚLEDZONE w git (potrzebne do treningu)
+# data/test_sentinel.db   → ŚLEDZONE (testy)
+data/sentinel_backup_*.db
+data/*.db.bak
+data/*.db-wal
+data/*.db-shm
+
+# ── MODELE ML — WSZYSTKIE ŚLEDZONE ────────────────────────────
+# models/lstm.h5, lstm.keras, lstm_scaler.pkl,
+# rl_agent.keras, rl_agent.keras.params, xgb.pkl
+# → ŚLEDZONE (potrzebne do kontynuacji treningu)
+# Odkomentuj poniższe TYLKO jeśli modele są za duże dla git:
+# models/*.h5
+# models/*.keras
+# models/*.pkl
+# models/*.params
+# models/*.joblib
+# models/*.pt
+# models/*.pth
+
+# ── FRONTEND — NODE MODULES I BUILD ──────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+frontend/tsconfig.tsbuildinfo
+
+# ── IDE I EDYTORY ─────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
 .project
 .classpath
 *.sublime-project
 *.sublime-workspace
 .vim/
 
-# ==================== GENERATED REPORTS & ANALYSIS ====================
-docs/reports/
-docs/analysis/
-reports/
-*.csv.backup
-analysis_output/
+# ── SYSTEM OPERACYJNY ─────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
 
-# ==================== TEMPORARY FILES ====================
+# ── MENEDŻERY PAKIETÓW ────────────────────────────────────────
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ── RAPORTY TYMCZASOWE ────────────────────────────────────────
 *.tmp
 *.bak
 *.orig
 *.temp
-*~
 .~*
+docs/reports/
+docs/analysis/
+analysis_output/
+reports/
+*.csv.backup
 
-# ==================== FRONTEND ====================
-frontend/node_modules/
-frontend/dist/
-frontend/.env.local
-frontend/.env.*.local
+# ── PLIKI TYMCZASOWE JUPYTER ──────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
 
-# ==================== OS ====================
-.DS_Store
-Thumbs.db
-Desktop.ini
-
-# ==================== PACKAGE MANAGERS ====================
-package-lock.json
-yarn.lock
-pip-log.txt
-pip-delete-this-directory.txt
-
-# ==================== KEEP IN GIT (important for development) ====================
-# Un-ignore if you want to track these:
+# ── UPEWNIJ SIĘ ŻE TE PLIKI SĄ ŚLEDZONE ─────────────────────
 !.gitkeep
 !models/.gitkeep
 !data/.gitkeep
 !logs/.gitkeep
 !cache/.gitkeep
+!requirements.txt
+!train_all.py
+!train_rl.py

@@ -473,3 +473,65 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
             "losses": 0,
         }
 
+
+@router.get(
+    "/mtf-confluence",
+    summary="Multi-Timeframe Confluence Analysis",
+    description="Analiza SMC na M5/M15/H1/H4 z konfluencją"
+)
+async def mtf_confluence_analysis():
+    """
+    Zwraca konfluencję multi-timeframe: bull/bear score, per-TF breakdown, sesja.
+    """
+    try:
+        from src.smc_engine import get_mtf_confluence
+        result = await asyncio.to_thread(get_mtf_confluence, "XAU/USD")
+        return result
+    except Exception as e:
+        logger.error(f"MTF confluence error: {e}")
+        return {"confluence_score": 0, "direction": "CZEKAJ", "error": str(e)}
+
+
+@router.get(
+    "/session",
+    summary="Current Trading Session",
+    description="Aktualna sesja tradingowa i killzone status"
+)
+async def current_session():
+    """
+    Zwraca aktualną sesję (Asian/London/NY), killzone status, oczekiwaną zmienność.
+    """
+    from src.smc_engine import get_active_session
+    return get_active_session()
+
+
+@router.get(
+    "/risk-metrics",
+    summary="Advanced Risk & Performance Metrics",
+    description="Drawdown, profit factor, expectancy, streaks — professional portfolio analytics"
+)
+def get_risk_metrics():
+    """
+    Zwraca zaawansowane metryki ryzyka i wydajności z bazy transakcji:
+    - Max drawdown, consecutive wins/losses
+    - Profit factor, expectancy
+    - Average win/loss, total P&L
+    """
+    try:
+        db = NewsDB()
+        metrics = db.get_trade_performance_metrics()
+        metrics["timestamp"] = datetime.now(timezone.utc).isoformat()
+        return metrics
+    except Exception as e:
+        logger.error(f"❌ Error computing risk metrics: {e}")
+        return {
+            "total": 0, "wins": 0, "losses": 0, "win_rate": 0,
+            "avg_win": 0, "avg_loss": 0, "profit_factor": 0,
+            "expectancy": 0, "max_consecutive_wins": 0,
+            "max_consecutive_losses": 0, "max_drawdown": 0,
+            "total_profit": 0,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "error": str(e),
+        }
+
+

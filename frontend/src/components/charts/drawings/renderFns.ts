@@ -40,7 +40,7 @@ function drawLine(ctx: CanvasRenderingContext2D, a: Pt, b: Pt) {
 function extendLine(a: Pt, b: Pt, w: number, h: number, mode: 'both' | 'right'): [Pt, Pt] {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  if (dx === 0 && dy === 0) return [a, b];
+  if (dx === 0 && dy === 0) {return [a, b];}
 
   // Find t values where the line intersects viewport edges
   const tValues: number[] = [];
@@ -63,12 +63,12 @@ function extendLine(a: Pt, b: Pt, w: number, h: number, mode: 'both' | 'right'):
     }
   }
 
-  if (validT.length === 0) return [a, b];
+  if (validT.length === 0) {return [a, b];}
 
   let tMin = Math.min(...validT);
-  let tMax = Math.max(...validT);
+  const tMax = Math.max(...validT);
 
-  if (mode === 'right') tMin = 0; // ray — start at point A, extend only forward
+  if (mode === 'right') {tMin = 0;} // ray — start at point A, extend only forward
 
   return [
     { x: a.x + tMin * dx, y: a.y + tMin * dy },
@@ -79,7 +79,7 @@ function extendLine(a: Pt, b: Pt, w: number, h: number, mode: 'both' | 'right'):
 /* ── Tool renderers ──────────────────────────────────────────────────────── */
 
 export function renderTrendLine(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle) {
-  if (pts.length < 2) return;
+  if (pts.length < 2) {return;}
   ctx.save();
   applyLineStyle(ctx, s);
   drawLine(ctx, pts[0], pts[1]);
@@ -87,7 +87,7 @@ export function renderTrendLine(ctx: CanvasRenderingContext2D, pts: Pt[], s: Dra
 }
 
 export function renderRay(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle, w: number, h: number) {
-  if (pts.length < 2) return;
+  if (pts.length < 2) {return;}
   ctx.save();
   applyLineStyle(ctx, s);
   const [, end] = extendLine(pts[0], pts[1], w, h, 'right');
@@ -96,7 +96,7 @@ export function renderRay(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingSt
 }
 
 export function renderExtendedLine(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle, w: number, h: number) {
-  if (pts.length < 2) return;
+  if (pts.length < 2) {return;}
   ctx.save();
   applyLineStyle(ctx, s);
   const [start, end] = extendLine(pts[0], pts[1], w, h, 'both');
@@ -105,7 +105,7 @@ export function renderExtendedLine(ctx: CanvasRenderingContext2D, pts: Pt[], s: 
 }
 
 export function renderHLine(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle, w: number) {
-  if (pts.length < 1) return;
+  if (pts.length < 1) {return;}
   ctx.save();
   applyLineStyle(ctx, s);
   drawLine(ctx, { x: 0, y: pts[0].y }, { x: w, y: pts[0].y });
@@ -118,7 +118,7 @@ export function renderHLine(ctx: CanvasRenderingContext2D, pts: Pt[], s: Drawing
     const ly = pts[0].y;
 
     ctx.fillStyle = s.color;
-    ctx.globalAlpha = 0.15;
+    ctx.globalAlpha = 0.12;
     ctx.beginPath();
     ctx.roundRect(lx - 2, ly - 11, m.width + 10, 14, 3);
     ctx.fill();
@@ -133,7 +133,7 @@ export function renderHLine(ctx: CanvasRenderingContext2D, pts: Pt[], s: Drawing
 }
 
 export function renderVLine(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle, h: number) {
-  if (pts.length < 1) return;
+  if (pts.length < 1) {return;}
   ctx.save();
   applyLineStyle(ctx, s);
   drawLine(ctx, { x: pts[0].x, y: 0 }, { x: pts[0].x, y: h });
@@ -141,7 +141,7 @@ export function renderVLine(ctx: CanvasRenderingContext2D, pts: Pt[], s: Drawing
 }
 
 export function renderChannel(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle, _w: number, _h: number) {
-  if (pts.length < 2) return;
+  if (pts.length < 2) {return;}
   ctx.save();
   applyLineStyle(ctx, s);
 
@@ -183,7 +183,7 @@ export function renderChannel(ctx: CanvasRenderingContext2D, pts: Pt[], s: Drawi
 }
 
 export function renderFib(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle, w: number) {
-  if (pts.length < 2) return;
+  if (pts.length < 2) {return;}
   ctx.save();
 
   const top = Math.min(pts[0].y, pts[1].y);
@@ -230,7 +230,7 @@ export function renderFib(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingSt
 }
 
 export function renderRect(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle) {
-  if (pts.length < 2) return;
+  if (pts.length < 2) {return;}
   ctx.save();
 
   const x = Math.min(pts[0].x, pts[1].x);
@@ -247,7 +247,7 @@ export function renderRect(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingS
 }
 
 export function renderPath(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle) {
-  if (pts.length < 2) return;
+  if (pts.length < 2) {return;}
   ctx.save();
   applyLineStyle(ctx, s);
   ctx.lineJoin = 'round';
@@ -274,17 +274,17 @@ export function renderPath(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingS
 }
 
 export function renderText(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle) {
-  if (pts.length < 1 || !s.text) return;
+  if (pts.length < 1 || !s.text) {return;}
   ctx.save();
 
   const text = s.text;
-  ctx.font = `bold ${s.fontSize}px sans-serif`;
+  ctx.font = `bold ${s.fontSize}px 'Trebuchet MS', sans-serif`;
   const m = ctx.measureText(text);
   const px = pts[0].x;
   const py = pts[0].y;
 
   // Background pill
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillStyle = 'rgba(19,23,34,0.85)';
   ctx.shadowColor = 'rgba(0,0,0,0.3)';
   ctx.shadowBlur = 4;
   ctx.beginPath();
@@ -299,11 +299,11 @@ export function renderText(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingS
 }
 
 export function renderMeasure(ctx: CanvasRenderingContext2D, pts: Pt[], s: DrawingStyle, priceA?: number, priceB?: number) {
-  if (pts.length < 2) return;
+  if (pts.length < 2) {return;}
   ctx.save();
 
   // Rect
-  renderRect(ctx, pts, { ...s, fillColor: 'rgba(59,130,246,0.08)', color: 'rgba(59,130,246,0.5)' });
+  renderRect(ctx, pts, { ...s, fillColor: 'rgba(41,98,255,0.08)', color: 'rgba(41,98,255,0.5)' });
 
   // Info label
   if (priceA !== undefined && priceB !== undefined) {
@@ -318,7 +318,7 @@ export function renderMeasure(ctx: CanvasRenderingContext2D, pts: Pt[], s: Drawi
     const m = ctx.measureText(label);
 
     // Background
-    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillStyle = 'rgba(19,23,34,0.9)';
     ctx.shadowColor = 'rgba(0,0,0,0.3)';
     ctx.shadowBlur = 6;
     ctx.beginPath();
@@ -327,7 +327,7 @@ export function renderMeasure(ctx: CanvasRenderingContext2D, pts: Pt[], s: Drawi
 
     // Text
     ctx.shadowBlur = 0;
-    ctx.fillStyle = diff >= 0 ? '#22c55e' : '#ef4444';
+    ctx.fillStyle = diff >= 0 ? '#26a69a' : '#ef5350';
     ctx.textAlign = 'center';
     ctx.fillText(label, cx, cy + 4);
     ctx.textAlign = 'left';
@@ -340,7 +340,7 @@ export function renderPosition(
   direction: 'long' | 'short', _w: number,
   priceA?: number, priceB?: number,
 ) {
-  if (pts.length < 2 || priceA === undefined || priceB === undefined) return;
+  if (pts.length < 2 || priceA === undefined || priceB === undefined) {return;}
   ctx.save();
 
   const entryY = pts[0].y;
@@ -352,8 +352,8 @@ export function renderPosition(
   const slPrice = entryPrice - diff;
   const slY = entryY + (entryY - targetY);
 
-  const tpColor = 'rgba(34,197,94,';
-  const slColor = 'rgba(239,68,68,';
+  const tpColor = 'rgba(38,166,154,';
+  const slColor = 'rgba(239,83,80,';
 
   const x1 = pts[0].x;
   const x2 = x1 + 220; // fixed width
@@ -373,7 +373,7 @@ export function renderPosition(
   ctx.strokeRect(x1, Math.min(entryY, slY), x2 - x1, Math.abs(slY - entryY));
 
   // Entry line
-  ctx.strokeStyle = '#3b82f6';
+  ctx.strokeStyle = '#2962ff';
   ctx.lineWidth = 1.5;
   ctx.setLineDash([4, 3]);
   ctx.beginPath();
@@ -397,11 +397,11 @@ export function renderPosition(
   ctx.fillText(`TP ${targetPrice.toFixed(2)} (+${tpPips})`, x1 + 5, Math.min(entryY, targetY) + 14);
   ctx.fillStyle = slColor + '0.9)';
   ctx.fillText(`SL ${slPrice.toFixed(2)} (-${slPips})`, x1 + 5, Math.max(entryY, slY) - 5);
-  ctx.fillStyle = '#3b82f6';
+  ctx.fillStyle = '#2962ff';
   ctx.fillText(`${dirLabel} ${entryPrice.toFixed(2)}`, x1 + 5, entryY - 5);
 
   // R:R badge
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillStyle = 'rgba(19,23,34,0.85)';
   const rrLabel = `R:R  1:${rr}`;
   const rrM = ctx.measureText(rrLabel);
   ctx.beginPath();

@@ -4,10 +4,12 @@ api/main.py - FastAPI application main entry point
 
 import sys
 import os
+import hashlib
+import time as _time
 from datetime import datetime, timezone
-from fastapi import FastAPI, WebSocketDisconnect
+from fastapi import FastAPI, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-# from fastapi.middleware.gzip import GZIPMiddleware  # Not available in this FastAPI version
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import asyncio
@@ -15,6 +17,9 @@ import logging
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Process start time for uptime tracking
+_start_time = _time.monotonic()
 
 # Reduce uvicorn access log noise for frequent endpoints
 _uvicorn_logger = logging.getLogger("uvicorn.access")
@@ -268,7 +273,7 @@ app = FastAPI(
 )
 
 # Middleware
-# app.add_middleware(GZIPMiddleware, minimum_size=1000)  # Not available in this FastAPI version
+app.add_middleware(GZipMiddleware, minimum_size=512)  # Compress responses > 512 bytes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "*"],
@@ -276,6 +281,64 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def etag_cache_middleware(request: Request, call_next):
+    """
+    Add ETag + Cache-Control for cacheable GET /api/* endpoints.
+    Saves bandwidth: if the browser already has this data, returns 304 Not Modified.
+
+    Cache strategy per endpoint:
+    - /api/market/*       → 15s fresh, 60s stale-while-revalidate (price data)
+    - /api/models/stats   → 60s fresh (model stats change rarely)
+    - /api/analysis/*     → 30s fresh (session/confluence)
+    - /api/signals/stats  → 30s fresh
+    - /api/health         → no-store
+    """
+    response = await call_next(request)
+    path = request.url.path
+
+    if request.method != "GET":
+        return response
+
+    # Determine Cache-Control TTL based on endpoint
+    cache_ttl = None
+    if "/api/market/" in path:
+        cache_ttl = "public, max-age=15, stale-while-revalidate=60"
+    elif "/api/models/stats" in path:
+        cache_ttl = "public, max-age=60, stale-while-revalidate=120"
+    elif "/api/analysis/" in path:
+        cache_ttl = "public, max-age=30, stale-while-revalidate=60"
+    elif "/api/signals/stats" in path or "/api/signals/scanner" in path:
+        cache_ttl = "public, max-age=30, stale-while-revalidate=90"
+
+    if cache_ttl:
+        # Read response body for ETag computation
+        body = b""
+        body_iterator = getattr(response, 'body_iterator', None)
+        if body_iterator:
+            async for chunk in body_iterator:
+                body += chunk if isinstance(chunk, bytes) else chunk.encode()
+        elif hasattr(response, 'body'):
+            body = response.body if isinstance(response.body, bytes) else response.body.encode()
+
+        etag = '"' + hashlib.md5(body).hexdigest() + '"'
+        response = Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+        )
+        response.headers["ETag"] = etag
+        response.headers["Cache-Control"] = cache_ttl
+
+        # Check If-None-Match from client
+        if_none_match = request.headers.get("if-none-match")
+        if if_none_match and if_none_match == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+
+    return response
 
 # Store connection manager and app state
 app.connection_manager = connection_manager
@@ -336,6 +399,48 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "models_loaded": app_state["models_loaded"],
+    }
+
+
+@app.get("/api/health/detailed")
+async def health_check_detailed():
+    """
+    Detailed health check — returns uptime, DB status, background task state.
+    Used by frontend ConnectionStatus component.
+    """
+    uptime_seconds = _time.monotonic() - _start_time
+
+    # DB check
+    db_ok = False
+    db_tables = 0
+    try:
+        from src.database import NewsDB
+        db = NewsDB()
+        row = db._query_one("SELECT COUNT(*) FROM sqlite_master WHERE type='table'")
+        db_tables = row[0] if row else 0
+        db_ok = db_tables > 0
+    except Exception:
+        pass
+
+    # Format uptime
+    hours, remainder = divmod(int(uptime_seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_str = f"{hours}h {minutes}m {seconds}s"
+
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "uptime": uptime_str,
+        "uptime_seconds": round(uptime_seconds, 1),
+        "models_loaded": app_state["models_loaded"],
+        "database": {
+            "connected": db_ok,
+            "tables": db_tables,
+        },
+        "websocket_clients": {
+            "prices": connection_manager.get_connection_count("prices"),
+            "signals": connection_manager.get_connection_count("signals"),
+        },
     }
 
 # Root endpoint

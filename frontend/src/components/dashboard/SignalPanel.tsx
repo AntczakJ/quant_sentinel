@@ -2,7 +2,7 @@
  * src/components/dashboard/SignalPanel.tsx - Current trading signal display
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { useTradingStore } from '../../store/tradingStore';
 import { signalsAPI } from '../../api/client';
 import type { Signal } from '../../types/trading';
@@ -21,7 +21,7 @@ const MODEL_COLORS: Record<string, string> = {
   UP: 'text-green-400', DOWN: 'text-red-400', NEUTRAL: 'text-blue-400',
 };
 
-export function SignalPanel() {
+export const SignalPanel = memo(function SignalPanel() {
   const { setCurrentSignal } = useTradingStore();
   const [signal, setSignal] = useState<Signal | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,7 +63,7 @@ export function SignalPanel() {
     );
   }
 
-  if (!signal) return null;
+  if (!signal) {return null;}
 
   const cs = CONSENSUS_COLORS[signal.consensus] || CONSENSUS_COLORS.HOLD;
 
@@ -143,4 +143,4 @@ export function SignalPanel() {
       )}
     </div>
   );
-}
+});

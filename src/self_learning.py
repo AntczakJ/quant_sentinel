@@ -259,6 +259,8 @@ async def auto_analyze_and_learn(context):
         - POC: {s.get('poc_price')}$ | Near POC: {s.get('near_poc', False)}
         RSI DIVERGENCE:
         - Bullish Div: {s.get('rsi_div_bull', False)} | Bearish Div: {s.get('rsi_div_bear', False)}
+        SESSION / KILLZONE:
+        - Session: {s.get('session', 'unknown')} | Killzone: {s.get('is_killzone', False)} | Volatility: {s.get('volatility_expected', 'unknown')}
         POTWIERDZENIE M5: Grab: {s_lower['liquidity_grab']}, MSS: {s_lower['mss']}
         MAKRO: {macro_context}
         """
@@ -423,6 +425,15 @@ async def auto_analyze_and_learn(context):
                 factors['ml_ensemble_long'] = 1
             elif ml_dir == 'SHORT':
                 factors['ml_ensemble_short'] = 1
+
+        # Session / Killzone
+        session = s.get('session', 'unknown')
+        if s.get('is_killzone', False):
+            factors['killzone'] = 1
+        if session in ('london', 'new_york'):
+            factors['high_vol_session'] = 1
+        elif session == 'asian':
+            factors['asian_session'] = 1
         # ====================================
 
         # Zapis do bazy (z czynnikami)

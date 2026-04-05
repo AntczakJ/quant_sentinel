@@ -45,11 +45,11 @@ class DrawingsPaneRenderer implements ISeriesPrimitivePaneRenderer {
       const h = this.chartH || scope.mediaSize.height;
 
       const all = [...this.items];
-      if (this.preview) all.push(this.preview);
+      if (this.preview) {all.push(this.preview);}
 
       for (const item of all) {
         const d = item.drawing;
-        if (!d.visible) continue;
+        if (!d.visible) {continue;}
         const pts = item.pts;
 
         switch (d.tool) {
@@ -138,10 +138,10 @@ export class DrawingsOverlay implements ISeriesPrimitive<Time> {
 
   /** Convert DrawingPoint (time/price) → pixel (x/y) */
   private toPixel(p: DrawingPoint): { x: number; y: number } | null {
-    if (!this._chart || !this._series) return null;
+    if (!this._chart || !this._series) {return null;}
     const x = this._chart.timeScale().timeToCoordinate(p.time as unknown as Time);
     const y = this._series.priceToCoordinate(p.price);
-    if (x === null || y === null) return null;
+    if (x === null || y === null) {return null;}
     return { x, y };
   }
 
@@ -151,15 +151,15 @@ export class DrawingsOverlay implements ISeriesPrimitive<Time> {
     renderer.preview = null;
     renderer.selectedId = this._selectedId;
 
-    if (!this._chart || !this._series) return;
+    if (!this._chart || !this._series) {return;}
 
     renderer.chartW = this._chart.timeScale().width();
-    renderer.chartH = (this._chart as any).chartElement?.().clientHeight ?? 600;
+    renderer.chartH = (this._chart as any).chartElement?.()?.clientHeight ?? 600;
 
     // Convert all drawings
     for (const d of this._drawings) {
       const pts = d.points.map(p => this.toPixel(p)).filter(Boolean) as { x: number; y: number }[];
-      if (pts.length === 0) continue;
+      if (pts.length === 0) {continue;}
       renderer.items.push({ drawing: d, pts });
     }
 

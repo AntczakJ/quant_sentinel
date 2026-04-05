@@ -43,8 +43,8 @@ function findMitigationTime(
 ): number {
   for (let j = fromIdx + 1; j < candles.length; j++) {
     const c = candles[j];
-    if (direction === 'bull' && c.low <= upper) return c.time;
-    if (direction === 'bear' && c.high >= lower) return c.time;
+    if (direction === 'bull' && c.low <= upper) {return c.time;}
+    if (direction === 'bear' && c.high >= lower) {return c.time;}
   }
   return fallback;
 }
@@ -58,7 +58,7 @@ function findZoneMitigationTime(
   for (let j = fromIdx + 1; j < candles.length; j++) {
     const c = candles[j];
     // candle overlaps zone if candle.low < upper AND candle.high > lower
-    if (c.low < upper && c.high > lower) return c.time;
+    if (c.low < upper && c.high > lower) {return c.time;}
   }
   return fallback;
 }
@@ -69,7 +69,7 @@ function findZoneMitigationTime(
 
 export function detectFVGs(candles: OhlcBar[], maxZones = 5): SmcZone[] {
   const zones: SmcZone[] = [];
-  if (candles.length < 3) return zones;
+  if (candles.length < 3) {return zones;}
   const lastTime = candles[candles.length - 1].time;
 
   for (let i = 2; i < candles.length; i++) {
@@ -114,12 +114,12 @@ export function detectFVGs(candles: OhlcBar[], maxZones = 5): SmcZone[] {
 
 export function detectOrderBlocks(candles: OhlcBar[], maxBlocks = 3): SmcZone[] {
   const zones: SmcZone[] = [];
-  if (candles.length < 20) return zones;
+  if (candles.length < 20) {return zones;}
   const lastTime = candles[candles.length - 1].time;
 
   // Average body size for "strong move" threshold
   let bodySum = 0;
-  for (const c of candles) bodySum += Math.abs(c.close - c.open);
+  for (const c of candles) {bodySum += Math.abs(c.close - c.open);}
   const avgBody = bodySum / candles.length;
   const threshold = avgBody * 1.5;
 
@@ -128,7 +128,7 @@ export function detectOrderBlocks(candles: OhlcBar[], maxBlocks = 3): SmcZone[] 
     const next = candles[i + 1];
     const nextBody = Math.abs(next.close - next.open);
 
-    if (nextBody < threshold) continue;
+    if (nextBody < threshold) {continue;}
 
     const currBearish = curr.close < curr.open;
     const currBullish = curr.close > curr.open;
@@ -181,18 +181,18 @@ function findSwingPoints(candles: OhlcBar[], window = 5) {
     let isHigh = true;
     let isLow = true;
     for (let j = i - window; j <= i + window; j++) {
-      if (j === i) continue;
-      if (candles[j].high >= candles[i].high) isHigh = false;
-      if (candles[j].low <= candles[i].low) isLow = false;
+      if (j === i) {continue;}
+      if (candles[j].high >= candles[i].high) {isHigh = false;}
+      if (candles[j].low <= candles[i].low) {isLow = false;}
     }
-    if (isHigh) swingHighs.push({ idx: i, price: candles[i].high });
-    if (isLow) swingLows.push({ idx: i, price: candles[i].low });
+    if (isHigh) {swingHighs.push({ idx: i, price: candles[i].high });}
+    if (isLow) {swingLows.push({ idx: i, price: candles[i].low });}
   }
   return { swingHighs, swingLows };
 }
 
 export function detectSupplyDemand(candles: OhlcBar[]): SmcZone[] {
-  if (candles.length < 20) return [];
+  if (candles.length < 20) {return [];}
   const { swingHighs, swingLows } = findSwingPoints(candles, 5);
   const lastTime = candles[candles.length - 1].time;
 
@@ -238,9 +238,9 @@ export function detectSupplyDemand(candles: OhlcBar[]): SmcZone[] {
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 export function calcEquilibrium(candles: OhlcBar[]): number | null {
-  if (candles.length < 20) return null;
+  if (candles.length < 20) {return null;}
   const { swingHighs, swingLows } = findSwingPoints(candles, 5);
-  if (!swingHighs.length || !swingLows.length) return null;
+  if (!swingHighs.length || !swingLows.length) {return null;}
 
   const lastHigh = swingHighs[swingHighs.length - 1].price;
   const lastLow = swingLows[swingLows.length - 1].price;

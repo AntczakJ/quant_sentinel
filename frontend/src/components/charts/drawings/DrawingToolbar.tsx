@@ -177,11 +177,19 @@ interface DrawingToolbarProps {
   onDeleteSelected: () => void;
   onClearAll: () => void;
   hasSelection: boolean;
+  magneticMode?: boolean;
+  onToggleMagnetic?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
 export function DrawingToolbar({
   activeTool, onSelectTool, onStyleChange, currentColor,
   onDeleteSelected, onClearAll, hasSelection,
+  magneticMode = true, onToggleMagnetic, onUndo, onRedo,
+  canUndo = false, canRedo = false,
 }: DrawingToolbarProps) {
   const [showColors, setShowColors] = useState(false);
   const [showWidths, setShowWidths] = useState(false);
@@ -195,8 +203,8 @@ export function DrawingToolbar({
   // Close popups on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (colorRef.current && !colorRef.current.contains(e.target as Node)) setShowColors(false);
-      if (widthRef.current && !widthRef.current.contains(e.target as Node)) setShowWidths(false);
+      if (colorRef.current && !colorRef.current.contains(e.target as Node)) {setShowColors(false);}
+      if (widthRef.current && !widthRef.current.contains(e.target as Node)) {setShowWidths(false);}
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -226,8 +234,8 @@ export function DrawingToolbar({
 
   return (
     <div
-      className="absolute left-0 top-8 bottom-0 z-30 flex flex-col items-center bg-[#0d1117]/95 border-r border-[#1a2030] py-1.5 gap-0.5 overflow-y-auto select-none"
-      style={{ width: 42, backdropFilter: 'blur(8px)' }}
+      className="absolute left-0 top-0 bottom-0 z-30 flex flex-col items-center bg-[#131722] border-r border-[#2a2e39] py-1.5 gap-0.5 overflow-y-auto select-none"
+      style={{ width: 42 }}
     >
       {TOOLS.map((t, i) => {
         const isActive = activeTool === t.tool;
@@ -240,11 +248,11 @@ export function DrawingToolbar({
             {/* Group separator with optional label */}
             {showSep && (
               <div className="flex items-center gap-0.5 w-[34px] my-1">
-                <div className="flex-1 h-px bg-[#1e2538]" />
+                <div className="flex-1 h-px bg-[#2a2e39]" />
                 {groupLabel && (
-                  <span className="text-[6px] text-gray-600 font-bold tracking-[0.1em] leading-none">{groupLabel}</span>
+                  <span className="text-[6px] text-[#787b86] font-bold tracking-[0.1em] leading-none">{groupLabel}</span>
                 )}
-                <div className="flex-1 h-px bg-[#1e2538]" />
+                <div className="flex-1 h-px bg-[#2a2e39]" />
               </div>
             )}
 
@@ -254,10 +262,10 @@ export function DrawingToolbar({
                 onClick={() => onSelectTool(isActive && t.tool !== 'cursor' ? 'cursor' : t.tool)}
                 onMouseEnter={() => startHover(t.tool)}
                 onMouseLeave={endHover}
-                className={`w-[34px] h-[30px] flex items-center justify-center rounded-md transition-all duration-150 ${
+                className={`w-[34px] h-[30px] flex items-center justify-center rounded transition-all duration-150 ${
                   isActive
-                    ? 'bg-blue-600/80 text-white shadow-lg shadow-blue-600/20'
-                    : 'text-gray-500 hover:text-gray-200 hover:bg-[#1a2538]'
+                    ? 'bg-[#2962ff]/25 text-[#2962ff] shadow-[0_0_6px_rgba(41,98,255,0.2)]'
+                    : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
                 }`}
               >
                 {ICONS[t.tool]}
@@ -266,9 +274,9 @@ export function DrawingToolbar({
               {/* Tooltip */}
               {hoveredTool === t.tool && (
                 <div className="absolute left-[42px] top-1/2 -translate-y-1/2 z-[60] pointer-events-none ml-1">
-                  <div className="bg-[#1a2538] border border-[#2a3548] rounded-lg px-3 py-2 shadow-2xl whitespace-nowrap">
-                    <div className="text-white text-[11px] font-semibold">{t.label}</div>
-                    <div className="text-gray-500 text-[10px] mt-0.5 leading-snug max-w-[180px]">{t.desc}</div>
+                  <div className="bg-[#1e222d] border border-[#363a45] rounded-lg px-3 py-2 shadow-2xl whitespace-nowrap">
+                    <div className="text-[#d1d4dc] text-[11px] font-semibold">{t.label}</div>
+                    <div className="text-[#787b86] text-[10px] mt-0.5 leading-snug max-w-[180px]">{t.desc}</div>
                   </div>
                 </div>
               )}
@@ -280,11 +288,58 @@ export function DrawingToolbar({
       {/* ── Bottom controls ── */}
       <div className="flex-1" />
 
+      {/* Magnetic snap toggle */}
+      {onToggleMagnetic && (
+        <button
+          onClick={onToggleMagnetic}
+          className={`w-[34px] h-[28px] flex items-center justify-center rounded transition-colors ${
+            magneticMode
+              ? 'bg-[#f0b90b]/15 text-[#f0b90b] hover:bg-[#f0b90b]/25'
+              : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
+          }`}
+          title={magneticMode ? 'Magnetic snap: ON (snaps to OHLC)' : 'Magnetic snap: OFF'}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <path d="M4 2v5a4 4 0 0 0 8 0V2" />
+            <line x1="2" y1="2" x2="6" y2="2" />
+            <line x1="10" y1="2" x2="14" y2="2" />
+          </svg>
+        </button>
+      )}
+
+      {/* Undo / Redo */}
+      {(onUndo || onRedo) && (
+        <>
+          <button
+            onClick={onUndo}
+            disabled={!canUndo}
+            className="w-[34px] h-[28px] flex items-center justify-center rounded text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39] transition-colors disabled:opacity-25 disabled:pointer-events-none"
+            title="Undo (Ctrl+Z)"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="4,7 1,4 4,1" />
+              <path d="M1 4h9a4 4 0 0 1 0 8H7" />
+            </svg>
+          </button>
+          <button
+            onClick={onRedo}
+            disabled={!canRedo}
+            className="w-[34px] h-[28px] flex items-center justify-center rounded text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39] transition-colors disabled:opacity-25 disabled:pointer-events-none"
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="12,7 15,4 12,1" />
+              <path d="M15 4H6a4 4 0 0 0 0 8h2" />
+            </svg>
+          </button>
+        </>
+      )}
+
       {/* Line width picker */}
       <div className="relative" ref={widthRef}>
         <button
           onClick={() => { setShowWidths(!showWidths); setShowColors(false); }}
-          className="w-[34px] h-[28px] flex items-center justify-center rounded-md text-gray-500 hover:text-gray-300 hover:bg-[#1a2538] transition-colors"
+          className="w-[34px] h-[28px] flex items-center justify-center rounded text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39] transition-colors"
           title="Line width"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round">
@@ -295,13 +350,13 @@ export function DrawingToolbar({
         </button>
 
         {showWidths && (
-          <div className="absolute left-[46px] bottom-0 bg-[#1a2538] border border-[#2a3548] rounded-lg p-2 z-50 shadow-2xl flex flex-col gap-1">
+          <div className="absolute left-[46px] bottom-0 bg-[#1e222d] border border-[#363a45] rounded-lg p-2 z-50 shadow-2xl flex flex-col gap-1">
             {[1, 2, 3, 4, 5].map(w => (
               <button
                 key={w}
                 onClick={() => { onStyleChange({ lineWidth: w }); setCurrentWidth(w); setShowWidths(false); }}
-                className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md transition-colors ${
-                  currentWidth === w ? 'bg-blue-500/20 text-blue-300' : 'text-gray-400 hover:text-gray-200 hover:bg-[#252d42]'
+                className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded transition-colors ${
+                  currentWidth === w ? 'bg-[#2962ff]/20 text-[#2962ff]' : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
                 }`}
               >
                 <div className="w-10 flex items-center">
@@ -318,21 +373,21 @@ export function DrawingToolbar({
       <div className="relative" ref={colorRef}>
         <button
           onClick={() => { setShowColors(!showColors); setShowWidths(false); }}
-          className="w-[34px] h-[28px] flex items-center justify-center rounded-md hover:bg-[#1a2538] transition-colors"
+          className="w-[34px] h-[28px] flex items-center justify-center rounded hover:bg-[#2a2e39] transition-colors"
           title="Drawing color"
         >
-          <div className="w-5 h-5 rounded-[4px] border-2 border-gray-600 shadow-inner" style={{ backgroundColor: currentColor }} />
+          <div className="w-5 h-5 rounded border-2 border-[#363a45] shadow-inner" style={{ backgroundColor: currentColor }} />
         </button>
 
         {showColors && (
-          <div className="absolute left-[46px] bottom-0 bg-[#1a2538] border border-[#2a3548] rounded-lg p-2.5 z-50 shadow-2xl">
+          <div className="absolute left-[46px] bottom-0 bg-[#1e222d] border border-[#363a45] rounded-lg p-2.5 z-50 shadow-2xl">
             <div className="grid grid-cols-5 gap-1.5">
               {COLORS.map(c => (
                 <button
                   key={c}
                   onClick={() => pickColor(c)}
-                  className={`w-6 h-6 rounded-md border-2 transition-all hover:scale-125 ${
-                    c === currentColor ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:border-gray-500'
+                  className={`w-6 h-6 rounded border-2 transition-all hover:scale-125 ${
+                    c === currentColor ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:border-[#787b86]'
                   }`}
                   style={{ backgroundColor: c }}
                 />
@@ -342,7 +397,7 @@ export function DrawingToolbar({
               type="color"
               value={currentColor.startsWith('#') ? currentColor : '#3b82f6'}
               onChange={e => pickColor(e.target.value)}
-              className="mt-2 w-full h-6 rounded cursor-pointer border border-[#2a3548] bg-transparent"
+              className="mt-2 w-full h-6 rounded cursor-pointer border border-[#363a45] bg-transparent"
               title="Custom color"
             />
           </div>
@@ -350,13 +405,13 @@ export function DrawingToolbar({
       </div>
 
       {/* Separator */}
-      <div className="w-6 h-px bg-[#1e2538] mx-auto my-1" />
+      <div className="w-6 h-px bg-[#2a2e39] mx-auto my-1" />
 
       {/* Delete selected */}
       {hasSelection && (
         <button
           onClick={onDeleteSelected}
-          className="w-[34px] h-[28px] flex items-center justify-center rounded-md text-red-500 hover:bg-red-500/15 transition-colors"
+          className="w-[34px] h-[28px] flex items-center justify-center rounded text-[#ef5350] hover:bg-[#ef5350]/15 transition-colors"
           title="Delete selected drawing"
         >
           <Trash2 size={14} />
@@ -366,7 +421,7 @@ export function DrawingToolbar({
       {/* Clear all */}
       <button
         onClick={onClearAll}
-        className="w-[34px] h-[28px] flex items-center justify-center rounded-md text-gray-600 hover:text-red-400 hover:bg-[#1a2538] transition-colors mb-1"
+        className="w-[34px] h-[28px] flex items-center justify-center rounded text-[#787b86] hover:text-[#ef5350] hover:bg-[#2a2e39] transition-colors mb-1"
         title="Clear all drawings"
       >
         <Trash2 size={12} />
