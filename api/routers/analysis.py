@@ -64,9 +64,12 @@ async def quant_pro_analysis(
 
         provider = get_provider()
         try:
-            ticker = await asyncio.to_thread(provider.get_current_price, 'XAU/USD')
+            ticker = await asyncio.wait_for(
+                asyncio.to_thread(provider.get_current_price, 'XAU/USD'),
+                timeout=8.0
+            )
             current_price = ticker['price'] if ticker else None
-        except Exception as e:
+        except (asyncio.TimeoutError, Exception) as e:
             logger.warning(f"Could not fetch price: {e}")
             current_price = None
 
@@ -75,8 +78,11 @@ async def quant_pro_analysis(
             logger.warning(f"⚠️ Using SMC analysis price as fallback: {current_price}")
 
         try:
-            candles = await asyncio.to_thread(provider.get_candles, 'XAU/USD', tf, 200)
-        except Exception as e:
+            candles = await asyncio.wait_for(
+                asyncio.to_thread(provider.get_candles, 'XAU/USD', tf, 200),
+                timeout=10.0
+            )
+        except (asyncio.TimeoutError, Exception) as e:
             logger.warning(f"Could not fetch candles for ML: {e}")
             candles = None
 
