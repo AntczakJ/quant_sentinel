@@ -17,46 +17,26 @@ Odpowiada za:
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
-from src.config import TD_API_KEY
 from src.cache import cached_with_key
-
-# src/smc_engine.py – dodaj na początku, po importach
-import time
-import requests
 from src.logger import logger
 
 
-def request_with_retry(url, max_retries=3, backoff=2):
-    """Wykonuje zapytanie GET z obsługą rate limit (429)."""
-    for attempt in range(max_retries):
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 429:
-                wait = backoff ** attempt
-                logger.warning(f"Rate limit (429) – czekam {wait}s...")
-                time.sleep(wait)
-                continue
-            return response.json()
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(backoff ** attempt)
-    return {}
+def _get_data_provider():
+    """Lazy import aby uniknąć cyklicznych importów."""
+    from src.data_sources import get_provider
+    return get_provider()
 
 
 def get_usdjpy_history(tf: str, length: int = 30) -> tuple:
     """
-    Pobiera historyczne dane USD/JPY z Twelve Data i zwraca (lista cen, ostatnia cena).
+    Pobiera historyczne dane USD/JPY przez DataProvider (rate limited, cached).
+    Zwraca (lista cen, ostatnia cena).
     """
     try:
-        td_tf = tf if "min" in tf else tf.replace("m", "min")
-        url = f"https://api.twelvedata.com/time_series?symbol=USD/JPY&interval={td_tf}&apikey={TD_API_KEY}&outputsize={length}"
-        data = request_with_retry(url)
-        if 'values' not in data:
+        provider = _get_data_provider()
+        df = provider.get_candles('USD/JPY', tf, length)
+        if df is None or df.empty:
             return [], 0
-        df = pd.DataFrame(data['values'])
-        df['close'] = pd.to_numeric(df['close'])
-        df = df.iloc[::-1].reset_index(drop=True)
         prices = df['close'].tolist()
         current = prices[-1] if prices else 0
         return prices, current
@@ -66,7 +46,7 @@ def get_usdjpy_history(tf: str, length: int = 30) -> tuple:
 
 
 def calculate_atr(df: pd.DataFrame, length: int = 14) -> float:
-    """Oblicza ATR na podstawie danych OHLC."""
+    """Oblicza ATR na podstawie danych OHLC. Zapisuje kolumnę 'tr' w df."""
     # True Range
     high = df['high']
     low = df['low']
@@ -75,6 +55,7 @@ def calculate_atr(df: pd.DataFrame, length: int = 14) -> float:
     tr2 = abs(high - close.shift())
     tr3 = abs(low - close.shift())
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    df['tr'] = tr  # Zapisz TR do DataFrame — używane potem do obliczenia atr_mean
     atr = tr.rolling(window=length).mean().iloc[-1]
     return round(atr, 2)
 
@@ -118,9 +99,9 @@ def detect_swing_points(df: pd.DataFrame, window: int = 5) -> dict:
     swing_highs = []
     swing_lows = []
     for i in range(window, n - window):
-        if all(highs[i] >= highs[i-window:i+window+1]):
+        if all(highs[i] >= highs[j] for j in range(i-window, i+window+1) if j != i):
             swing_highs.append((i, highs[i]))
-        if all(lows[i] <= lows[i-window:i+window+1]):
+        if all(lows[i] <= lows[j] for j in range(i-window, i+window+1) if j != i):
             swing_lows.append((i, lows[i]))
     if swing_highs:
         last_swing_high = swing_highs[-1][1]
@@ -185,20 +166,20 @@ def detect_order_block(df: pd.DataFrame, trend: str) -> float:
     Dla trendu bear: ostatnia świeca wzrostowa przed silną świecą spadkową.
     Zwraca cenę OB (low dla bull, high dla bear).
     """
-    df['body'] = abs(df['close'] - df['open'])
-    avg_body = df['body'].tail(20).mean()
+    body = abs(df['close'] - df['open'])
+    avg_body = body.tail(20).mean()
     ob_price = df['close'].iloc[-1]  # fallback
 
     for i in range(len(df)-2, max(0, len(df)-30), -1):
         if trend == "bull":
             # Szukamy świecy spadkowej (close < open) przed dużą wzrostową (i+1)
-            if df['close'].iloc[i] < df['open'].iloc[i] and df['body'].iloc[i+1] > avg_body:
+            if df['close'].iloc[i] < df['open'].iloc[i] and body.iloc[i+1] > avg_body:
                 if df['close'].iloc[i+1] > df['open'].iloc[i+1]:
                     ob_price = df['low'].iloc[i]
                     break
         else:
             # Szukamy świecy wzrostowej przed dużą spadkową
-            if df['close'].iloc[i] > df['open'].iloc[i] and df['body'].iloc[i+1] > avg_body:
+            if df['close'].iloc[i] > df['open'].iloc[i] and body.iloc[i+1] > avg_body:
                 if df['close'].iloc[i+1] < df['open'].iloc[i+1]:
                     ob_price = df['high'].iloc[i]
                     break
@@ -291,18 +272,12 @@ def detect_dbr_rbd(df: pd.DataFrame, window: int = 5) -> dict:
 
 def get_exchange_rate(base: str = "USD", to: str = "PLN") -> float | None:
     """
-    Pobiera aktualny kurs wymiany walut z Twelve Data.
+    Pobiera aktualny kurs wymiany walut przez DataProvider (rate limited).
     """
-    symbol = f"{base}/{to}"
-    url = f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TD_API_KEY}"
-
     try:
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        if 'price' not in data:
-            logger.warning(f"⚠️ Błąd pobierania kursu {symbol}: {data.get('message')}")
-            return None
-        return float(data['price'])
+        provider = _get_data_provider()
+        rate = provider.get_exchange_rate(base, to)
+        return rate
     except Exception as e:
         logger.error(f"❌ Błąd w get_exchange_rate: {e}")
         return None
@@ -313,8 +288,8 @@ def find_order_blocks(df: pd.DataFrame, trend: str, max_blocks: int = 3) -> list
     Wyszukuje kilka ostatnich Order Blocków (OB) dla danego trendu.
     Zwraca listę słowników: [{'price': float, 'type': 'bullish'/'bearish'}, ...]
     """
-    df['body'] = abs(df['close'] - df['open'])
-    avg_body = df['body'].tail(20).mean()
+    body = abs(df['close'] - df['open'])
+    avg_body = body.tail(20).mean()
     blocks = []
 
     for i in range(len(df)-2, max(0, len(df)-50), -1):
@@ -322,13 +297,13 @@ def find_order_blocks(df: pd.DataFrame, trend: str, max_blocks: int = 3) -> list
             break
         if trend == "bull":
             # Szukamy świecy spadkowej (close < open) przed silną wzrostową
-            if df['close'].iloc[i] < df['open'].iloc[i] and df['body'].iloc[i+1] > avg_body:
+            if df['close'].iloc[i] < df['open'].iloc[i] and body.iloc[i+1] > avg_body:
                 if df['close'].iloc[i+1] > df['open'].iloc[i+1]:
                     ob_price = df['low'].iloc[i]
                     blocks.append({'price': round(ob_price, 2), 'type': 'bullish'})
         else:
             # Szukamy świecy wzrostowej przed silną spadkową
-            if df['close'].iloc[i] > df['open'].iloc[i] and df['body'].iloc[i+1] > avg_body:
+            if df['close'].iloc[i] > df['open'].iloc[i] and body.iloc[i+1] > avg_body:
                 if df['close'].iloc[i+1] < df['open'].iloc[i+1]:
                     ob_price = df['high'].iloc[i]
                     blocks.append({'price': round(ob_price, 2), 'type': 'bearish'})
@@ -360,9 +335,9 @@ def detect_choch(df: pd.DataFrame, window: int = 10) -> tuple:
     swing_highs = []
     swing_lows = []
     for i in range(window, n - window):
-        if all(highs[i] >= highs[i-window:i+window+1]):
+        if all(highs[i] >= highs[j] for j in range(i-window, i+window+1) if j != i):
             swing_highs.append(i)
-        if all(lows[i] <= lows[i-window:i+window+1]):
+        if all(lows[i] <= lows[j] for j in range(i-window, i+window+1) if j != i):
             swing_lows.append(i)
 
     if len(swing_highs) < 2 or len(swing_lows) < 2:
@@ -387,7 +362,7 @@ def detect_choch(df: pd.DataFrame, window: int = 10) -> tuple:
 
 
 
-def find_ob_confluence(df: pd.DataFrame, trend: str, threshold: float = 0.5) -> int:
+def find_ob_confluence(df: pd.DataFrame, trend: str, threshold: float = 0.005) -> int:
     """
     Wykrywa konfluencję Order Blocków – ile OB znajduje się w pobliżu (w granicach threshold %).
     Zwraca liczbę OB w tym samym obszarze (max 3).
@@ -436,11 +411,11 @@ def find_swings(values: list, lookback: int = 5, min_swings: int = 2):
     swing_highs = []
     swing_lows = []
     for i in range(lookback, n - lookback):
-        # Sprawdzenie, czy punkt i jest lokalnym maksimum
-        if all(values[i] >= values[i - lookback:i + lookback + 1]):
+        # Sprawdzenie, czy punkt i jest lokalnym maksimum (bez porównania z samym sobą)
+        if all(values[i] >= values[j] for j in range(i - lookback, i + lookback + 1) if j != i):
             swing_highs.append(i)
         # Sprawdzenie, czy punkt i jest lokalnym minimum
-        if all(values[i] <= values[i - lookback:i + lookback + 1]):
+        if all(values[i] <= values[j] for j in range(i - lookback, i + lookback + 1) if j != i):
             swing_lows.append(i)
     return swing_highs, swing_lows
 
@@ -501,32 +476,27 @@ def detect_rsi_divergence(df: pd.DataFrame, lookback: int = 20, swing_lookback: 
 
 from src.cache import cached_with_key
 
-def _smc_cache_key(tf: str) -> str:
-    return f"smc_{tf}"
-
-@cached_with_key(_smc_cache_key, ttl=10)
 
 @cached_with_key(lambda tf: f"smc_analysis_{tf}", ttl=60)
 def get_smc_analysis(tf: str) -> dict | None:
     """
-    Główna funkcja – rozszerzona o nowe wskaźniki SMC i makro.
-    
+    Główna funkcja – rozszerzona o nowe wskaźniki SMC, candlestick patterns, Ichimoku i makro.
+
     Wyniki są cachowane przez 60 sekund dla optymalizacji wydajności.
     Klucz cache: "smc_analysis_<interwał>"
     """
     try:
-        td_tf = tf if "min" in tf else tf.replace("m", "min")
+        # === Import dodatkowych modułów detekcji ===
+        from src.candlestick_patterns import engulfing, pin_bar, inside_bar
+        from src.indicators import ichimoku, volume_profile
 
-        # 1. POBIERANIE DANYCH ZŁOTA
-        url_gold = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={td_tf}&apikey={TD_API_KEY}&outputsize=100"
-        data_gold = request_with_retry(url_gold)
-        if 'values' not in data_gold:
-            logger.warning(f"Błąd Twelve Data: {data_gold.get('message')}")
+        # 1. POBIERANIE DANYCH ZŁOTA (przez DataProvider – rate limited, cached)
+        provider = _get_data_provider()
+        df = provider.get_candles('XAU/USD', tf, 100)
+        if df is None or df.empty:
+            logger.warning(f"Brak danych XAU/USD z DataProvider dla {tf}")
             return None
 
-        df = pd.DataFrame(data_gold['values'])
-        df[['open', 'high', 'low', 'close']] = df[['open', 'high', 'low', 'close']].apply(pd.to_numeric)
-        df = df.iloc[::-1].reset_index(drop=True)
 
         # 2. POBIERANIE HISTORYCZNEGO USD/JPY
         usdjpy_prices, current_usdjpy = get_usdjpy_history(tf, length=30)
@@ -599,6 +569,37 @@ def get_smc_analysis(tf: str) -> dict | None:
         ob_confluence = find_ob_confluence(df, trend)  # liczba OB w klastrze
         supply_demand = detect_supply_demand(df)  # klasyczne strefy
         rsi_div_bull, rsi_div_bear = detect_rsi_divergence(df)  # dywergencja RSI
+
+        # ========== CANDLESTICK PATTERNS ==========
+        engulfing_signal = engulfing(df)  # 'bullish'|'bearish'|False
+        pin_bar_signal = pin_bar(df)      # 'bullish'|'bearish'|False
+        inside_bar_signal = inside_bar(df)  # True|False
+
+        # ========== ICHIMOKU CLOUD ==========
+        ichimoku_above_cloud = False
+        ichimoku_below_cloud = False
+        try:
+            ichi_df = ichimoku(df)
+            if not ichi_df.empty:
+                span_a = ichi_df['senkou_span_a'].iloc[-1]
+                span_b = ichi_df['senkou_span_b'].iloc[-1]
+                cloud_top = max(span_a, span_b) if pd.notna(span_a) and pd.notna(span_b) else None
+                cloud_bottom = min(span_a, span_b) if pd.notna(span_a) and pd.notna(span_b) else None
+                if cloud_top and cloud_bottom:
+                    ichimoku_above_cloud = price > cloud_top
+                    ichimoku_below_cloud = price < cloud_bottom
+        except Exception as e:
+            logger.debug(f"Ichimoku calc error: {e}")
+
+        # ========== VOLUME PROFILE (POC) ==========
+        poc_price = price
+        try:
+            vp = volume_profile(df)
+            poc_price = vp.get('poc', price)
+        except Exception as e:
+            logger.debug(f"Volume profile calc error: {e}")
+
+        near_poc = abs(price - poc_price) < atr * 0.5  # cena blisko POC
         # ===================================
 
         return {
@@ -639,6 +640,16 @@ def get_smc_analysis(tf: str) -> dict | None:
             'demand': supply_demand['demand'],
             'rsi_div_bull': rsi_div_bull,
             'rsi_div_bear': rsi_div_bear,
+            # Candlestick patterns
+            'engulfing': engulfing_signal,
+            'pin_bar': pin_bar_signal,
+            'inside_bar': inside_bar_signal,
+            # Ichimoku Cloud
+            'ichimoku_above_cloud': ichimoku_above_cloud,
+            'ichimoku_below_cloud': ichimoku_below_cloud,
+            # Volume Profile
+            'poc_price': round(poc_price, 2),
+            'near_poc': near_poc,
         }
 
     except Exception as e:

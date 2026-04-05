@@ -1,8 +1,13 @@
 /**
- * src/hooks/useApiCache.ts - Professional API caching with smart invalidation
+ * src/hooks/useApiCache.ts - API caching with smart invalidation
+ *
+ * IMPORTANT: Both hooks must return referentially-stable values to avoid
+ * infinite React re-render loops.  useApiCache() returns a memoised object
+ * whose methods never change, and useCachedFetch() keeps the cache handle
+ * in a ref so it is invisible to useCallback / useEffect dependency arrays.
  */
 
-import { useCallback, useRef, useEffect, useState } from 'react';
+import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
 
 interface CacheEntry<T> {
   data: T;
@@ -11,83 +16,62 @@ interface CacheEntry<T> {
 }
 
 interface CacheStore {
-  [key: string]: CacheEntry<any>;
+  [key: string]: CacheEntry<unknown>;
 }
 
 const globalCache: CacheStore = {};
 
 /**
- * Professional API cache hook with intelligent TTL management
- * Reduces API calls significantly by caching responses
+ * Low-level cache access.  All returned functions are referentially stable.
  */
 export function useApiCache() {
-  const cacheRef = useRef(globalCache);
+  const store = useRef(globalCache);
 
   const get = useCallback(<T,>(key: string, ttl: number = 30000): T | null => {
-    const entry = cacheRef.current[key];
-
-    if (!entry) {
+    const entry = store.current[key];
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > ttl) {
+      delete store.current[key];
       return null;
     }
-
-    const now = Date.now();
-    const age = now - entry.timestamp;
-
-    // Check if cache is expired
-    if (age > ttl) {
-      delete cacheRef.current[key];
-      return null;
-    }
-
     return entry.data as T;
   }, []);
 
   const set = useCallback(<T,>(key: string, data: T, ttl: number = 30000): void => {
-    cacheRef.current[key] = {
-      data,
-      timestamp: Date.now(),
-      ttl,
-    };
+    store.current[key] = { data, timestamp: Date.now(), ttl };
   }, []);
 
   const invalidate = useCallback((key: string): void => {
-    delete cacheRef.current[key];
+    delete store.current[key];
   }, []);
 
   const invalidatePattern = useCallback((pattern: string): void => {
     const regex = new RegExp(pattern);
-    Object.keys(cacheRef.current).forEach(key => {
-      if (regex.test(key)) {
-        delete cacheRef.current[key];
-      }
+    Object.keys(store.current).forEach(k => {
+      if (regex.test(k)) delete store.current[k];
     });
   }, []);
 
   const clear = useCallback((): void => {
-    Object.keys(cacheRef.current).forEach(key => {
-      delete cacheRef.current[key];
-    });
+    Object.keys(store.current).forEach(k => delete store.current[k]);
   }, []);
 
-  const getStats = useCallback((): { size: number; entries: string[] } => {
-    return {
-      size: Object.keys(cacheRef.current).length,
-      entries: Object.keys(cacheRef.current),
-    };
-  }, []);
+  const getStats = useCallback((): { size: number; entries: string[] } => ({
+    size: Object.keys(store.current).length,
+    entries: Object.keys(store.current),
+  }), []);
 
-  return {
-    get,
-    set,
-    invalidate,
-    invalidatePattern,
-    clear,
-    getStats,
-  };
+  // Return a STABLE object — all deps are themselves stable (empty-dep useCallbacks).
+  return useMemo(
+    () => ({ get, set, invalidate, invalidatePattern, clear, getStats }),
+    [get, set, invalidate, invalidatePattern, clear, getStats],
+  );
 }
 
 /**
- * Professional hook for fetching data with caching
+ * Fetch with TTL-based caching.  Avoids infinite loops by keeping all
+ * mutable/unstable values in refs so that useCallback & useEffect deps
+ * only contain primitives (key, ttl, enabled).
  */
 export function useCachedFetch<T,>(
   key: string,
@@ -99,49 +83,55 @@ export function useCachedFetch<T,>(
     onError?: (error: Error) => void;
   } = {}
 ) {
-  const cache = useApiCache();
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  const ttl = options.ttl ?? 30000; // Default 30s
+  const ttl = options.ttl ?? 30000;
   const enabled = options.enabled ?? true;
 
-  const fetch = useCallback(async () => {
+  // ── Stable refs for values that must NOT appear in hook deps ──
+  const cacheRef = useRef(useApiCache());
+  const fetchFnRef = useRef(fetchFn);
+  fetchFnRef.current = fetchFn;
+  const onSuccessRef = useRef(options.onSuccess);
+  onSuccessRef.current = options.onSuccess;
+  const onErrorRef = useRef(options.onError);
+  onErrorRef.current = options.onError;
+
+  const doFetch = useCallback(async () => {
+    const cache = cacheRef.current;
+
     // Check cache first
     const cached = cache.get<T>(key, ttl);
     if (cached) {
       setData(cached);
+      onSuccessRef.current?.(cached);
       return;
     }
 
     try {
       setLoading(true);
       setError(null);
-      const result = await fetchFn();
+      const result = await fetchFnRef.current();
       cache.set(key, result, ttl);
       setData(result);
-      options.onSuccess?.(result);
+      onSuccessRef.current?.(result);
     } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      setError(error);
-      options.onError?.(error);
+      const e = err instanceof Error ? err : new Error(String(err));
+      setError(e);
+      onErrorRef.current?.(e);
     } finally {
       setLoading(false);
     }
-  }, [key, fetchFn, ttl, cache, options]);
+  }, [key, ttl]);   // ← only primitives, no object refs
 
   useEffect(() => {
-    if (enabled) {
-      fetch();
-    }
-  }, [key, enabled, fetch]);
+    if (!enabled) return;
+    void doFetch();
+    const interval = setInterval(() => void doFetch(), ttl);
+    return () => clearInterval(interval);
+  }, [enabled, doFetch, ttl]);   // ← stable deps, no infinite loop
 
-  return {
-    data,
-    loading,
-    error,
-    refetch: fetch,
-  };
+  return { data, loading, error, refetch: doFetch };
 }
-

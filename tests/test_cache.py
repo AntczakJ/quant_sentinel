@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """tests/test_cache.py - Cache tests"""
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.cache import cached_with_key
 import time
 

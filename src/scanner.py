@@ -35,11 +35,20 @@ def send_telegram_alert(text: str):
 async def scan_market_task(context):
     """
     Zadanie cykliczne (co 5 min).
+    - Prefetch wszystkich timeframe'ów na start (oszczędność kredytów)
     - Wykrywa zmiany trendu i nowe strefy FVG
     - Zapisuje sygnały do scanner_signals
     - Deduplikuje alerty przez processed_news
     """
     try:
+        # Prefetch all timeframes first (populates cache, reduces subsequent API calls)
+        try:
+            from src.data_sources import get_provider
+            provider = get_provider()
+            provider.prefetch_all_timeframes('XAU/USD')
+        except Exception as e:
+            logger.debug(f"Prefetch skipped: {e}")
+
         analysis = get_smc_analysis(USER_PREFS['tf'])
 
         if not analysis:
@@ -51,8 +60,22 @@ async def scan_market_task(context):
         current_rsi       = analysis['rsi']
         current_structure = analysis.get('structure', 'Stable')
         current_ob        = analysis.get('ob_price', current_price)
-        current_sl        = analysis.get('sl', current_price)
-        current_tp        = analysis.get('tp', current_price)
+
+        # Oblicz SL/TP przez calculate_position (get_smc_analysis NIE zwraca sl/tp)
+        from src.finance import calculate_position
+        try:
+            _pos = calculate_position(analysis, 10000, "USD", TD_API_KEY)
+            current_sl = _pos.get('sl', current_price)
+            current_tp = _pos.get('tp', current_price)
+        except Exception:
+            # Awaryjne SL/TP z ATR
+            _atr = analysis.get('atr', 5.0)
+            if analysis['trend'] == 'bull':
+                current_sl = round(current_price - _atr, 2)
+                current_tp = round(current_price + _atr * 2, 2)
+            else:
+                current_sl = round(current_price + _atr, 2)
+                current_tp = round(current_price - _atr * 2, 2)
 
         from src.database import NewsDB
         db = NewsDB()
@@ -138,7 +161,7 @@ async def scan_market_task(context):
                 db.mark_news_as_processed(alert_key)  # ← WYPEŁNIA processed_news
 
                 # Zapisz sygnał do scanner_signals
-                direction = "LONG" if current_trend == "Bull" else "SHORT"
+                direction = "LONG" if current_trend.lower() == "bull" else "SHORT"
                 db.save_scanner_signal(
                     direction=direction,
                     entry=current_price,
@@ -204,6 +227,35 @@ async def scan_market_task(context):
             LAST_STATUS["trend"] = current_trend
             LAST_STATUS["fvg"] = current_fvg
 
+        # --- 4. ZAWSZE ZAPISZ SYGNAŁ (heartbeat) dla historii sygnałów w UI ---
+        # Rate-limit: heartbeat co 30 min, nie co 5 min (unika zalewania scanner_signals)
+        import time as _time
+        _now = _time.time()
+        _last_hb = getattr(scan_market_task, '_last_heartbeat', 0)
+        if _now - _last_hb >= 1800:  # 30 min
+            from src.finance import calculate_position
+            direction_hb = "LONG" if current_trend.lower() == "bull" else "SHORT"
+            try:
+                hb_position = calculate_position(analysis, 10000, "USD", TD_API_KEY)
+                hb_sl  = hb_position.get('sl', current_price - 10)
+                hb_tp  = hb_position.get('tp', current_price + 20)
+            except Exception:
+                hb_sl = current_sl
+                hb_tp = current_tp
+            db.save_scanner_signal(
+                direction=direction_hb,
+                entry=current_price,
+                sl=hb_sl,
+                tp=hb_tp,
+                rsi=current_rsi,
+                trend=current_trend,
+                structure=current_structure
+            )
+            scan_market_task._last_heartbeat = _now
+            logger.info(f"📡 [SCANNER] Heartbeat sygnał {direction_hb} zapisany @ ${current_price:.2f}")
+        else:
+            logger.debug(f"📡 [SCANNER] Heartbeat pominięty (ostatni {int(_now - _last_hb)}s temu)")
+
         logger.info("✅ [SCANNER] Skonczono cykl.")
 
     except Exception as e:
@@ -217,22 +269,19 @@ async def resolve_trades_task(context):
     from src.database import NewsDB
     db = NewsDB()
 
-    # 1. POBIERANIE CENY
-    url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={TD_API_KEY}"
+    # 1. POBIERANIE CENY (przez DataProvider — rate limited, cached, WS fallback)
     try:
-        response = requests.get(url, timeout=5)
-        data = response.json()
-
-        price_raw = data.get('price')
-        if price_raw is None:
-            logger.warning(f"⚠️ [RESOLVER] Twelve Data nie zwróciło ceny: {data}")
+        from src.data_sources import get_provider
+        provider = get_provider()
+        price_data = provider.get_current_price('XAU/USD')
+        if price_data is None or 'price' not in price_data:
+            logger.warning(f"⚠️ [RESOLVER] Brak ceny z DataProvider")
             return
-
-        current_price = float(price_raw)
-        logger.info(f"🔍 [RESOLVER] Aktualna cena XAU/USD: {current_price}")
+        current_price = float(price_data['price'])
+        logger.info(f"🔍 [RESOLVER] Aktualna cena XAU/USD: {current_price} (source: {price_data.get('source', 'unknown')})")
 
     except Exception as e:
-        logger.error(f"❌ [RESOLVER] Błąd sieci/ceny: {e}")
+        logger.error(f"❌ [RESOLVER] Błąd pobierania ceny: {e}")
         return
 
     # 2. POBIERANIE I ROZLICZANIE POZYCJI
@@ -286,6 +335,63 @@ async def resolve_trades_task(context):
                 if status in ("PROFIT", "LOSS"):
                     from src.self_learning import update_factor_weights
                     update_factor_weights(t_id, status)
+
+                    # Aktualizuj wagi ensemble na podstawie wyników modeli
+                    try:
+                        from src.ensemble_models import update_ensemble_weights
+                        factors = db.get_trade_factors(t_id)
+                        correct = []
+                        incorrect = []
+
+                        # SMC — zawsze używane
+                        if status == "PROFIT":
+                            correct.append("smc")
+                        else:
+                            incorrect.append("smc")
+
+                        # ML — sprawdź czy czynniki ML były obecne i czy kierunek się zgadzał
+                        # Czynniki ML: ichimoku_bull/bear, rsi_divergence, engulfing, pin_bar, ml_ensemble_*
+                        ml_factors_bull = any(factors.get(k) for k in ('ichimoku_bull', 'ml_ensemble_long'))
+                        ml_factors_bear = any(factors.get(k) for k in ('ichimoku_bear', 'ml_ensemble_short'))
+
+                        has_ml_signal = ml_factors_bull or ml_factors_bear
+                        if has_ml_signal:
+                            ml_agreed_with_direction = (
+                                (ml_factors_bull and "LONG" in dir_clean) or
+                                (ml_factors_bear and "SHORT" in dir_clean)
+                            )
+                            if status == "PROFIT" and ml_agreed_with_direction:
+                                correct.append("lstm")
+                                correct.append("xgb")
+                            elif status == "LOSS" and ml_agreed_with_direction:
+                                incorrect.append("lstm")
+                                incorrect.append("xgb")
+                            elif status == "PROFIT" and not ml_agreed_with_direction:
+                                # ML sygnalizowało przeciwny kierunek ale trade wygrał (SMC miało rację)
+                                incorrect.append("lstm")
+                                incorrect.append("xgb")
+
+                        if correct or incorrect:
+                            update_ensemble_weights(correct, incorrect)
+                    except Exception as e:
+                        logger.debug(f"Ensemble weight update skipped: {e}")
+
+                    # Aktualizuj statystyki reżimu
+                    try:
+                        trade_row = db.cursor.execute(
+                            "SELECT session, factors FROM trades WHERE id = ?", (t_id,)
+                        )
+                        trow = db.cursor.fetchone()
+                        if trow:
+                            import json
+                            tsession = trow[0] or "Unknown"
+                            tfactors = json.loads(trow[1]) if trow[1] else {}
+                            regime = "neutralny"
+                            if tfactors.get("macro"):
+                                regime = "zielony" if "LONG" in dir_clean else "czerwony"
+                            db.update_regime_stats(regime, tsession, dir_clean, status)
+                    except Exception as e:
+                        logger.debug(f"Regime stats update skipped: {e}")
 
                 db.cursor.execute("SELECT pattern FROM trades WHERE id = ?", (t_id,))
                 pattern = db.cursor.fetchone()

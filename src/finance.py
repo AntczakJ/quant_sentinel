@@ -6,9 +6,10 @@ Zmiany:
 - Stały minimalny dystans TP = 5$.
 - Dodano dynamiczny filtr: min_tp_distance = max(atr * min_tp_distance_mult, 5.0).
 - Parametr min_tp_distance_mult jest przechowywany w dynamic_params i może być optymalizowany.
+- Kurs walutowy pobierany przez DataProvider (nie bezpośrednie requesty).
 """
 
-import requests
+from src.logger import logger
 
 
 def get_fx_rate(base: str = "USD", target: str = "PLN") -> float:
@@ -199,9 +200,11 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     balance_in_usd = balance
     if user_currency != "USD":
         try:
-            rate_url = f"https://api.twelvedata.com/price?symbol=USD/{user_currency}&apikey={td_api_key}"
-            r = requests.get(rate_url, timeout=5).json()
-            rate = float(r.get('price', 4.0))
+            from src.data_sources import get_provider
+            provider = get_provider()
+            rate = provider.get_exchange_rate("USD", user_currency)
+            if rate is None:
+                rate = 4.0
             balance_in_usd = balance / rate
         except:
             balance_in_usd = balance / 4.0

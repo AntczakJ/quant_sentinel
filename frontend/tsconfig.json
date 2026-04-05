@@ -32,6 +32,7 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "isolatedModules": true,
+    "types": ["vite/client"],
 
     /* Completeness */
     "skipLibCheck": true,

@@ -3,12 +3,14 @@
  */
 
 import axios from 'axios';
+import type { AxiosError } from 'axios';
 import type { Candle, Ticker, Indicators, Signal, Portfolio, AllModelsStats, TrainingStatus } from '../types/trading';
 
-const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000/api';
+const API_BASE_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000/api';
 
 const client = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 30000, // 30s default timeout — prevents infinite hangs
   headers: {
     'Content-Type': 'application/json',
   },
@@ -17,8 +19,8 @@ const client = axios.create({
 // Interceptor na errors
 client.interceptors.response.use(
   (response) => response,
-  (error) => {
-    console.error('API Error:', error.response?.data || error.message);
+  (error: AxiosError) => {
+    console.error('API Error:', error.response?.data ?? error.message);
     return Promise.reject(error);
   }
 );
@@ -66,13 +68,32 @@ export const signalsAPI = {
     return response.data.signals || [];
   },
 
+  /** Rich SMC scanner history with entry/SL/TP/trend/structure */
+  getScannerHistory: async (limit: number = 30) => {
+    const response = await client.get<{
+      signals: Array<{
+        signal_id?: string;
+        timestamp: string;
+        direction?: string;
+        entry_price?: number;
+        sl?: number;
+        tp?: number;
+        rsi?: number;
+        structure?: string;
+        result?: string;
+      }>;
+      count: number;
+    }>('/signals/scanner', { params: { limit } });
+    return response.data.signals || [];
+  },
+
   getConsensus: async () => {
     const response = await client.get('/signals/consensus');
     return response.data;
   },
 
   getStats: async () => {
-    const response = await client.get('/signals/stats');
+    const response = await client.get<{ total: number; wins: number; losses: number; win_rate: number }>('/signals/stats');
     return response.data;
   },
 };
@@ -103,6 +124,12 @@ export const portfolioAPI = {
 
   addTrade: async (trade: { direction: string; entry: number; sl: number; tp: number; lot_size: number; logic?: string }) => {
     const response = await client.post('/portfolio/add-trade', trade);
+    return response.data;
+  },
+
+  /** Fast trade from current SMC analysis — no OpenAI call, instant */
+  quickTrade: async () => {
+    const response = await client.post('/portfolio/quick-trade');
     return response.data;
   },
 };
@@ -161,9 +188,10 @@ export const healthAPI = {
 
 // Analysis endpoints
 export const analysisAPI = {
-  getQuantPro: async (tf: string = '15m') => {
+  getQuantPro: async (tf: string = '15m', force: boolean = false) => {
     const response = await client.get('/analysis/quant-pro', {
-      params: { tf }
+      params: { tf, force },
+      timeout: 60_000, // 60s — this endpoint may wait for AI + ML ensemble
     });
     return response.data;
   },
@@ -177,6 +205,51 @@ export const analysisAPI = {
     const response = await client.get('/analysis/trades', {
       params: { limit }
     });
+    return response.data;
+  },
+};
+
+// AI Agent endpoints
+export const agentAPI = {
+  /**
+   * Wysyła wiadomość do Quant Sentinel Gold Trader Agent.
+   * Zwraca odpowiedź agenta oraz thread_id do kontynuacji rozmowy.
+   */
+  chat: async (message: string, threadId?: string) => {
+    const response = await client.post<{
+      response: string;
+      thread_id: string;
+      run_id: string;
+      tool_calls: Array<{ name: string; args: Record<string, unknown> }>;
+    }>('/agent/chat', { message, thread_id: threadId }, { timeout: 120000 }); // 120s for AI agent
+    return response.data;
+  },
+
+  /** Tworzy nowy pusty wątek rozmowy. */
+  createThread: async () => {
+    const response = await client.post<{ thread_id: string }>('/agent/thread');
+    return response.data.thread_id;
+  },
+
+  /** Pobiera historię wiadomości w wątku. */
+  getThreadHistory: async (threadId: string, limit: number = 20) => {
+    const response = await client.get<{
+      thread_id: string;
+      messages: Array<{ role: string; content: string; created_at: number }>;
+      count: number;
+    }>(`/agent/thread/${threadId}`, { params: { limit } });
+    return response.data;
+  },
+
+  /** Zwraca informacje o agencie i dostępnych narzędziach. */
+  getInfo: async () => {
+    const response = await client.get('/agent/info');
+    return response.data;
+  },
+
+  /** Eksportuje konfigurację agenta dla OpenAI Agent Builder. */
+  getConfig: async () => {
+    const response = await client.get('/agent/config');
     return response.data;
   },
 };

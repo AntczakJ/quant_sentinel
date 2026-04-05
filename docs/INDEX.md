@@ -1,6 +1,6 @@
-# 📑 QUANT SENTINEL - Indeks Dokumentacji
+# 📑 QUANT SENTINEL — Indeks Dokumentacji
 
-**Wersja:** 2.3 | **Data:** 2026-04-03 | **Status:** ✅ Production Ready
+**Wersja:** 2.5 | **Data:** 2026-04-05 | **Status:** ✅ Production Ready
 
 ---
 
@@ -31,164 +31,220 @@ Nowy? Zacznij tutaj:
 | [05_HOW_IT_WORKS.md](README_sections/05_HOW_IT_WORKS.md) | Architektura, pipeline, algorytmy | 30 min |
 | [04_API_REFERENCE.md](README_sections/04_API_REFERENCE.md) | REST API, WebSocket, endpointy | 20 min |
 | [06_ADVANCED.md](README_sections/06_ADVANCED.md) | Testing, debugging, contributing | 30 min |
+| [BACKEND_STARTUP_GUIDE.md](BACKEND_STARTUP_GUIDE.md) | Poradnik uruchamiania backendu | 10 min |
 
-### 📊 Dla DevOps
+### 📊 Architektura & Decyzje
 
 | Dokument | Opis |
 |----------|------|
-| [RAPORT_V2.3.md](RAPORT_V2.3.md) | Release notes v2.3, zmiany, metryki |
 | [ADR_001_DECISIONS.md](ADR_001_DECISIONS.md) | Architecture Decision Records |
+| [RAPORT_V2.3.md](RAPORT_V2.3.md) | Release notes v2.3 |
+| [ML_ENSEMBLE_INTEGRATION.md](ML_ENSEMBLE_INTEGRATION.md) | Integracja modeli ML Ensemble |
+| [LIVE_DATA_INTEGRATION.md](LIVE_DATA_INTEGRATION.md) | Integracja danych rynkowych (Twelve Data) |
+
+### 🔧 Rozwiązywanie Problemów
+
+| Dokument | Opis |
+|----------|------|
+| [FRONTEND_FIX_NETWORK_ERROR.md](FRONTEND_FIX_NETWORK_ERROR.md) | Naprawianie błędów sieciowych frontendu |
+| [PORTFOLIO_SIGNALS_FIX.md](PORTFOLIO_SIGNALS_FIX.md) | Naprawianie portfolio i sygnałów |
+| [TRADES_PORTFOLIO_FIXES.md](TRADES_PORTFOLIO_FIXES.md) | Naprawianie handlu i portfela |
 
 ---
 
-## 🎓 Po Tematach
+## 🤖 Machine Learning & Trenowanie
 
-### Instalacja & Setup
-- 📦 [02_INSTALLATION.md](README_sections/02_INSTALLATION.md) - Krok po kroku
-- 🔑 [02_INSTALLATION.md#pozyskiwanie-kluczy-api](README_sections/02_INSTALLATION.md) - Klucze API
-- ✅ [02_INSTALLATION.md#weryfikacja-instalacji](README_sections/02_INSTALLATION.md) - Weryfikacja
+### Pipeline ML (nowe w v2.5)
 
-### Użytkowanie
-- 🚀 [03_QUICKSTART.md](README_sections/03_QUICKSTART.md) - Szybki start
-- 💬 [01_FEATURES.md#korzystanie-z-bota-telegram](README_sections/01_FEATURES.md) - Bot Telegram
-- 📊 [04_API_REFERENCE.md](README_sections/04_API_REFERENCE.md) - API Reference
+System składa się z **4 modeli** połączonych w ensemble:
 
-### Technologia
-- 🏗️ [05_HOW_IT_WORKS.md](README_sections/05_HOW_IT_WORKS.md) - Jak to działa
-- 🤖 [01_FEATURES.md#sztuczna-inteligencja-gpt-4o](README_sections/01_FEATURES.md) - AI
-- 🧠 [01_FEATURES.md#samouczenie-i-optymalizacja](README_sections/01_FEATURES.md) - Self-learning
+| Model | Plik | Opis |
+|-------|------|------|
+| **XGBoost** | `src/ml_models.py` | Klasyfikacja kierunku (18 cech, walk-forward validation) |
+| **LSTM** | `src/ml_models.py` | Sieć neuronowa sekwencyjna (60-step, persystentny scaler) |
+| **Double DQN** | `src/rl_agent.py` | Agent RL z target network (3 akcje: hold/buy/sell) |
+| **Ensemble** | `src/ensemble_models.py` | Fuzja SMC + LSTM + XGB + DQN z dynamicznymi wagami |
 
-### Development
-- 🧪 [06_ADVANCED.md#testing](README_sections/06_ADVANCED.md) - Testing
-- 🐛 [06_ADVANCED.md#debugging](README_sections/06_ADVANCED.md) - Debugging
-- 📝 [06_ADVANCED.md#contributing](README_sections/06_ADVANCED.md) - Contributing
+### Trenowanie
 
-### Architecture
-- 🏛️ [05_HOW_IT_WORKS.md#architektura-systemu](README_sections/05_HOW_IT_WORKS.md) - Architektura
-- 📡 [05_HOW_IT_WORKS.md#przepływ-danych](README_sections/05_HOW_IT_WORKS.md) - Pipeline
-- 🎯 [ADR_001_DECISIONS.md](ADR_001_DECISIONS.md) - Decyzje architektoniczne
+```bash
+# Pełny pipeline (XGBoost + LSTM + DQN + Bayesian Opt + Backtest)
+python train_all.py
 
----
+# Tylko DQN
+python train_rl.py
 
-## 🔍 Wyszukiwanie Po Słowach Kluczowych
+# Tylko backtest
+python -m src.backtest
 
-### Setup & Konfiguracja
-- Instalacja → [02_INSTALLATION.md](README_sections/02_INSTALLATION.md)
-- .env → [02_INSTALLATION.md#konfiguracja](README_sections/02_INSTALLATION.md)
-- Klucze API → [02_INSTALLATION.md#pozyskiwanie-kluczy-api](README_sections/02_INSTALLATION.md)
-- Troubleshooting → [02_INSTALLATION.md#rozwiązywanie-problemów-z-instalacją](README_sections/02_INSTALLATION.md)
+# Opcje zaawansowane
+python train_all.py --rl-episodes 1000      # Więcej epizodów RL
+python train_all.py --skip-rl --skip-bayes   # Szybki trening (bez RL)
+```
 
-### Uruchomienie
-- Start → [03_QUICKSTART.md](README_sections/03_QUICKSTART.md)
-- Backend → [03_QUICKSTART.md#terminal-1-backend-fastapi](README_sections/03_QUICKSTART.md)
-- Frontend → [03_QUICKSTART.md#terminal-2-frontend-react](README_sections/03_QUICKSTART.md)
-- Bot Telegram → [03_QUICKSTART.md#terminal-3-bot-telegram-opcjonalnie](README_sections/03_QUICKSTART.md)
+### Self-Learning (ciągłe doskonalenie)
 
-### API
-- Endpointy → [04_API_REFERENCE.md](README_sections/04_API_REFERENCE.md)
-- Market → [04_API_REFERENCE.md#rynek-market](README_sections/04_API_REFERENCE.md)
-- Signals → [04_API_REFERENCE.md#sygnały-signals](README_sections/04_API_REFERENCE.md)
-- Portfolio → [04_API_REFERENCE.md#portfel-portfolio](README_sections/04_API_REFERENCE.md)
-- WebSocket → [04_API_REFERENCE.md#websocket-endpoints](README_sections/04_API_REFERENCE.md)
+Po uruchomieniu bota (`python run.py`), system automatycznie:
+- Aktualizuje **wagi czynników** po każdym zamkniętym trade'ze (`src/self_learning.py`)
+- Optymalizuje **parametry tradingowe** (risk, TP distance, RR) co cykl uczenia
+- Dostosowuje **wagi ensemble** — modele które mają rację dostają wyższą wagę
+- Zapisuje **statystyki wzorców** — win rate per pattern, per session, per regime
 
-### ML/AI
-- Modele ML → [05_HOW_IT_WORKS.md#modele-machine-learning](README_sections/05_HOW_IT_WORKS.md)
-- XGBoost → [05_HOW_IT_WORKS.md#1-xgboost-classifier](README_sections/05_HOW_IT_WORKS.md)
-- LSTM → [05_HOW_IT_WORKS.md#2-lstm-neural-network](README_sections/05_HOW_IT_WORKS.md)
-- DQN → [05_HOW_IT_WORKS.md#3-deep-q-network-dqn---reinforcement-learning](README_sections/05_HOW_IT_WORKS.md)
-- AI Engine → [05_HOW_IT_WORKS.md#6-moduły-ai](README_sections/05_HOW_IT_WORKS.md)
+### Konfiguracja ML w `.env`
 
-### Testing
-- Run Tests → [06_ADVANCED.md#testing](README_sections/06_ADVANCED.md)
-- Unit Tests → [06_ADVANCED.md#1-unit-tests](README_sections/06_ADVANCED.md)
-- Integration Tests → [06_ADVANCED.md#2-integration-tests](README_sections/06_ADVANCED.md)
-- Performance → [06_ADVANCED.md#3-performance-tests](README_sections/06_ADVANCED.md)
-
-### Development
-- Adding Features → [06_ADVANCED.md#adding-features](README_sections/06_ADVANCED.md)
-- New Indicator → [06_ADVANCED.md#dodanie-nowego-wskaźnika](README_sections/06_ADVANCED.md)
-- New Model → [06_ADVANCED.md#dodanie-nowego-ml-model](README_sections/06_ADVANCED.md)
-- New Endpoint → [06_ADVANCED.md#dodanie-nowego-api-endpoint](README_sections/06_ADVANCED.md)
+```ini
+ENABLE_ML=True          # Włącz modele ML
+ENABLE_RL=True          # Włącz agenta DQN
+ENABLE_BAYES=True       # Włącz optymalizację Bayesowską
+DATABASE_URL=data/sentinel.db  # Lokalna baza (do trenowania)
+```
 
 ---
 
-## 📊 Nowe w V2.3
+## 🏗️ Struktura Projektu
 
-- ✅ **Ensemble Voting** - Kombinowanie 3 modeli ML
-- ✅ **Advanced Features** - 14 nowych cech do ML
-- ✅ **Database Optimization** - Indeksy i migracje
-- ✅ **Better Docs** - 7 dokumentów zamiast 1
-- ✅ **Integration Tests** - 8 nowych testów
-
-Szczegóły: [RAPORT_V2.3.md](RAPORT_V2.3.md)
+```
+quant_sentinel/
+├── run.py                  # 🚀 Entrypoint bota Telegram
+├── train_all.py            # 🧠 Master pipeline trenowania ML
+├── train_rl.py             # 🤖 Trening agenta DQN
+├── requirements.txt        # 📦 Zależności Python
+│
+├── src/                    # 🔧 Backend core
+│   ├── main.py             # Orchestrator bota Telegram
+│   ├── config.py           # Konfiguracja + .env
+│   ├── database.py         # SQLite / Turso (libsql)
+│   ├── smc_engine.py       # Analiza SMC (Smart Money Concepts)
+│   ├── finance.py          # Zarządzanie ryzykiem + pozycja
+│   ├── ml_models.py        # XGBoost + LSTM (trening + predykcja)
+│   ├── rl_agent.py         # Double DQN Agent
+│   ├── ensemble_models.py  # Ensemble fuzja 4 modeli
+│   ├── ensemble_voting.py  # Głosowanie + meta-learner
+│   ├── self_learning.py    # Samouczenie + optymalizacja parametrów
+│   ├── bayesian_opt.py     # Optymalizacja Bayesowska (GP + UCB)
+│   ├── backtest.py         # Backtesting + metryki (Sharpe, F1, DD)
+│   ├── scanner.py          # Skaner rynku + resolver pozycji
+│   ├── data_sources.py     # Provider danych (Twelve Data + cache)
+│   └── ...                 # Pozostałe moduły pomocnicze
+│
+├── api/                    # 🌐 FastAPI backend (Web UI)
+│   ├── main.py             # FastAPI app + CORS
+│   └── routers/            # market, signals, portfolio, models, analysis, training
+│
+├── frontend/               # ⚛️ React + TypeScript (Vite)
+│   └── src/                # Components, hooks, store, api
+│
+├── models/                 # 💾 Wytrenowane modele
+├── tests/                  # 🧪 Testy (57+ checks)
+├── data/                   # 📊 Bazy danych
+└── docs/                   # 📚 Dokumentacja
+```
 
 ---
 
-## 🎯 Najczęstsze Pytania
+## 🧪 Testowanie
 
-**P: Jak zainstalować?**  
+```bash
+# Szybkie testy (< 30s)
+python tests/run_quick_tests.py
+
+# Pełny suite (10 modułów)
+python tests/run_all_tests.py
+
+# Comprehensive (51 checks + API + frontend)
+python tests/run_comprehensive_tests.py
+
+# Nowe komponenty (Double DQN, backtest, scaler, DB)
+python tests/test_new_features.py
+
+# Frontend type-check
+cd frontend && npx tsc --noEmit
+```
+
+---
+
+## 🔄 Uruchamianie
+
+### Backend API (Web Dashboard)
+```bash
+python api/main.py
+# lub: uvicorn api.main:app --reload --port 8000
+```
+
+### Bot Telegram + Scanner
+```bash
+python run.py
+```
+
+### Frontend
+```bash
+cd frontend && npm install && npm run dev
+```
+
+### Trenowanie ML
+```bash
+python train_all.py
+```
+
+---
+
+## 📈 Nowe w V2.5 (2026-04-05)
+
+- ✅ **Double DQN** — stabilniejszy trening RL z target network
+- ✅ **Lepszy reward shaping** — nagroda za zrealizowany P/L
+- ✅ **LSTM scaler persistence** — spójne skalowanie train/inference
+- ✅ **Walk-forward validation** dla LSTM (5 foldów)
+- ✅ **Moduł backtestowy** (`src/backtest.py`) — Accuracy, F1, Sharpe, MaxDD
+- ✅ **Master training pipeline** (`train_all.py`) — jeden command dla 4 modeli
+- ✅ **Optymalizacja Bayesowska** — automatyczny tuning parametrów
+- ✅ **57 nowych testów** dla komponentów ML
+- ✅ **Porządki** — usunięto 17 zbędnych plików z roota
+
+### Historia wersji
+
+| Wersja | Data | Zmiany |
+|--------|------|--------|
+| **v2.5** | 2026-04-05 | Double DQN, backtest, train_all.py, porządki |
+| **v2.4** | 2026-04-04 | 7 bug fixes, live data, auto-resolve trades |
+| **v2.3** | 2026-04-03 | Ensemble voting, advanced features |
+| **v2.2** | 2026-03-15 | API & Frontend release |
+| **v2.1** | 2026-02-01 | ML models optimization |
+| **v2.0** | 2026-01-01 | Initial release |
+
+---
+
+## 🎯 FAQ
+
+**P: Jak zainstalować?**
 O: [02_INSTALLATION.md](README_sections/02_INSTALLATION.md)
 
-**P: Jak uruchomić?**  
+**P: Jak uruchomić?**
 O: [03_QUICKSTART.md](README_sections/03_QUICKSTART.md)
 
-**P: Jak używać API?**  
+**P: Jak trenować modele?**
+O: `python train_all.py` — patrz sekcja [Machine Learning](#-machine-learning--trenowanie)
+
+**P: Jak używać API?**
 O: [04_API_REFERENCE.md](README_sections/04_API_REFERENCE.md)
 
-**P: Jak to działa?**  
+**P: Jak to działa?**
 O: [05_HOW_IT_WORKS.md](README_sections/05_HOW_IT_WORKS.md)
 
-**P: Jak testować?**  
+**P: Jak testować?**
 O: [06_ADVANCED.md#testing](README_sections/06_ADVANCED.md)
-
-**P: Jak rozwijać?**  
-O: [06_ADVANCED.md](README_sections/06_ADVANCED.md)
 
 ---
 
-## 🔗 Linki Bezpośrednie
+## 🔗 Linki
 
 | Zasób | Link |
 |-------|------|
-| **GitHub** | https://github.com/your-username/quant_sentinel |
-| **Issues** | https://github.com/your-username/quant_sentinel/issues |
-| **Discussions** | https://github.com/your-username/quant_sentinel/discussions |
 | **API Docs** | http://localhost:8000/docs (po uruchomieniu) |
 | **Frontend** | http://localhost:5173 (po uruchomieniu) |
+| **Logi** | `logs/sentinel.log` |
 
 ---
 
-## 📞 Support
-
-- 📧 Email: support@example.com
-- 💬 Telegram: @YourBotName
-- 🐛 Issues: GitHub Issues
-- 💡 Ideas: GitHub Discussions
-
----
-
-## 📈 Wersjonowanie
-
-- **v2.3** (2026-04-03) - Current - Ensemble voting, advanced features
-- **v2.2** (2026-03-15) - API & Frontend release
-- **v2.1** (2026-02-01) - ML models optimization
-- **v2.0** (2026-01-01) - Initial release
-
----
-
-## ✅ Checklist dla nowych użytkowników
-
-- [ ] Przeczytaj [README.md](../README.md) - 5 minut
-- [ ] Zainstaluj - [02_INSTALLATION.md](README_sections/02_INSTALLATION.md) - 15 minut
-- [ ] Uruchom - [03_QUICKSTART.md](README_sections/03_QUICKSTART.md) - 10 minut
-- [ ] Przejrzyj funkcjonalności - [01_FEATURES.md](README_sections/01_FEATURES.md) - 20 minut
-- [ ] Testuj - [06_ADVANCED.md#testing](README_sections/06_ADVANCED.md) - 10 minut
-
-**Total:** ~60 minut od zera do działającego systemu!
-
----
-
-*Ostatnia aktualizacja: 2026-04-03*  
-*Wersja: 2.3*  
+*Ostatnia aktualizacja: 2026-04-05*
+*Wersja: 2.5*
 *Status: ✅ Production Ready*
-

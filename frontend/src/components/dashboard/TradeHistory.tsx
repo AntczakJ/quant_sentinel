@@ -18,12 +18,23 @@ interface Trade {
   result: string;
 }
 
+// Helper to safely parse timestamps from SQLite (e.g. "2025-04-05 12:30:00")
+function safeParseDate(raw: string | null | undefined): Date | null {
+  if (!raw) return null;
+  // Normalise SQLite format → ISO: replace first space between date and time with 'T', append 'Z'
+  let iso = raw.trim();
+  iso = iso.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
+  if (!/[Zz+\-]/.test(iso.slice(-6))) iso += 'Z';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 // Helper to format price
 function formatPrice(value: string | number | undefined): string {
-  if (!value) return '$0.00';
+  if (!value) { return '$0.00'; }
   if (typeof value === 'string') {
     // Already formatted like "$2050.50"
-    if (value.startsWith('$')) return value;
+    if (value.startsWith('$')) { return value; }
     // Try to parse as number
     const num = parseFloat(value);
     return !isNaN(num) ? `$${num.toFixed(2)}` : value;
@@ -43,8 +54,8 @@ export function TradeHistory() {
       try {
         setLoading(true);
         setError(null);
-        const data = await analysisAPI.getRecentTrades(15);
-        setTrades(data.trades || []);
+        const data = await analysisAPI.getRecentTrades(20);
+        setTrades((data.trades || []).slice(0, 10));
         setStats({
           total: data.total || 0,
           wins: data.wins || 0,
@@ -58,10 +69,11 @@ export function TradeHistory() {
       }
     };
 
-    fetchTrades();
+    void fetchTrades();
 
-    // Refresh every 10 seconds
-    const interval = setInterval(fetchTrades, 10000);
+
+    // Refresh every 60 seconds (trades don't change often)
+    const interval = setInterval(fetchTrades, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -100,9 +112,9 @@ export function TradeHistory() {
       </div>
 
       {/* Trades List */}
-      <div className="space-y-2 max-h-96 overflow-y-auto">
+      <div className="space-y-2 max-h-[480px] overflow-y-auto pr-0.5 scrollbar-thin scrollbar-thumb-dark-secondary">
         {trades.length === 0 ? (
-          <div className="text-center text-gray-400 text-xs py-4">No trades yet</div>
+          <div className="text-center text-gray-400 text-xs py-4">Brak transakcji</div>
         ) : (
           trades.map((trade) => {
             const isWin = trade.result.includes('WIN');
@@ -111,7 +123,7 @@ export function TradeHistory() {
             return (
               <div
                 key={trade.id}
-                className={`border rounded p-2 text-xs transition-all hover:scale-105 ${
+                className={`border rounded p-2 text-xs ${
                   isWin
                     ? 'bg-green-900/10 border-green-500/30'
                     : isLoss
@@ -165,11 +177,15 @@ export function TradeHistory() {
 
                 {/* Timestamp */}
                 <div className="text-xs text-gray-600 mt-1">
-                  {new Date(trade.timestamp).toLocaleString('pl-PL', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                  })}
+                  {(() => {
+                    const d = safeParseDate(trade.timestamp);
+                    return d
+                      ? d.toLocaleString('pl-PL', {
+                          year: 'numeric', month: '2-digit', day: '2-digit',
+                          hour: '2-digit', minute: '2-digit', second: '2-digit',
+                        })
+                      : '—';
+                  })()}
                 </div>
               </div>
             );

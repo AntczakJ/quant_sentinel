@@ -40,14 +40,19 @@ else:
 
 # ======================== DATABASE CLASS ========================
 
+_db_initialized = False  # Module-level flag — schema setup runs only once per process
+
 class NewsDB:
     def __init__(self):
+        global _db_initialized
         self.conn = _conn
         self.cursor = _cursor
-        self.create_tables()
-        self.migrate()
+        if not _db_initialized:
+            self.create_tables()
+            self.migrate()
+            _db_initialized = True
 
-    def _execute(self, sql: str, params: tuple = ()):
+    def _execute(self, sql: str, params: tuple = (), _silent: bool = False):
         """Execute SQL, committing if needed (works for both sqlite3 and libsql)."""
         try:
             self.cursor.execute(sql, params)
@@ -55,7 +60,8 @@ class NewsDB:
             if sql.strip().upper().startswith(("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER")):
                 self.conn.commit()
         except Exception as e:
-            logger.error(f"Database error: {e}\nSQL: {sql}\nParams: {params}")
+            if not _silent:
+                logger.error(f"Database error: {e}\nSQL: {sql}\nParams: {params}")
             raise
 
     def _fetchone(self):
@@ -152,25 +158,82 @@ class NewsDB:
             )
         """)
 
+        # 8. Agent threads (OpenAI Assistants conversation memory)
+        self._execute("""
+            CREATE TABLE IF NOT EXISTS agent_threads (
+                user_id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_used DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 9. ML predictions (ensemble output log for post-hoc analysis)
+        self._execute("""
+            CREATE TABLE IF NOT EXISTS ml_predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                trade_id INTEGER,
+                lstm_pred REAL,
+                xgb_pred REAL,
+                dqn_action INTEGER,
+                ensemble_score REAL,
+                ensemble_signal TEXT,
+                confidence REAL,
+                predictions_json TEXT
+            )
+        """)
+
+        # 10. Regime stats (win rate per macro regime + session)
+        self._execute("""
+            CREATE TABLE IF NOT EXISTS regime_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                regime TEXT NOT NULL,
+                session TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                count INTEGER DEFAULT 0,
+                wins INTEGER DEFAULT 0,
+                losses INTEGER DEFAULT 0,
+                win_rate REAL DEFAULT 0,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(regime, session, direction)
+            )
+        """)
+
+        # 11. News sentiment (AI-scored headline sentiment for learning)
+        self._execute("""
+            CREATE TABLE IF NOT EXISTS news_sentiment (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                headline TEXT,
+                sentiment TEXT,
+                score REAL,
+                source TEXT
+            )
+        """)
+
     def migrate(self):
-        """Add missing columns to existing tables (SQLite syntax)."""
-        try:
-            self.cursor.execute("PRAGMA table_info(trades)")
-            columns = [col[1] for col in self.cursor.fetchall()]
-            needed = {
-                'pattern': 'TEXT',
-                'failure_reason': 'TEXT',
-                'condition_at_loss': 'TEXT',
-                'factors': 'TEXT',
-                'session': 'TEXT',
-                'lot': 'REAL',
-                'profit': 'REAL'
-            }
-            for col, typ in needed.items():
-                if col not in columns:
-                    self._execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
-        except Exception as e:
-            logger.warning(f"Migration: {e}")
+        """Add missing columns to existing tables (compatible with SQLite and Turso/libsql)."""
+        needed = {
+            'pattern': 'TEXT',
+            'failure_reason': 'TEXT',
+            'condition_at_loss': 'TEXT',
+            'factors': 'TEXT',
+            'session': 'TEXT',
+            'lot': 'REAL',
+            'profit': 'REAL'
+        }
+        for col, typ in needed.items():
+            try:
+                # Use cursor directly — "duplicate column" is expected and not a real error
+                self.cursor.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
+                self.conn.commit()
+                logger.info(f"Migration: added column trades.{col}")
+            except Exception as e:
+                # Column already exists — silently skip (expected for Turso and SQLite)
+                err_msg = str(e).lower()
+                if "duplicate" not in err_msg and "already exists" not in err_msg:
+                    logger.debug(f"Migration skip trades.{col}: {e}")
 
         # Create indexes for performance
         try:
@@ -179,9 +242,28 @@ class NewsDB:
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_pattern ON trades(pattern)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_scanner_timestamp ON scanner_signals(timestamp)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_pattern_stats_win_rate ON pattern_stats(win_rate)")
-            logger.info("Database indexes created successfully")
+            logger.debug("Database indexes verified")
         except Exception as e:
             logger.warning(f"Index creation: {e}")
+
+    # ----- Agent thread management -----
+    def get_agent_thread(self, user_id: str) -> Optional[str]:
+        """Zwraca thread_id dla danego user_id lub None jeśli nie istnieje."""
+        try:
+            self._execute("SELECT thread_id FROM agent_threads WHERE user_id = ?", (str(user_id),))
+            row = self._fetchone()
+            return row[0] if row else None
+        except Exception as e:
+            logger.warning(f"get_agent_thread error: {e}")
+            return None
+
+    def set_agent_thread(self, user_id: str, thread_id: str) -> None:
+        """Zapisuje lub aktualizuje thread_id dla danego user_id."""
+        self._execute(
+            "INSERT OR REPLACE INTO agent_threads (user_id, thread_id, last_used) "
+            "VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (str(user_id), thread_id),
+        )
 
     # ----- Helper methods -----
     def get_session(self, timestamp: str) -> str:
@@ -412,7 +494,7 @@ class NewsDB:
             ORDER BY timestamp DESC
             LIMIT ?
         """, (limit,))
-        return self.cursor.fetchall()
+        return self.cursor.fetchall() or []
 
     def check_trade_outcomes(self, current_gold_price):
         self.cursor.execute("SELECT id, direction, sl, tp, rsi, trend, structure FROM scanner_signals WHERE status = 'PENDING'")
@@ -440,7 +522,8 @@ class NewsDB:
                 return 0
             losses = sum(1 for r in results if r[0] == 'LOSS')
             return (losses / len(results)) * 100
-        except:
+        except Exception as e:
+            logger.debug(f"get_fail_rate_for_pattern error: {e}")
             return 0
 
     def is_news_processed(self, title_hash: str) -> bool:
@@ -449,3 +532,95 @@ class NewsDB:
 
     def mark_news_as_processed(self, title_hash: str):
         self._execute("INSERT INTO processed_news (title_hash) VALUES (?)", (title_hash,))
+
+    # ----- Regime stats (win rate per macro regime + session + direction) -----
+    def update_regime_stats(self, regime: str, session: str, direction: str, outcome: str):
+        """Aktualizuje statystyki dla danego reżimu makro + sesji + kierunku."""
+        self.cursor.execute(
+            "SELECT count, wins, losses FROM regime_stats WHERE regime = ? AND session = ? AND direction = ?",
+            (regime, session, direction)
+        )
+        row = self.cursor.fetchone()
+        if row:
+            count, wins, losses = row
+            count += 1
+            if outcome == "PROFIT":
+                wins += 1
+            else:
+                losses += 1
+            win_rate = wins / count if count > 0 else 0
+            self._execute(
+                "UPDATE regime_stats SET count=?, wins=?, losses=?, win_rate=?, last_updated=CURRENT_TIMESTAMP "
+                "WHERE regime=? AND session=? AND direction=?",
+                (count, wins, losses, win_rate, regime, session, direction)
+            )
+        else:
+            wins = 1 if outcome == "PROFIT" else 0
+            losses = 1 if outcome == "LOSS" else 0
+            win_rate = wins / (wins + losses) if wins + losses > 0 else 0
+            self._execute(
+                "INSERT INTO regime_stats (regime, session, direction, count, wins, losses, win_rate) "
+                "VALUES (?, ?, ?, 1, ?, ?, ?)",
+                (regime, session, direction, wins, losses, win_rate)
+            )
+
+    def get_regime_stats(self, regime: str = None, session: str = None) -> list:
+        """Pobiera statystyki reżimu. Opcjonalnie filtruje."""
+        if regime and session:
+            self.cursor.execute(
+                "SELECT regime, session, direction, count, wins, losses, win_rate FROM regime_stats "
+                "WHERE regime = ? AND session = ? ORDER BY win_rate DESC",
+                (regime, session)
+            )
+        elif regime:
+            self.cursor.execute(
+                "SELECT regime, session, direction, count, wins, losses, win_rate FROM regime_stats "
+                "WHERE regime = ? ORDER BY win_rate DESC",
+                (regime,)
+            )
+        else:
+            self.cursor.execute(
+                "SELECT regime, session, direction, count, wins, losses, win_rate FROM regime_stats "
+                "ORDER BY regime, session, win_rate DESC"
+            )
+        return self.cursor.fetchall()
+
+    # ----- News sentiment persistence -----
+    def save_news_sentiment(self, headline: str, sentiment: str, score: float = 0.0, source: str = "rss"):
+        """Zapisuje wynik sentymentu nagłówka wiadomości."""
+        self._execute(
+            "INSERT INTO news_sentiment (headline, sentiment, score, source) VALUES (?, ?, ?, ?)",
+            (headline, sentiment, score, source)
+        )
+
+    def get_aggregated_news_sentiment(self, hours: int = 24) -> dict:
+        """Zwraca zagregowany sentyment z ostatnich N godzin."""
+        self.cursor.execute("""
+            SELECT sentiment, COUNT(*) as cnt FROM news_sentiment
+            WHERE timestamp > datetime('now', ?)
+            GROUP BY sentiment
+        """, (f"-{hours} hours",))
+        rows = self.cursor.fetchall()
+        total = sum(r[1] for r in rows) if rows else 0
+        result = {"bullish": 0, "bearish": 0, "neutral": 0, "total": total}
+        for sentiment, cnt in rows:
+            key = sentiment.lower()
+            if key in result:
+                result[key] = cnt
+        if total > 0:
+            result["bullish_pct"] = round(result["bullish"] / total * 100, 1)
+            result["bearish_pct"] = round(result["bearish"] / total * 100, 1)
+        else:
+            result["bullish_pct"] = 0
+            result["bearish_pct"] = 0
+        return result
+
+    # ----- ML predictions log -----
+    def get_recent_ml_predictions(self, limit: int = 20) -> list:
+        """Pobiera ostatnie predykcje ML."""
+        self.cursor.execute("""
+            SELECT id, timestamp, lstm_pred, xgb_pred, dqn_action, ensemble_score, ensemble_signal, confidence
+            FROM ml_predictions ORDER BY timestamp DESC LIMIT ?
+        """, (limit,))
+        return self.cursor.fetchall()
+

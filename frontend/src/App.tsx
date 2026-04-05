@@ -1,6 +1,7 @@
 /**
  * src/App.tsx - Main application component
- * Optimized with centralized API caching to reduce requests
+ * Optimized with centralized API caching to reduce requests.
+ * Ticker updates via REST polling (WS endpoints are placeholder-only for now).
  */
 
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
@@ -26,6 +27,19 @@ const queryClient = new QueryClient({
 export function App() {
   const { setTicker, setPortfolio, setModelsStats, setApiConnected } = useTradingStore();
 
+  // Ukryj splash screen gdy React się zamontuje
+  useEffect(() => {
+    const splash = document.getElementById('splash');
+    if (splash) {
+      // Krótkie opóźnienie żeby pierwsze renderowanie było widoczne
+      const timer = setTimeout(() => {
+        splash.classList.add('qs-hidden');
+        setTimeout(() => splash.remove(), 700);
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
   // Health check - every 10 seconds
   useEffect(() => {
     const checkHealth = async () => {
@@ -37,20 +51,17 @@ export function App() {
       }
     };
 
-    checkHealth();
-    const interval = setInterval(checkHealth, 10000);
+    void checkHealth();
+    const interval = setInterval(checkHealth, 30000);
     return () => clearInterval(interval);
   }, [setApiConnected]);
 
-  // Ticker - Update every 60 seconds (not 3 seconds!)
-  useCachedFetch(
-    'ticker',
-    () => marketAPI.getTicker(),
-    {
-      ttl: 60000,
-      onSuccess: setTicker,
-    }
-  );
+  // ── Live price via REST polling (WS endpoints are placeholder-only) ────────
+  // Ticker - poll every 15 seconds for near-real-time price
+  useCachedFetch('ticker', () => marketAPI.getTicker(), {
+    ttl: 15000,
+    onSuccess: setTicker,
+  });
 
   // Portfolio - Update every 60 seconds
   useCachedFetch(
@@ -74,7 +85,7 @@ export function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="min-h-screen bg-dark-bg text-white font-mono">
+      <div className="min-h-screen bg-dark-bg text-gray-200 font-sans">
         <Dashboard />
       </div>
     </QueryClientProvider>

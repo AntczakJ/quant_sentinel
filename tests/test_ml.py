@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """tests/test_ml.py - Machine Learning tests"""
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.ml_models import ml
 from src.rl_agent import DQNAgent
 

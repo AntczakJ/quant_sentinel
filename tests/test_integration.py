@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """tests/test_integration.py - Integration tests"""
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.database import NewsDB
 from src.cache import cached_with_key
 from src.smc_engine import get_smc_analysis

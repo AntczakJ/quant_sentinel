@@ -1,49 +1,56 @@
 /**
- * src/components/dashboard/SignalHistory.tsx - Historical trading signals
+ * src/components/dashboard/SignalHistory.tsx - Historical trading signals (rich SMC view)
  */
 
 import { useEffect, useState } from 'react';
 import { signalsAPI } from '../../api/client';
-import type { Signal } from '../../types/trading';
-import { History } from 'lucide-react';
+import { History, TrendingUp, TrendingDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
-const SIGNAL_COLORS: Record<string, string> = {
-  STRONG_BUY: 'bg-green-900/30 border-green-500/50 text-green-400',
-  BUY: 'bg-green-900/20 border-green-500/30 text-green-300',
-  HOLD: 'bg-blue-900/20 border-blue-500/30 text-blue-300',
-  SELL: 'bg-red-900/20 border-red-500/30 text-red-300',
-  STRONG_SELL: 'bg-red-900/30 border-red-500/50 text-red-400',
-};
+interface ScannerSignal {
+  signal_id?: string;
+  timestamp: string;
+  direction?: string;
+  entry_price?: number;
+  sl?: number;
+  tp?: number;
+  rsi?: number;
+  structure?: string;
+  result?: string;
+}
+
+const fmt = (v: number | undefined | null, d = 2) => (v != null ? v.toFixed(d) : '—');
 
 export function SignalHistory() {
-  const [history, setHistory] = useState<Signal[]>([]);
+  const [signals, setSignals] = useState<ScannerSignal[]>([]);
+  const [stats, setStats] = useState({ total: 0, wins: 0, losses: 0, win_rate: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchHistory = async () => {
+    const fetchData = async () => {
       try {
-        setLoading(true);
         setError(null);
-        const data = await signalsAPI.getHistory(20);
-        setHistory(data);
+        const [scannerData, statsData] = await Promise.all([
+          signalsAPI.getScannerHistory(25),
+          signalsAPI.getStats(),
+        ]);
+        setSignals(scannerData);
+        setStats(statsData);
       } catch (err) {
-        console.error('Error fetching signal history:', err);
+        console.error('Error fetching scanner history:', err);
         setError('Failed to load history');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchHistory();
-
-    // Refresh every 10 seconds
-    const interval = setInterval(fetchHistory, 10000);
+    void fetchData();
+    const interval = setInterval(fetchData, 90000);
     return () => clearInterval(interval);
   }, []);
 
-  if (loading && history.length === 0) {
+  if (loading && signals.length === 0) {
     return (
       <div className="flex items-center justify-center h-40 text-gray-400">
         <span>Loading history...</span>
@@ -51,96 +58,129 @@ export function SignalHistory() {
     );
   }
 
-  if (error && history.length === 0) {
-    return (
-      <div className="text-center text-red-400 text-xs">{error}</div>
-    );
+  if (error && signals.length === 0) {
+    return <div className="text-center text-red-400 text-xs">{error}</div>;
   }
 
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div className="text-xs text-gray-400 font-bold flex items-center gap-2">
-        <History size={14} />
-        SIGNAL HISTORY
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-gray-400 font-bold flex items-center gap-2">
+          <History size={14} />
+          SIGNAL HISTORY
+        </div>
+        {stats.total > 0 && (
+          <div className="text-xs text-gray-500">
+            WR:{' '}
+            <span className={stats.win_rate >= 0.5 ? 'text-accent-green font-bold' : 'text-accent-red font-bold'}>
+              {(stats.win_rate * 100).toFixed(0)}%
+            </span>
+            &nbsp;({stats.wins}W/{stats.losses}L)
+          </div>
+        )}
       </div>
 
       {/* Signals List */}
-      <div className="space-y-2 max-h-96 overflow-y-auto">
-        {history.length === 0 ? (
-          <div className="text-center text-gray-400 text-xs py-4">No signals yet</div>
+      <div className="space-y-2 max-h-[480px] overflow-y-auto pr-0.5">
+        {signals.length === 0 ? (
+          <div className="text-center text-gray-400 text-xs py-4">
+            No signals yet — scanner runs every 15 min
+          </div>
         ) : (
-          history.map((signal, index) => {
-            const colors = SIGNAL_COLORS[signal.consensus] || SIGNAL_COLORS.HOLD;
-            const timestamp = new Date(signal.timestamp);
-            const timeAgo = formatDistanceToNow(timestamp, { addSuffix: true });
+          signals.map((sig, index) => {
+            const isLong = sig.direction === 'LONG';
+            const isWin = sig.result === 'WIN';
+            const isLoss = sig.result === 'LOSS';
+            const ts = new Date(sig.timestamp);
+            const timeAgo = formatDistanceToNow(ts, { addSuffix: true });
+
+            const rsiColor =
+              (sig.rsi ?? 50) > 70
+                ? 'text-accent-red'
+                : (sig.rsi ?? 50) < 30
+                ? 'text-accent-green'
+                : 'text-accent-blue';
+
+            const cardColor = isWin
+              ? 'bg-green-900/10 border-green-500/30'
+              : isLoss
+              ? 'bg-red-900/10 border-red-500/30'
+              : isLong
+              ? 'bg-green-900/5 border-green-500/20'
+              : 'bg-red-900/5 border-red-500/20';
 
             return (
               <div
-                key={`${signal.timestamp}-${index}`}
-                className={`border rounded p-2.5 text-xs transition-all hover:scale-105 ${colors}`}
+                key={`${sig.signal_id ?? index}-${sig.timestamp}`}
+                className={`border rounded p-2.5 text-xs ${cardColor}`}
               >
-                <div className="flex items-center justify-between mb-1">
+                {/* Top row: direction + price + time */}
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    {isLong ? (
+                      <TrendingUp size={13} className="text-accent-green" />
+                    ) : (
+                      <TrendingDown size={13} className="text-accent-red" />
+                    )}
+                    <span className={`font-bold ${isLong ? 'text-accent-green' : 'text-accent-red'}`}>
+                      {sig.direction ?? '?'}
+                    </span>
+                    {sig.structure && (
+                      <span className="text-gray-500 text-xs">· {sig.structure}</span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">
-                      {signal.consensus === 'STRONG_BUY' ? '🚀' :
-                       signal.consensus === 'BUY' ? '📈' :
-                       signal.consensus === 'HOLD' ? '⏸️' :
-                       signal.consensus === 'SELL' ? '📉' :
-                       '💥'}
-                    </span>
-                    <div>
-                      <span className="font-bold">{signal.consensus}</span>
-                                     <div className="text-gray-500 text-xs">{timeAgo}</div>
-                                   </div>
-                                 </div>
-                                 <div className="text-right">
-                                   <div className="font-semibold">${((signal.current_price ?? 0) as number).toFixed(2)}</div>
-                                   <div className="text-xs text-gray-400">Score: {((signal.consensus_score ?? 0) as number).toFixed(2)}</div>
+                    {sig.result && (
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-xs font-bold ${
+                          isWin
+                            ? 'bg-green-900/30 text-accent-green'
+                            : isLoss
+                            ? 'bg-red-900/30 text-accent-red'
+                            : 'bg-blue-900/30 text-blue-400'
+                        }`}
+                      >
+                        {sig.result}
+                      </span>
+                    )}
+                    <span className="text-gray-600">{timeAgo}</span>
                   </div>
                 </div>
 
-                {/* Mini Stats */}
-                <div className="grid grid-cols-3 gap-1 text-xs mt-2 pt-2 border-t border-current border-opacity-20">
-                  <div className="text-center">
-                    <div className="text-gray-500">RL</div>
-                    <div className={`font-semibold ${
-                      signal.rl_action === 'BUY' ? 'text-green-400' :
-                      signal.rl_action === 'SELL' ? 'text-red-400' :
-                      'text-blue-400'
-                    }`}>
-                      {signal.rl_action}
+                {/* Entry / SL / TP grid */}
+                <div className="grid grid-cols-3 gap-1 text-xs">
+                  <div className="bg-dark-bg/50 rounded px-1.5 py-1 text-center">
+                    <div className="text-gray-500 text-xs leading-none mb-0.5">Entry</div>
+                    <div className="font-mono font-semibold text-accent-blue">
+                      ${fmt(sig.entry_price)}
                     </div>
                   </div>
-                  <div className="text-center">
-                    <div className="text-gray-500">LSTM</div>
-                    <div className={(signal.lstm_change_pct ?? 0) >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>
-                      {(signal.lstm_change_pct ?? 0) >= 0 ? '↑' : '↓'} {Math.abs(signal.lstm_change_pct ?? 0).toFixed(2)}%
+                  <div className="bg-dark-bg/50 rounded px-1.5 py-1 text-center">
+                    <div className="text-gray-500 text-xs leading-none mb-0.5">SL</div>
+                    <div className="font-mono font-semibold text-accent-red">
+                      ${fmt(sig.sl)}
                     </div>
                   </div>
-                  <div className="text-center">
-                    <div className="text-gray-500">XGB</div>
-                    <div className={`font-semibold ${
-                      signal.xgb_direction === 'UP' ? 'text-green-400' :
-                      signal.xgb_direction === 'DOWN' ? 'text-red-400' :
-                      'text-blue-400'
-                    }`}>
-                      {signal.xgb_direction}
+                  <div className="bg-dark-bg/50 rounded px-1.5 py-1 text-center">
+                    <div className="text-gray-500 text-xs leading-none mb-0.5">TP</div>
+                    <div className="font-mono font-semibold text-accent-green">
+                      ${fmt(sig.tp)}
                     </div>
                   </div>
                 </div>
 
-                {/* RSI if available */}
-                {signal.current_rsi !== undefined && (
-                  <div className="mt-1 pt-1 border-t border-current border-opacity-20 text-xs">
-                    <span className="text-gray-500">RSI: </span>
-                     <span className={
-                       (signal.current_rsi ?? 0) > 70 ? 'text-red-400 font-semibold' :
-                       (signal.current_rsi ?? 0) < 30 ? 'text-green-400 font-semibold' :
-                       'text-blue-400'
-                     }>
-                       {((signal.current_rsi ?? 0) as number).toFixed(1)}
-                    </span>
+                {/* RSI badge */}
+                {sig.rsi != null && (
+                  <div className="mt-1.5 flex items-center gap-1 text-xs">
+                    <span className="text-gray-500">RSI:</span>
+                    <span className={`font-bold ${rsiColor}`}>{fmt(sig.rsi, 1)}</span>
+                    {(sig.rsi ?? 50) > 70 && (
+                      <span className="text-accent-red">Overbought</span>
+                    )}
+                    {(sig.rsi ?? 50) < 30 && (
+                      <span className="text-accent-green">Oversold</span>
+                    )}
                   </div>
                 )}
               </div>
@@ -149,24 +189,16 @@ export function SignalHistory() {
         )}
       </div>
 
-      {/* Footer Stats */}
-      {history.length > 0 && (
-        <div className="text-xs text-gray-500 pt-2 border-t border-dark-secondary space-y-1">
-          <div className="flex justify-between">
-            <span>Total signals: {history.length}</span>
-            <span>
-              Buy signals: {history.filter(s => s.consensus.includes('BUY')).length}
-              {' / '}
-              Sell signals: {history.filter(s => s.consensus.includes('SELL')).length}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span>Avg Price: ${(history.reduce((sum, s) => sum + (s.current_price ?? 0), 0) / history.length).toFixed(2)}</span>
-            <span>Avg Score: {(history.reduce((sum, s) => sum + (s.consensus_score ?? 0), 0) / history.length).toFixed(2)}</span>
-          </div>
+      {/* Footer stats */}
+      {signals.length > 0 && (
+        <div className="text-xs text-gray-500 pt-2 border-t border-dark-secondary flex justify-between">
+          <span>{signals.length} signals shown</span>
+          <span>
+            {signals.filter((s) => s.direction === 'LONG').length}L /{' '}
+            {signals.filter((s) => s.direction === 'SHORT').length}S
+          </span>
         </div>
       )}
     </div>
   );
 }
-

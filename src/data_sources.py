@@ -1,6 +1,8 @@
 """
 data_sources.py — Professional API data provider with rate limiting
 Implements: Leaky Bucket rate limiting, batch requests, aggressive caching, exponential backoff
+             + WebSocket streaming for real-time price (Grow plan: 1 WS connection)
+             + Multi-timeframe prefetch to maximize cache hits
 Spec: 55 credits/min limit (Twelve Data Grow plan)
 """
 
@@ -8,7 +10,9 @@ import os
 import pandas as pd
 import requests
 import time
-from typing import Optional, List
+import threading
+import json
+from typing import Optional, List, Dict
 from src.config import TD_API_KEY, ALPHA_VANTAGE_KEY
 from src.logger import logger
 from src.api_optimizer import (
@@ -21,7 +25,14 @@ from src.persistent_cache import get_persistent_cache
 
 # Session for connection pooling
 session = requests.Session()
-session.headers.update({'User-Agent': 'QuantSentinel/2.2'})
+session.headers.update({'User-Agent': 'QuantSentinel/2.3'})
+
+
+# ============================================================================
+# MODULE-LEVEL LIVE PRICE STORE (filled by WebSocket, read by get_current_price)
+# ============================================================================
+_live_prices: Dict[str, dict] = {}  # symbol → {price, timestamp}
+_live_price_lock = threading.Lock()
 
 
 class DataProvider:
@@ -146,8 +157,8 @@ class TwelveDataProvider(DataProvider):
 
         # Try intraday memory cache
         cached = self.persistent_cache.get_intraday_data(symbol, interval)
-        if cached is not None:
-            logger.info(f"✅ Cached intraday: {symbol} {interval}")
+        if cached is not None and len(cached) >= count:
+            logger.info(f"✅ Cached intraday: {symbol} {interval} ({len(cached)} candles)")
             return cached
 
         # Convert interval format
@@ -169,6 +180,17 @@ class TwelveDataProvider(DataProvider):
         df[['open', 'high', 'low', 'close']] = df[['open', 'high', 'low', 'close']].apply(pd.to_numeric)
         df = df.iloc[::-1].reset_index(drop=True)
 
+        # Twelve Data returns 'datetime' field — rename to 'timestamp' for consistency
+        # Forex timestamps from Twelve Data are in UTC
+        if 'datetime' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['datetime'], utc=True)
+        elif 'timestamp' not in df.columns:
+            df['timestamp'] = pd.Timestamp.now(tz='UTC')
+
+        # XAU/USD (forex) has no volume — add placeholder
+        if 'volume' not in df.columns:
+            df['volume'] = 0
+
         # Cache result
         if interval == '1d':
             self.persistent_cache.set_daily_ohlc(symbol, df)
@@ -180,11 +202,44 @@ class TwelveDataProvider(DataProvider):
 
     def get_current_price(self, symbol: str):
         """
-        Get current price (1 credit per call)
-
-        Note: No caching for real-time prices
+        Get current price with layered fallback:
+        1. WebSocket live price (0 credits, <1s latency)
+        2. Short-lived cache (0 credits, <30s old)
+        3. REST API call (1 credit)
         """
-        logger.debug(f"💰 Fetching price: {symbol}")
+        # --- Layer 1: WebSocket live price (free, real-time) ---
+        with _live_price_lock:
+            if symbol in _live_prices:
+                data = _live_prices[symbol]
+                age = time.time() - data.get('timestamp', 0)
+                if age < 30:  # WS price is fresh (< 30s)
+                    logger.debug(f"💰 WS live price: {symbol} = ${data['price']} (age {age:.0f}s)")
+                    return {
+                        'price': data['price'],
+                        'change': 0.0,
+                        'change_pct': 0.0,
+                        'high_24h': None,
+                        'low_24h': None,
+                        'source': 'websocket'
+                    }
+
+        # --- Layer 2: Short-lived REST cache (avoid duplicate calls within 15s) ---
+        cache_key = f"price_{symbol}"
+        cached = self.persistent_cache.get_intraday_data(symbol, '__price__')
+        if cached is not None and not cached.empty:
+            cached_price = cached['close'].iloc[-1]
+            logger.debug(f"💰 Cached price: {symbol} = ${cached_price}")
+            return {
+                'price': float(cached_price),
+                'change': 0.0,
+                'change_pct': 0.0,
+                'high_24h': None,
+                'low_24h': None,
+                'source': 'cache'
+            }
+
+        # --- Layer 3: REST API (1 credit) ---
+        logger.debug(f"💰 Fetching price (REST): {symbol}")
 
         data = self._req('price', {'symbol': symbol})
 
@@ -197,11 +252,113 @@ class TwelveDataProvider(DataProvider):
             'change': 0.0,
             'change_pct': 0.0,
             'high_24h': None,
-            'low_24h': None
+            'low_24h': None,
+            'source': 'rest'
         }
+
+        # Cache for 15s to avoid duplicate REST calls
+        price_df = pd.DataFrame([{'close': result['price']}])
+        self.persistent_cache.set_intraday_data(symbol, '__price__', price_df)
 
         logger.info(f"✅ Price: {symbol} = ${result['price']}")
         return result
+
+    # ===== WebSocket Streaming (Grow plan: 1 WS connection, 0 credits) =====
+
+    def start_price_stream(self, symbols: List[str] = None):
+        """
+        Start WebSocket price stream for real-time prices (0 API credits).
+        Grow plan supports 1 WebSocket connection.
+        Prices are stored in module-level _live_prices dict.
+        """
+        if symbols is None:
+            symbols = ['XAU/USD']
+
+        def _ws_thread():
+            try:
+                import websocket
+            except ImportError:
+                logger.warning("⚠️ websocket-client not installed, WS streaming disabled")
+                return
+
+            ws_url = "wss://ws.twelvedata.com/v1/quotes/price"
+            subscribe_msg = {
+                "action": "subscribe",
+                "params": {
+                    "symbols": ",".join(symbols)
+                }
+            }
+
+            def on_message(ws, message):
+                try:
+                    data = json.loads(message)
+                    if 'price' in data and 'symbol' in data:
+                        with _live_price_lock:
+                            _live_prices[data['symbol']] = {
+                                'price': float(data['price']),
+                                'timestamp': time.time()
+                            }
+                except Exception as e:
+                    logger.debug(f"WS parse error: {e}")
+
+            def on_open(ws):
+                logger.info(f"🔌 WebSocket connected, subscribing to: {symbols}")
+                ws.send(json.dumps(subscribe_msg))
+
+            def on_error(ws, error):
+                logger.warning(f"⚠️ WebSocket error: {error}")
+
+            def on_close(ws, code, msg):
+                logger.info(f"🔌 WebSocket closed ({code}). Reconnecting in 5s...")
+                time.sleep(5)
+                _ws_thread()  # Reconnect
+
+            try:
+                ws = websocket.WebSocketApp(
+                    f"{ws_url}?apikey={self.api_key}",
+                    on_message=on_message,
+                    on_open=on_open,
+                    on_error=on_error,
+                    on_close=on_close
+                )
+                ws.run_forever(ping_interval=30)
+            except Exception as e:
+                logger.error(f"❌ WebSocket fatal error: {e}")
+                time.sleep(10)
+
+        thread = threading.Thread(target=_ws_thread, daemon=True, name="TwelveData-WS")
+        thread.start()
+        logger.info(f"🚀 WebSocket price stream started for {symbols}")
+
+    # ===== Multi-Timeframe Prefetch =====
+
+    def prefetch_all_timeframes(self, symbol: str = 'XAU/USD',
+                                 timeframes: List[str] = None,
+                                 count: int = 200):
+        """
+        Prefetch candles for all standard timeframes in one cycle.
+        Populates cache so subsequent get_candles() calls are free.
+        Called once at the top of each scanner cycle.
+        """
+        if timeframes is None:
+            timeframes = ['5m', '15m', '1h', '4h']
+
+        fetched = 0
+        for tf in timeframes:
+            cached = self.persistent_cache.get_intraday_data(symbol, tf)
+            if cached is not None and len(cached) >= count * 0.8:
+                logger.debug(f"✅ Prefetch skip (cached): {symbol} {tf}")
+                continue
+            df = self.get_candles(symbol, tf, count)
+            if df is not None and not df.empty:
+                fetched += 1
+                logger.debug(f"✅ Prefetched: {symbol} {tf} ({len(df)} candles)")
+            else:
+                logger.warning(f"⚠️ Prefetch failed: {symbol} {tf}")
+
+        if fetched > 0:
+            logger.info(f"📦 Prefetched {fetched} timeframes for {symbol}")
+        return fetched
 
     def get_current_prices_batch(self, symbols: List[str]):
         """
@@ -310,14 +467,23 @@ class AlphaVantageProvider(DataProvider):
         return None
 
 
+_provider_cache: dict = {}  # name → DataProvider singleton
+
+
 def get_provider(name=None):
-    """Get data provider with optimization enabled"""
+    """Get data provider with optimization enabled (cached singleton)"""
     name = name or os.getenv('DATA_PROVIDER', 'twelve_data')
+    if name in _provider_cache:
+        return _provider_cache[name]
+
     if name == 'twelve_data':
-        return TwelveDataProvider(TD_API_KEY)
+        provider = TwelveDataProvider(TD_API_KEY)
     elif name == 'alpha_vantage':
-        return AlphaVantageProvider(ALPHA_VANTAGE_KEY)
+        provider = AlphaVantageProvider(ALPHA_VANTAGE_KEY)
     else:
-        return TwelveDataProvider(TD_API_KEY)
+        provider = TwelveDataProvider(TD_API_KEY)
+
+    _provider_cache[name] = provider
+    return provider
 
 

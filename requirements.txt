@@ -12,7 +12,7 @@ numpy>=2.0.0
 transformers>=4.41.0
 torch>=2.6.0
 scipy>=1.14.0
-openai>=1.28.0
+openai>=1.66.0
 
 # --- VISUALIZATION ---
 matplotlib>=3.9.0
@@ -26,6 +26,12 @@ flask>=3.0.0
 tensorflow>=2.16.0
 scikit-learn>=1.6.0
 xgboost>=2.0.0
+
+# --- REAL-TIME DATA ---
+websocket-client>=1.6.0
+
+# --- SIGNAL PROCESSING ---
+PyWavelets>=1.5.0
 
 # --- DATABASE ---
 # sqlite3 is built-in Python module
@@ -49,3 +55,6 @@ tqdm>=4.66.0
 # --- DATABASE CLOUD (Optional) ---
 libsql-client>=0.3.0
 
+
+scikit-learn>=1.4.0
+psutil>=5.9.0

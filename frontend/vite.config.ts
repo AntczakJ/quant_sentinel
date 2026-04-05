@@ -14,13 +14,12 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '/api'),
-        ws: false,
       },
       '/ws': {
         target: 'ws://localhost:8000',
         ws: true,
         changeOrigin: true,
-      }
+      },
     }
   },
 
@@ -47,7 +46,7 @@ export default defineConfig({
             'zustand'
           ],
           'charts': [
-            'recharts'
+            'lightweight-charts'
           ],
           'ui': [
             'lucide-react'

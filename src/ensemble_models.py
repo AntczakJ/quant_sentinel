@@ -97,19 +97,31 @@ def _load_dqn(state_size=22, action_size=3):
 
 
 def _get_scaler():
-    """Get or create MinMaxScaler for LSTM."""
+    """Get or load persisted MinMaxScaler for LSTM (fitted during training)."""
     if _models_cache["scaler"] is not None:
-        return _models_cache["scaler"]
+        return _models_cache["scaler"], True  # (scaler, is_fitted)
+
+    try:
+        import pickle
+        scaler_path = "models/lstm_scaler.pkl"
+        if os.path.exists(scaler_path):
+            with open(scaler_path, 'rb') as f:
+                scaler = pickle.load(f)
+            _models_cache["scaler"] = scaler
+            logger.info("✅ LSTM scaler loaded from disk")
+            return scaler, True
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to load persisted scaler: {e}")
 
     try:
         from sklearn.preprocessing import MinMaxScaler
         scaler = MinMaxScaler()
         _models_cache["scaler"] = scaler
-        return scaler
+        return scaler, False  # not fitted — will need fit_transform
     except Exception as e:
         logger.warning(f"⚠️ Failed to create scaler: {e}")
 
-    return None
+    return None, False
 
 
 # ============================================================================
@@ -136,22 +148,21 @@ def _fallback_ensemble_result() -> Dict:
 def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[float]:
     """
     Predykcja LSTM: prawdopodobieństwo wzrostu (0-1).
-
-    Returns:
-        float: Prawdopodobieństwo wzrostu (0.0-1.0), lub None jeśli błąd
+    Używa rozszerzonego zestawu cech z FEATURE_COLS.
     """
     try:
         import pandas_ta as ta
+        from src.ml_models import FEATURE_COLS
 
         lstm_model = _load_lstm()
         if lstm_model is None:
             return None
 
-        if len(df) < seq_len + 1:
-            logger.debug(f"Za mało danych dla LSTM: {len(df)} < {seq_len+1}")
+        if len(df) < seq_len + 30:
+            logger.debug(f"Za mało danych dla LSTM: {len(df)} < {seq_len+30}")
             return None
 
-        # Przygotuj cechy
+        # Przygotuj cechy (rozszerzony zestaw)
         df_copy = df.copy()
         df_copy['rsi'] = ta.rsi(df_copy['close'], 14)
         df_copy['macd'] = ta.macd(df_copy['close'])['MACD_12_26_9']
@@ -159,8 +170,43 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
         df_copy['volatility'] = df_copy['close'].pct_change().rolling(20).std()
         df_copy['ret_1'] = df_copy['close'].pct_change()
         df_copy['ret_5'] = df_copy['close'].pct_change(5)
+        df_copy['ret_10'] = df_copy['close'].pct_change(10)
         df_copy['is_green'] = (df_copy['close'] > df_copy['open']).astype(int)
-        df_copy['above_ema20'] = (df_copy['close'] > ta.ema(df_copy['close'], 20)).astype(int)
+        ema20 = ta.ema(df_copy['close'], 20)
+        df_copy['above_ema20'] = (df_copy['close'] > ema20).astype(int)
+        df_copy['ema_distance'] = (df_copy['close'] - ema20) / ema20
+
+        # Williams %R
+        high_14 = df_copy['high'].rolling(14).max()
+        low_14 = df_copy['low'].rolling(14).min()
+        df_copy['williams_r'] = -100 * (high_14 - df_copy['close']) / (high_14 - low_14 + 1e-10)
+
+        # CCI
+        typical_price = (df_copy['high'] + df_copy['low'] + df_copy['close']) / 3
+        sma_tp = typical_price.rolling(20).mean()
+        mad_tp = typical_price.rolling(20).apply(lambda x: np.abs(x - x.mean()).mean())
+        df_copy['cci'] = (typical_price - sma_tp) / (0.015 * mad_tp + 1e-10)
+
+        # Ichimoku signal
+        try:
+            tenkan = (df_copy['high'].rolling(9).max() + df_copy['low'].rolling(9).min()) / 2
+            kijun = (df_copy['high'].rolling(26).max() + df_copy['low'].rolling(26).min()) / 2
+            import pandas as pd_mod
+            span_a = ((tenkan + kijun) / 2).shift(26)
+            span_b = ((df_copy['high'].rolling(52).max() + df_copy['low'].rolling(52).min()) / 2).shift(26)
+            cloud_top = pd.concat([span_a, span_b], axis=1).max(axis=1)
+            df_copy['ichimoku_signal'] = (df_copy['close'] > cloud_top).astype(int)
+        except:
+            df_copy['ichimoku_signal'] = 0
+
+        # Candlestick features
+        body = abs(df_copy['close'] - df_copy['open'])
+        high_low = df_copy['high'] - df_copy['low'] + 1e-10
+        df_copy['body_ratio'] = body / high_low
+        df_copy['upper_shadow_ratio'] = (df_copy['high'] - df_copy[['close', 'open']].max(axis=1)) / high_low
+        df_copy['lower_shadow_ratio'] = (df_copy[['close', 'open']].min(axis=1) - df_copy['low']) / high_low
+        df_copy['engulfing_score'] = 0
+        df_copy['pin_bar_score'] = 0
 
         df_copy = df_copy.dropna()
 
@@ -168,13 +214,24 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
             logger.debug("Za mało danych po przygotowaniu cech")
             return None
 
-        cols = ['rsi', 'macd', 'atr', 'volatility', 'ret_1', 'ret_5', 'is_green', 'above_ema20']
-        data = df_copy[cols].values[-seq_len:]
+        # Użyj tylko kolumn z FEATURE_COLS
+        available_cols = [c for c in FEATURE_COLS if c in df_copy.columns]
+        if len(available_cols) < len(FEATURE_COLS):
+            # Dodaj brakujące kolumny jako 0
+            for c in FEATURE_COLS:
+                if c not in df_copy.columns:
+                    df_copy[c] = 0
+        data = df_copy[FEATURE_COLS].values[-seq_len:]
 
         # Normalizuj
-        scaler = _get_scaler()
+        scaler, is_fitted = _get_scaler()
         if scaler is not None:
-            data = scaler.fit_transform(data)
+            if is_fitted:
+                data = scaler.transform(data)
+            else:
+                # Fallback: scaler nie z treningu — fit_transform na dostępnych danych
+                logger.debug("⚠️ LSTM scaler nie z treningu — używam fit_transform (mniej stabilne)")
+                data = scaler.fit_transform(data)
 
         X = data.reshape(1, seq_len, -1)
 
@@ -197,12 +254,11 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
 def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
     """
     Predykcja XGBoost: prawdopodobieństwo wzrostu (0-1).
-
-    Returns:
-        float: Prawdopodobieństwo wzrostu (0.0-1.0), lub None jeśli błąd
+    Używa rozszerzonego zestawu cech z FEATURE_COLS.
     """
     try:
         import pandas_ta as ta
+        from src.ml_models import FEATURE_COLS
 
         xgb_model = _load_xgb()
         if xgb_model is None:
@@ -212,7 +268,7 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
             logger.debug(f"Za mało danych dla XGBoost: {len(df)} < 100")
             return None
 
-        # Przygotuj cechy
+        # Przygotuj cechy (rozszerzony zestaw)
         df_copy = df.copy()
         df_copy['rsi'] = ta.rsi(df_copy['close'], 14)
         df_copy['macd'] = ta.macd(df_copy['close'])['MACD_12_26_9']
@@ -220,23 +276,65 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
         df_copy['volatility'] = df_copy['close'].pct_change().rolling(20).std()
         df_copy['ret_1'] = df_copy['close'].pct_change()
         df_copy['ret_5'] = df_copy['close'].pct_change(5)
+        df_copy['ret_10'] = df_copy['close'].pct_change(10)
         df_copy['is_green'] = (df_copy['close'] > df_copy['open']).astype(int)
-        df_copy['above_ema20'] = (df_copy['close'] > ta.ema(df_copy['close'], 20)).astype(int)
+        ema20 = ta.ema(df_copy['close'], 20)
+        df_copy['above_ema20'] = (df_copy['close'] > ema20).astype(int)
+        df_copy['ema_distance'] = (df_copy['close'] - ema20) / ema20
+
+        # Williams %R
+        high_14 = df_copy['high'].rolling(14).max()
+        low_14 = df_copy['low'].rolling(14).min()
+        df_copy['williams_r'] = -100 * (high_14 - df_copy['close']) / (high_14 - low_14 + 1e-10)
+
+        # CCI
+        typical_price = (df_copy['high'] + df_copy['low'] + df_copy['close']) / 3
+        sma_tp = typical_price.rolling(20).mean()
+        mad_tp = typical_price.rolling(20).apply(lambda x: np.abs(x - x.mean()).mean())
+        df_copy['cci'] = (typical_price - sma_tp) / (0.015 * mad_tp + 1e-10)
+
+        # Ichimoku
+        try:
+            tenkan = (df_copy['high'].rolling(9).max() + df_copy['low'].rolling(9).min()) / 2
+            kijun = (df_copy['high'].rolling(26).max() + df_copy['low'].rolling(26).min()) / 2
+            span_a = ((tenkan + kijun) / 2).shift(26)
+            span_b = ((df_copy['high'].rolling(52).max() + df_copy['low'].rolling(52).min()) / 2).shift(26)
+            cloud_top = pd.concat([span_a, span_b], axis=1).max(axis=1)
+            df_copy['ichimoku_signal'] = (df_copy['close'] > cloud_top).astype(int)
+        except:
+            df_copy['ichimoku_signal'] = 0
+
+        # Candlestick features
+        body = abs(df_copy['close'] - df_copy['open'])
+        high_low = df_copy['high'] - df_copy['low'] + 1e-10
+        df_copy['body_ratio'] = body / high_low
+        df_copy['upper_shadow_ratio'] = (df_copy['high'] - df_copy[['close', 'open']].max(axis=1)) / high_low
+        df_copy['lower_shadow_ratio'] = (df_copy[['close', 'open']].min(axis=1) - df_copy['low']) / high_low
+        df_copy['engulfing_score'] = 0
+        df_copy['pin_bar_score'] = 0
 
         df_copy = df_copy.dropna()
 
         if df_copy.empty:
             return None
 
-        X = df_copy.drop(columns=['open', 'high', 'low', 'close', 'volume'], errors='ignore')
-        X = X.tail(1)
+        # Dodaj brakujące kolumny
+        for c in FEATURE_COLS:
+            if c not in df_copy.columns:
+                df_copy[c] = 0
+
+        X = df_copy[FEATURE_COLS].tail(1)
 
         if X.empty:
             return None
 
         # Predykcja
-        pred = xgb_model.predict_proba(X)
-        return float(pred[0, 1])  # Prawdopodobieństwo klasy 1 (wzrost)
+        try:
+            pred = xgb_model.predict_proba(X)
+            return float(pred[0, 1])
+        except Exception as e:
+            logger.debug(f"XGBoost predict_proba error: {e}")
+            return None
 
     except Exception as e:
         logger.debug(f"XGBoost prediction error: {e}")
@@ -270,6 +368,87 @@ def predict_dqn_action(close_prices: np.ndarray, balance: float = 1.0, position:
     except Exception as e:
         logger.debug(f"DQN prediction error: {e}")
         return None
+
+
+# ============================================================================
+# DYNAMIC WEIGHTS (persisted in DB, updated by self-learning)
+# ============================================================================
+
+def _load_dynamic_weights() -> Dict[str, float]:
+    """Ładuj wagi ensemble z bazy danych. Fallback na domyślne."""
+    default_weights = {
+        "smc": 0.35,
+        "lstm": 0.25,
+        "xgb": 0.20,
+        "dqn": 0.20
+    }
+    try:
+        from src.database import NewsDB
+        db = NewsDB()
+        loaded = {}
+        for model_name, default_val in default_weights.items():
+            val = db.get_param(f"ensemble_weight_{model_name}", None)
+            loaded[model_name] = val if val is not None else default_val
+        # Normalizuj wagi do sumy = 1
+        total = sum(loaded.values())
+        if total > 0:
+            loaded = {k: v / total for k, v in loaded.items()}
+        return loaded
+    except Exception:
+        return default_weights
+
+
+def update_ensemble_weights(correct_models: list, incorrect_models: list, learning_rate: float = 0.02):
+    """
+    Aktualizuj wagi ensemble na podstawie które modele miały rację.
+    Wywoływane po rozwiązaniu trade'u (resolve_trades_task).
+    """
+    try:
+        from src.database import NewsDB
+        db = NewsDB()
+        current = _load_dynamic_weights()
+
+        for model in correct_models:
+            if model in current:
+                new_w = current[model] + learning_rate
+                db.set_param(f"ensemble_weight_{model}", min(new_w, 0.6))
+
+        for model in incorrect_models:
+            if model in current:
+                new_w = current[model] - learning_rate
+                db.set_param(f"ensemble_weight_{model}", max(new_w, 0.05))
+
+        logger.info(f"📊 Ensemble weights updated: correct={correct_models}, incorrect={incorrect_models}")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to update ensemble weights: {e}")
+
+
+def _persist_prediction(results: Dict):
+    """Zapisz predykcję ensemble do bazy dla post-hoc analizy."""
+    try:
+        from src.database import NewsDB
+        db = NewsDB()
+        import json
+        predictions_json = json.dumps({
+            k: {kk: (str(vv) if not isinstance(vv, (int, float, bool, type(None))) else vv)
+                for kk, vv in v.items()}
+            for k, v in results.get('predictions', {}).items()
+        })
+        db._execute("""
+            INSERT INTO ml_predictions
+            (lstm_pred, xgb_pred, dqn_action, ensemble_score, ensemble_signal, confidence, predictions_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            results['predictions'].get('lstm', {}).get('value'),
+            results['predictions'].get('xgb', {}).get('value'),
+            results['predictions'].get('dqn', {}).get('action'),
+            results['final_score'],
+            results['ensemble_signal'],
+            results['confidence'],
+            predictions_json
+        ))
+    except Exception as e:
+        logger.debug(f"Could not persist prediction: {e}")
 
 
 # ============================================================================
@@ -326,14 +505,9 @@ def get_ensemble_prediction(
             logger.warning("⚠️ No DataFrame provided and use_twelve_data=False")
             return _fallback_ensemble_result()
 
-    # Domyślne wagi (można je dostroić)
+    # Domyślne wagi – ładuj dynamiczne z bazy jeśli dostępne
     if weights is None:
-        weights = {
-            "smc": 0.35,      # SMC - bazowy
-            "lstm": 0.25,     # Prognoza LSTM
-            "xgb": 0.20,      # Prognoza XGBoost
-            "dqn": 0.20       # Rekomendacja DQN
-        }
+        weights = _load_dynamic_weights()
 
     results = {
         "predictions": {},
@@ -467,6 +641,9 @@ def get_ensemble_prediction(
         f"Confidence: {results['confidence']:.1%} | "
         f"Signal: {results['ensemble_signal']}"
     )
+
+    # Persist prediction for post-hoc analysis
+    _persist_prediction(results)
 
     return results
 

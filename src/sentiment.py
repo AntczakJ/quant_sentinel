@@ -84,17 +84,12 @@ class AISystem:
             lub komunikat błędu jeśli API jest niedostępne.
         """
         try:
-            response = self.client.chat.completions.create(
+            response = self.client.responses.create(
                 model="gpt-4o-mini",  # Mini wystarczy do prostych interpretacji
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Jesteś ekspertem złota. Wyjaśnij news w 1 krótkim zdaniu."
-                    },
-                    {"role": "user", "content": text}
-                ]
+                instructions="Jesteś ekspertem złota. Wyjaśnij news w 1 krótkim zdaniu.",
+                input=text
             )
-            return response.choices[0].message.content
+            return response.output_text
         except Exception:
             return "Błąd połączenia z OpenAI."
 
