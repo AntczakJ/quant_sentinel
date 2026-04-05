@@ -3,7 +3,7 @@
  */
 
 import axios from 'axios';
-import type { AxiosError } from 'axios';
+import type { AxiosError, AxiosResponse } from 'axios';
 import type { Candle, Ticker, Indicators, Signal, Portfolio, AllModelsStats, TrainingStatus } from '../types/trading';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000/api';
@@ -16,14 +16,68 @@ const client = axios.create({
   },
 });
 
-// Interceptor na errors
+/* ── ETag cache — send If-None-Match to leverage backend 304 responses ── */
+const etagCache = new Map<string, { etag: string; data: unknown }>();
+
+/* ── Request deduplication — prevents identical GET requests from firing simultaneously ── */
+const inflightRequests = new Map<string, Promise<AxiosResponse>>();
+
+client.interceptors.request.use((config) => {
+  if (config.method === 'get') {
+    const key = `${config.baseURL ?? ''}${config.url ?? ''}`;
+    const cached = etagCache.get(key);
+    if (cached) {
+      config.headers = config.headers ?? {};
+      config.headers['If-None-Match'] = cached.etag;
+    }
+  }
+  return config;
+});
+
 client.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Store ETag from response
+    const etag = response.headers['etag'];
+    if (etag && response.config.method === 'get') {
+      const key = `${response.config.baseURL ?? ''}${response.config.url ?? ''}`;
+      etagCache.set(key, { etag, data: response.data });
+    }
+    return response;
+  },
   (error: AxiosError) => {
+    // Handle 304 Not Modified — return cached data
+    if (error.response?.status === 304 && error.config) {
+      const key = `${error.config.baseURL ?? ''}${error.config.url ?? ''}`;
+      const cached = etagCache.get(key);
+      if (cached) {
+        return { ...error.response, status: 200, data: cached.data };
+      }
+    }
+
+    const dedupKey = (error.config as any)?.__dedupKey as string | undefined;
+    if (dedupKey) inflightRequests.delete(dedupKey);
+
+    // If this was a deduped request that got cancelled, return the original promise
+    const dedupPromise = (error.config as any)?.__dedupPromise;
+    if (dedupPromise && axios.isCancel(error)) return dedupPromise;
+
     console.error('API Error:', error.response?.data ?? error.message);
     return Promise.reject(error);
   }
 );
+
+// Wrap client.get to leverage dedup map
+const originalGet = client.get.bind(client);
+client.get = function dedupGet<T = any>(...args: Parameters<typeof originalGet>): Promise<AxiosResponse<T>> {
+  const config = args[1] ?? {};
+  const key = `get:${API_BASE_URL}${args[0]}:${config.params ? JSON.stringify(config.params) : ''}`;
+  const existing = inflightRequests.get(key);
+  if (existing) return existing as Promise<AxiosResponse<T>>;
+  const promise = originalGet<T>(...args);
+  inflightRequests.set(key, promise);
+  void promise.finally(() => inflightRequests.delete(key));
+  return promise;
+} as typeof client.get;
 
 // Market endpoints
 export const marketAPI = {
@@ -50,6 +104,19 @@ export const marketAPI = {
 
   getStatus: async () => {
     const response = await client.get('/market/status');
+    return response.data;
+  },
+
+  /** Get Volume Profile data (POC, VAH, VAL, histogram) */
+  getVolumeProfile: async (symbol: string = 'XAU/USD', interval: string = '15m', limit: number = 100) => {
+    const response = await client.get<{
+      poc: number;
+      vah: number;
+      val: number;
+      histogram: Array<{ price: number; volume: number; pct: number }>;
+    }>('/market/volume-profile', {
+      params: { symbol, interval, limit }
+    });
     return response.data;
   },
 };
@@ -205,6 +272,51 @@ export const analysisAPI = {
     const response = await client.get('/analysis/trades', {
       params: { limit }
     });
+    return response.data;
+  },
+
+  /** Multi-timeframe confluence: bull/bear score across M5/M15/H1/H4 */
+  getMtfConfluence: async () => {
+    const response = await client.get<{
+      confluence_score: number;
+      direction: string;
+      bull_pct: number;
+      bear_pct: number;
+      bull_tf_count: number;
+      bear_tf_count: number;
+      timeframes: Record<string, { trend: string; rsi: number; weight: number }>;
+      session: { session: string; is_killzone: boolean; volatility_expected: string };
+    }>('/analysis/mtf-confluence');
+    return response.data;
+  },
+
+  /** Get current trading session info */
+  getSession: async () => {
+    const response = await client.get<{
+      session: string;
+      is_killzone: boolean;
+      utc_hour: number;
+      volatility_expected: string;
+    }>('/analysis/session');
+    return response.data;
+  },
+
+  /** Advanced risk & performance metrics: drawdown, profit factor, expectancy */
+  getRiskMetrics: async () => {
+    const response = await client.get<{
+      total: number;
+      wins: number;
+      losses: number;
+      win_rate: number;
+      avg_win: number;
+      avg_loss: number;
+      profit_factor: number;
+      expectancy: number;
+      max_consecutive_wins: number;
+      max_consecutive_losses: number;
+      max_drawdown: number;
+      total_profit: number;
+    }>('/analysis/risk-metrics');
     return response.data;
   },
 };

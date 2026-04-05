@@ -2,7 +2,7 @@
  * src/components/dashboard/ModelStats.tsx - Machine learning models performance
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { useTradingStore } from '../../store/tradingStore';
 import { modelsAPI } from '../../api/client';
 import type { AllModelsStats } from '../../types/trading';
@@ -36,7 +36,7 @@ function StatRow({ label, value, format = 'text', color }: StatRowProps) {
   );
 }
 
-export function ModelStats() {
+export const ModelStats = memo(function ModelStats() {
   const { setModelsStats } = useTradingStore();
   const [stats, setStatsState] = useState<AllModelsStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -225,5 +225,5 @@ export function ModelStats() {
       </div>
     </div>
   );
-}
+});
 

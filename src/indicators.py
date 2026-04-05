@@ -1,5 +1,7 @@
 """
 indicators.py — zaawansowane wskaźniki techniczne.
+
+Zawiera: Ichimoku, Volume Profile (POC/VAH/VAL), VWAP.
 """
 
 import pandas as pd
@@ -22,10 +24,11 @@ def ichimoku(df: pd.DataFrame, tenkan=9, kijun=26, senkou=52):
 
 def volume_profile(df: pd.DataFrame, num_bins=20):
     """Oblicza Volume Profile – POC, VA High, VA Low.
-    Dla forex (volume=0) używa tick-count (1 per bar) zamiast wolumenu."""
+    Dla forex (volume=0) używa tick-count (1 per bar) zamiast wolumenu.
+    Zwraca również histogram danych dla wizualizacji."""
     price_range = df['high'].max() - df['low'].min()
     if price_range <= 0:
-        return {'poc': df['close'].iloc[-1], 'vah': df['high'].max(), 'val': df['low'].min()}
+        return {'poc': df['close'].iloc[-1], 'vah': df['high'].max(), 'val': df['low'].min(), 'histogram': []}
     bin_width = price_range / num_bins
     bins = np.arange(df['low'].min(), df['high'].max() + bin_width, bin_width)
 
@@ -41,7 +44,7 @@ def volume_profile(df: pd.DataFrame, num_bins=20):
             price_level = round(bins[bin_idx] + bin_width/2, 2)
             vol_by_price[price_level] = vol_by_price.get(price_level, 0) + vol
     if not vol_by_price:
-        return {'poc': df['close'].iloc[-1], 'vah': df['high'].max(), 'val': df['low'].min()}
+        return {'poc': df['close'].iloc[-1], 'vah': df['high'].max(), 'val': df['low'].min(), 'histogram': []}
     poc = max(vol_by_price, key=vol_by_price.get)
     sorted_vol = sorted(vol_by_price.items(), key=lambda x: x[1], reverse=True)
     total_vol = sum(vol_by_price.values())
@@ -53,4 +56,27 @@ def volume_profile(df: pd.DataFrame, num_bins=20):
             if cum_vol / total_vol <= 0.35:
                 val = min(val, price)
                 vah = max(vah, price)
-    return {'poc': poc, 'vah': vah, 'val': val}
+
+    # Build histogram data for frontend
+    max_vol = max(vol_by_price.values()) if vol_by_price else 1
+    histogram = [
+        {"price": p, "volume": v, "pct": round(v / max_vol * 100, 1)}
+        for p, v in sorted(vol_by_price.items())
+    ]
+
+    return {'poc': poc, 'vah': vah, 'val': val, 'histogram': histogram}
+
+
+def vwap(df: pd.DataFrame) -> pd.Series:
+    """
+    Oblicza VWAP (Volume-Weighted Average Price).
+    Dla forex (volume=0) używa tick-count proxy.
+    """
+    typical_price = (df['high'] + df['low'] + df['close']) / 3
+    has_volume = 'volume' in df.columns and df['volume'].sum() > 0
+    volume = df['volume'] if has_volume else pd.Series(1.0, index=df.index)
+
+    cum_tp_vol = (typical_price * volume).cumsum()
+    cum_vol = volume.cumsum()
+
+    return cum_tp_vol / cum_vol

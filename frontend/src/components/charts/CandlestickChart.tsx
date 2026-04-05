@@ -18,7 +18,7 @@
  *  - 60 s auto-refresh (matches backend cache TTL)
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useDeferredValue, memo, startTransition } from 'react';
 import {
   createChart,
   CrosshairMode,
@@ -32,6 +32,7 @@ import {
   type MouseEventParams,
 } from 'lightweight-charts';
 import { RefreshCw, AlertCircle, Layers, Trash2 } from 'lucide-react';
+import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { useTradingStore } from '../../store/tradingStore';
 import { marketAPI, signalsAPI } from '../../api/client';
 import type { Candle } from '../../types/trading';
@@ -44,77 +45,28 @@ import {
   DEFAULT_STYLE,
 } from './drawings';
 import type { Drawing, DrawingTool, DrawingStyle } from './drawings';
+import { useIndicatorWorker } from '../../hooks/useIndicatorWorker';
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/*  TECHNICAL INDICATOR MATH (client-side, avoids extra API calls)           */
+/*  IndexedDB candle cache — instant chart render on reload (< 5 ms)         */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
-function calcEMA(closes: number[], period: number): (number | null)[] {
-  const k = 2 / (period + 1);
-  const out: (number | null)[] = new Array(closes.length).fill(null);
-  if (closes.length < period) return out;
-  let sum = 0;
-  for (let i = 0; i < period; i++) sum += closes[i];
-  out[period - 1] = sum / period;
-  for (let i = period; i < closes.length; i++) {
-    out[i] = closes[i] * k + (out[i - 1] as number) * (1 - k);
-  }
-  return out;
+const IDB_CANDLE_TTL = 90_000; // 90s — slightly longer than refresh interval
+
+interface CachedCandles { candles: Candle[]; ts: number }
+
+async function getCachedCandles(interval: string): Promise<Candle[] | null> {
+  try {
+    const entry = await idbGet<CachedCandles>(`qs:candles:${interval}`);
+    if (entry && Date.now() - entry.ts < IDB_CANDLE_TTL) {return entry.candles;}
+  } catch { /* IndexedDB unavailable */ }
+  return null;
 }
 
-function calcRSI(closes: number[], period = 14): (number | null)[] {
-  const out: (number | null)[] = new Array(closes.length).fill(null);
-  if (closes.length < period + 1) return out;
-  let gainSum = 0;
-  let lossSum = 0;
-  for (let i = 1; i <= period; i++) {
-    const d = closes[i] - closes[i - 1];
-    if (d > 0) gainSum += d;
-    else lossSum -= d;
-  }
-  let avgGain = gainSum / period;
-  let avgLoss = lossSum / period;
-  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-  for (let i = period + 1; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
-    avgGain = (avgGain * (period - 1) + (d > 0 ? d : 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + (d < 0 ? -d : 0)) / period;
-    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-  }
-  return out;
-}
-
-function calcSMA(values: number[], period: number): (number | null)[] {
-  const out: (number | null)[] = new Array(values.length).fill(null);
-  if (values.length < period) return out;
-  let sum = 0;
-  for (let i = 0; i < period; i++) sum += values[i];
-  out[period - 1] = sum / period;
-  for (let i = period; i < values.length; i++) {
-    sum += values[i] - values[i - period];
-    out[i] = sum / period;
-  }
-  return out;
-}
-
-function calcBollingerBands(
-  closes: number[],
-  period = 20,
-  mult = 2,
-): { upper: (number | null)[]; middle: (number | null)[]; lower: (number | null)[] } {
-  const middle = calcSMA(closes, period);
-  const upper: (number | null)[] = new Array(closes.length).fill(null);
-  const lower: (number | null)[] = new Array(closes.length).fill(null);
-  for (let i = period - 1; i < closes.length; i++) {
-    const m = middle[i];
-    if (m === null) continue;
-    let sqSum = 0;
-    for (let j = i - period + 1; j <= i; j++) sqSum += (closes[j] - m) ** 2;
-    const std = Math.sqrt(sqSum / period);
-    upper[i] = m + mult * std;
-    lower[i] = m - mult * std;
-  }
-  return { upper, middle, lower };
+async function setCachedCandles(interval: string, candles: Candle[]): Promise<void> {
+  try {
+    await idbSet(`qs:candles:${interval}`, { candles, ts: Date.now() } satisfies CachedCandles);
+  } catch { /* ignore */ }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -122,28 +74,29 @@ function calcBollingerBands(
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 const COLORS = {
-  bg: '#0d1117',
-  gridLines: '#1a2030',
-  text: '#6b7280',
-  crosshair: '#4b5563',
-  candleUp: '#22c55e',
-  candleDown: '#ef4444',
-  wickUp: '#22c55e',
-  wickDown: '#ef4444',
-  volumeUp: 'rgba(34,197,94,0.25)',
-  volumeDown: 'rgba(239,68,68,0.20)',
-  ema21: '#f59e0b',
-  bbUpper: 'rgba(59,130,246,0.45)',
-  bbMiddle: 'rgba(59,130,246,0.70)',
-  bbLower: 'rgba(59,130,246,0.45)',
-  rsiLine: '#8b5cf6',
-  rsiOverbought: 'rgba(239,68,68,0.35)',
-  rsiOversold: 'rgba(34,197,94,0.35)',
-  priceLine: '#e2e8f0',
-  slLine: '#ef4444',
-  tpLine: '#22c55e',
-  entryLine: '#3b82f6',
-  eqLine: '#f59e0b',
+  bg: '#131722',
+  gridLines: '#1e222d',
+  text: '#787b86',
+  crosshair: '#758696',
+  candleUp: '#26a69a',
+  candleDown: '#ef5350',
+  wickUp: '#26a69a',
+  wickDown: '#ef5350',
+  volumeUp: 'rgba(38,166,154,0.28)',
+  volumeDown: 'rgba(239,83,80,0.22)',
+  ema21: '#f0b90b',
+  bbUpper: 'rgba(33,150,243,0.45)',
+  bbMiddle: 'rgba(33,150,243,0.70)',
+  bbLower: 'rgba(33,150,243,0.45)',
+  rsiLine: '#7e57c2',
+  rsiOverbought: 'rgba(239,83,80,0.35)',
+  rsiOversold: 'rgba(38,166,154,0.35)',
+  priceLine: '#d1d4dc',
+  slLine: '#ef5350',
+  tpLine: '#26a69a',
+  entryLine: '#2196f3',
+  eqLine: '#f0b90b',
+  border: '#2a2e39',
 } as const;
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -154,22 +107,24 @@ interface LegendData {
   o: number; h: number; l: number; c: number; v: number; change: number;
 }
 
-function OHLCVLegend({ data, interval }: { data: LegendData | null; interval: string }) {
-  if (!data) return null;
+const OHLCVLegend = memo(function OHLCVLegend({ data, interval }: { data: LegendData | null; interval: string }) {
+  if (!data) {return null;}
   const up = data.c >= data.o;
-  const col = up ? 'text-green-400' : 'text-red-400';
+  const col = up ? 'text-[#26a69a]' : 'text-[#ef5350]';
   return (
-    <div className="absolute top-1 left-2 z-20 flex items-center gap-2 text-[10px] font-mono pointer-events-none select-none">
-      <span className="text-gray-500 font-semibold">XAU/USD · {interval}</span>
-      <span className="text-gray-500">O</span><span className={col}>{data.o.toFixed(2)}</span>
-      <span className="text-gray-500">H</span><span className={col}>{data.h.toFixed(2)}</span>
-      <span className="text-gray-500">L</span><span className={col}>{data.l.toFixed(2)}</span>
-      <span className="text-gray-500">C</span><span className={col}>{data.c.toFixed(2)}</span>
-      <span className={`ml-1 ${col}`}>{data.change >= 0 ? '+' : ''}{data.change.toFixed(2)}%</span>
-      {data.v > 0 && <span className="text-gray-600 ml-1">Vol {data.v.toLocaleString()}</span>}
+    <div className="absolute top-1 left-12 z-20 flex items-center gap-2 text-[11px] font-sans pointer-events-none select-none">
+      <span className="text-[#d1d4dc] font-semibold text-[12px]">XAU/USD</span>
+      <span className="text-[#787b86]">·</span>
+      <span className="text-[#787b86] font-medium">{interval}</span>
+      <span className="text-[#787b86] ml-1">O</span><span className={col}>{data.o.toFixed(2)}</span>
+      <span className="text-[#787b86]">H</span><span className={col}>{data.h.toFixed(2)}</span>
+      <span className="text-[#787b86]">L</span><span className={col}>{data.l.toFixed(2)}</span>
+      <span className="text-[#787b86]">C</span><span className={col}>{data.c.toFixed(2)}</span>
+      <span className={`ml-1 ${col} font-medium`}>{data.change >= 0 ? '+' : ''}{data.change.toFixed(2)}%</span>
+      {data.v > 0 && <span className="text-[#787b86] ml-1">Vol {data.v.toLocaleString()}</span>}
     </div>
   );
-}
+});
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /*  INTERVAL TOOLBAR                                                         */
@@ -177,7 +132,7 @@ function OHLCVLegend({ data, interval }: { data: LegendData | null; interval: st
 
 const INTERVALS = ['5m', '15m', '1h', '4h'] as const;
 
-function IntervalToolbar({
+const IntervalToolbar = memo(function IntervalToolbar({
   selected, onSelect, refreshing, onRefresh, smcVisible, onToggleSmc,
   drawingCount, onClearDrawings,
 }: {
@@ -186,25 +141,26 @@ function IntervalToolbar({
   drawingCount: number; onClearDrawings: () => void;
 }) {
   return (
-    <div className="flex items-center gap-1.5 mb-1">
+    <div className="flex items-center gap-0.5 px-1 py-0.5 bg-[#131722] border-b border-[#2a2e39]">
       {INTERVALS.map((tf) => (
         <button
           key={tf}
           onClick={() => onSelect(tf)}
-          className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded text-[11px] font-medium transition-colors ${
             selected === tf
-              ? 'bg-blue-600/90 text-white'
-              : 'bg-[#1a2030] text-gray-500 hover:text-gray-300 hover:bg-[#222a3a]'
+              ? 'bg-[#2962ff]/20 text-[#2962ff]'
+              : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
           }`}
         >
           {tf}
         </button>
       ))}
+      <div className="w-px h-5 bg-[#2a2e39] mx-1" />
       <div className="flex-1" />
       {drawingCount > 0 && (
         <button
           onClick={onClearDrawings}
-          className="p-1.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 bg-red-500/15 text-red-400 hover:bg-red-500/25"
+          className="p-1.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 bg-[#ef5350]/10 text-[#ef5350] hover:bg-[#ef5350]/20"
           title={`Clear all ${drawingCount} drawings`}
         >
           <Trash2 size={11} />
@@ -215,8 +171,8 @@ function IntervalToolbar({
         onClick={onToggleSmc}
         className={`p-1.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
           smcVisible
-            ? 'bg-amber-600/30 text-amber-400 hover:bg-amber-600/40'
-            : 'bg-[#1a2030] text-gray-600 hover:text-gray-400 hover:bg-[#222a3a]'
+            ? 'bg-[#f0b90b]/15 text-[#f0b90b] hover:bg-[#f0b90b]/25'
+            : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
         }`}
         title={smcVisible ? 'Ukryj SMC overlay' : 'Pokaż SMC overlay (FVG, OB, S/D, EQ)'}
       >
@@ -226,14 +182,14 @@ function IntervalToolbar({
       <button
         onClick={onRefresh}
         disabled={refreshing}
-        className="p-1.5 rounded text-gray-500 hover:text-gray-300 hover:bg-[#1a2030] transition-colors disabled:opacity-40"
+        className="p-1.5 rounded text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39] transition-colors disabled:opacity-40"
         title="Refresh"
       >
         <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
       </button>
     </div>
   );
-}
+});
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /*  MAIN CHART COMPONENT                                                     */
@@ -241,6 +197,7 @@ function IntervalToolbar({
 
 export function CandlestickChart() {
   const { selectedInterval, setSelectedInterval } = useTradingStore();
+  const { compute: computeIndicators } = useIndicatorWorker();
 
   // Refs for chart DOM containers
   const mainContainerRef = useRef<HTMLDivElement>(null);
@@ -277,6 +234,11 @@ export function CandlestickChart() {
   const drawingsRef = useRef<Drawing[]>([]);
   const [showPropertiesPanel, setShowPropertiesPanel] = useState(false);
 
+  // Magnetic snap and undo/redo state
+  const [magneticMode, setMagneticMode] = useState(true);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
   // Inline text input state
   const [textInput, setTextInput] = useState<{ x: number; y: number; point: { time: number; price: number } } | null>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
@@ -286,48 +248,58 @@ export function CandlestickChart() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [legendData, setLegendData] = useState<LegendData | null>(null);
+  const deferredLegend = useDeferredValue(legendData);
   const isFirstLoad = useRef(true);
   const rawCandlesRef = useRef<CandlestickData[]>([]);
 
   /* ── Create charts on mount ────────────────────────────────────────────── */
   useEffect(() => {
-    if (!mainContainerRef.current || !rsiContainerRef.current) return;
+    if (!mainContainerRef.current || !rsiContainerRef.current) {return;}
 
     const commonLayout = {
       background: { color: COLORS.bg },
       textColor: COLORS.text,
       fontSize: 11,
-      fontFamily: "'JetBrains Mono', 'Inter', monospace",
+      fontFamily: "'Trebuchet MS', 'Roboto', sans-serif",
     };
 
     const commonGrid = {
-      vertLines: { color: COLORS.gridLines },
-      horzLines: { color: COLORS.gridLines },
+      vertLines: { color: COLORS.gridLines, style: 4 as const },
+      horzLines: { color: COLORS.gridLines, style: 4 as const },
     };
 
     const commonTimeScale = {
-      borderColor: COLORS.gridLines,
+      borderColor: COLORS.border,
       timeVisible: true,
       secondsVisible: false,
     };
 
     // ─── Main chart ───
     const mainChart = createChart(mainContainerRef.current, {
-      autoSize: true,          // ← fills container automatically via internal ResizeObserver
+      autoSize: true,
       layout: commonLayout,
       grid: commonGrid,
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#1a2030' },
-        horzLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#1a2030' },
+        vertLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#2a2e39' },
+        horzLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#2a2e39' },
       },
       rightPriceScale: {
-        borderColor: COLORS.gridLines,
+        borderColor: COLORS.border,
         scaleMargins: { top: 0.05, bottom: 0.18 },
         autoScale: true,
+        entireTextOnly: true,
       },
-      timeScale: { ...commonTimeScale, barSpacing: 8 },
+      timeScale: { ...commonTimeScale, barSpacing: 7, minBarSpacing: 2 },
       handleScroll: { vertTouchDrag: false },
+      watermark: {
+        visible: true,
+        text: 'XAU/USD',
+        fontSize: 52,
+        color: 'rgba(120, 123, 134, 0.06)',
+        horzAlign: 'center',
+        vertAlign: 'center',
+      },
     });
     mainChartRef.current = mainChart;
 
@@ -382,20 +354,20 @@ export function CandlestickChart() {
 
     // ─── RSI sub-chart ───
     const rsiChart = createChart(rsiContainerRef.current, {
-      autoSize: true,          // ← fills 90px container automatically
+      autoSize: true,
       layout: commonLayout,
       grid: commonGrid,
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#1a2030' },
-        horzLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#1a2030' },
+        vertLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#2a2e39' },
+        horzLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#2a2e39' },
       },
       rightPriceScale: {
-        borderColor: COLORS.gridLines,
+        borderColor: COLORS.border,
         scaleMargins: { top: 0.08, bottom: 0.08 },
         autoScale: true,
       },
-      timeScale: { ...commonTimeScale, barSpacing: 8, visible: false },
+      timeScale: { ...commonTimeScale, barSpacing: 7, minBarSpacing: 2, visible: false },
       handleScroll: { vertTouchDrag: false },
     });
     rsiChartRef.current = rsiChart;
@@ -427,13 +399,13 @@ export function CandlestickChart() {
     // ─── Sync time scales ───
     let isSyncing = false;
     mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (isSyncing || !range) return;
+      if (isSyncing || !range) {return;}
       isSyncing = true;
       rsiChart.timeScale().setVisibleLogicalRange(range);
       isSyncing = false;
     });
     rsiChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (isSyncing || !range) return;
+      if (isSyncing || !range) {return;}
       isSyncing = true;
       mainChart.timeScale().setVisibleLogicalRange(range);
       isSyncing = false;
@@ -471,7 +443,6 @@ export function CandlestickChart() {
       mainChartRef.current = null;
       rsiChartRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ── InteractionManager for drawing tools ──────────────────────────────── */
@@ -479,7 +450,7 @@ export function CandlestickChart() {
     const chart = mainChartRef.current;
     const series = candleSeriesRef.current;
     const container = mainContainerRef.current;
-    if (!chart || !series || !container) return;
+    if (!chart || !series || !container) {return;}
 
     const mgr = new InteractionManager(chart, series as any, container, {
       onDrawingComplete: (d: Drawing) => {
@@ -553,7 +524,7 @@ export function CandlestickChart() {
 
   /* ── Drawing helper callbacks ──────────────────────────────────────────── */
   const handleDeleteSelected = useCallback(() => {
-    if (!selectedDrawingId) return;
+    if (!selectedDrawingId) {return;}
     const next = drawingsRef.current.filter(d => d.id !== selectedDrawingId);
     drawingsRef.current = next;
     setDrawings(next);
@@ -577,7 +548,7 @@ export function CandlestickChart() {
   }, [selectedInterval]);
 
   const handleStyleChange = useCallback((style: Partial<DrawingStyle>) => {
-    if (style.color) setDrawColor(style.color);
+    if (style.color) {setDrawColor(style.color);}
     interactionRef.current?.setStyle(style);
   }, []);
 
@@ -597,15 +568,60 @@ export function CandlestickChart() {
     setTextInput(null);
   }, [textInput]);
 
+  const handleUndo = useCallback(() => {
+    const prev = interactionRef.current?.undo();
+    if (prev) {
+      drawingsRef.current = prev;
+      setDrawings(prev);
+      drawingsOverlayRef.current?.setDrawings(prev);
+      interactionRef.current?.setDrawings(prev);
+      saveDrawings('XAU/USD', selectedInterval, prev);
+      setCanUndo(true); // Will be rechecked
+      setCanRedo(true);
+    }
+  }, [selectedInterval]);
+
+  const handleRedo = useCallback(() => {
+    const next = interactionRef.current?.redo();
+    if (next) {
+      drawingsRef.current = next;
+      setDrawings(next);
+      drawingsOverlayRef.current?.setDrawings(next);
+      interactionRef.current?.setDrawings(next);
+      saveDrawings('XAU/USD', selectedInterval, next);
+      setCanUndo(true);
+    }
+  }, [selectedInterval]);
+
+  const handleToggleMagnetic = useCallback(() => {
+    const newMode = !magneticMode;
+    setMagneticMode(newMode);
+    interactionRef.current?.setMagneticMode(newMode);
+  }, [magneticMode]);
+
   /* ── Data fetching ─────────────────────────────────────────────────────── */
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     try {
-      if (isFirstLoad.current) setLoading(true);
-      else setRefreshing(true);
+      if (isFirstLoad.current) {setLoading(true);}
+      else {setRefreshing(true);}
       setError(null);
 
-      const rawCandles: Candle[] = await marketAPI.getCandles('XAU/USD', selectedInterval, 200);
-      if (!rawCandles?.length) throw new Error('No candle data');
+      // ── Try IndexedDB cache first for instant render ──
+      let rawCandles: Candle[] | null = null;
+      if (isFirstLoad.current) {
+        rawCandles = await getCachedCandles(selectedInterval);
+      }
+
+      // ── Fetch fresh data from API ──
+      const freshCandles: Candle[] = await marketAPI.getCandles('XAU/USD', selectedInterval, 200);
+      if (signal?.aborted) {return;}
+      if (freshCandles?.length) {
+        rawCandles = freshCandles;
+        // Store to IndexedDB in background (non-blocking)
+        void setCachedCandles(selectedInterval, freshCandles);
+      }
+
+      if (!rawCandles?.length) {throw new Error('No candle data');}
 
       // Sort ascending by time & deduplicate (lightweight-charts requires strictly ascending times)
       const candleData = rawCandles
@@ -615,12 +631,25 @@ export function CandlestickChart() {
 
       const closes = candleData.map((c) => c.close);
 
+      // ── Compute indicators off main thread via Web Worker ──
+      let ema21: (number | null)[];
+      let rsi14: (number | null)[];
+      let bb: { upper: (number | null)[]; middle: (number | null)[]; lower: (number | null)[] };
+      try {
+        const result = await computeIndicators(closes, { emaPeriod: 21, rsiPeriod: 14, bbPeriod: 20, bbMult: 2 });
+        if (signal?.aborted) {return;}
+        ema21 = result.ema;
+        rsi14 = result.rsi;
+        bb = result.bb;
+      } catch (err) {
+        // Worker superseded or crashed — skip this cycle
+        if ((err as Error).message === 'superseded') {return;}
+        throw err;
+      }
+
       // ── Build series data ──
       const candleSd: CandlestickData[] = [];
       const volumeSd: HistogramData[] = [];
-      const ema21 = calcEMA(closes, 21);
-      const rsi14 = calcRSI(closes, 14);
-      const bb = calcBollingerBands(closes, 20, 2);
       const emaSd: LineData[] = [];
       const rsiSd: LineData[] = [];
       const bbUpperSd: LineData[] = [];
@@ -635,11 +664,11 @@ export function CandlestickChart() {
         candleSd.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
         volumeSd.push({ time: t, value: c.volume, color: up ? COLORS.volumeUp : COLORS.volumeDown });
 
-        if (ema21[i] !== null) emaSd.push({ time: t, value: ema21[i]! });
-        if (rsi14[i] !== null) rsiSd.push({ time: t, value: rsi14[i]! });
-        if (bb.upper[i] !== null) bbUpperSd.push({ time: t, value: bb.upper[i]! });
-        if (bb.middle[i] !== null) bbMiddleSd.push({ time: t, value: bb.middle[i]! });
-        if (bb.lower[i] !== null) bbLowerSd.push({ time: t, value: bb.lower[i]! });
+        if (ema21[i] !== null) {emaSd.push({ time: t, value: ema21[i]! });}
+        if (rsi14[i] !== null) {rsiSd.push({ time: t, value: rsi14[i]! });}
+        if (bb.upper[i] !== null) {bbUpperSd.push({ time: t, value: bb.upper[i]! });}
+        if (bb.middle[i] !== null) {bbMiddleSd.push({ time: t, value: bb.middle[i]! });}
+        if (bb.lower[i] !== null) {bbLowerSd.push({ time: t, value: bb.lower[i]! });}
       }
 
       rawCandlesRef.current = candleSd;
@@ -652,6 +681,11 @@ export function CandlestickChart() {
       bbUpperRef.current?.setData(bbUpperSd);
       bbMiddleRef.current?.setData(bbMiddleSd);
       bbLowerRef.current?.setData(bbLowerSd);
+
+      // ── Feed candle data to InteractionManager for magnetic snap ──
+      interactionRef.current?.setCandleData(
+        candleSd.map(c => ({ time: c.time as number, open: c.open, high: c.high, low: c.low, close: c.close }))
+      );
 
       // ── Clear old price lines before creating new ones ──
       if (candleSeriesRef.current) {
@@ -687,6 +721,7 @@ export function CandlestickChart() {
       // ── SL / TP / Entry lines from latest scanner signal ──
       try {
         const signals = await signalsAPI.getScannerHistory(1);
+        if (signal?.aborted) {return;}
         if (signals?.length && candleSeriesRef.current) {
           const sig = signals[0];
           const cs = candleSeriesRef.current;
@@ -726,6 +761,37 @@ export function CandlestickChart() {
         // non-critical — signal overlay is best-effort
       }
 
+      // ── Volume Profile price lines (POC / VAH / VAL) ──
+      try {
+        const vp = await marketAPI.getVolumeProfile('XAU/USD', selectedInterval, 100);
+        if (!signal?.aborted && vp && candleSeriesRef.current) {
+          const cs = candleSeriesRef.current;
+          if (vp.poc) {
+            signalPriceLinesRef.current.push(cs.createPriceLine({
+              price: vp.poc, color: 'rgba(251,191,36,0.85)',
+              lineWidth: 1, lineStyle: LineStyle.LargeDashed,
+              axisLabelVisible: true, title: 'POC',
+            }));
+          }
+          if (vp.vah && vp.vah !== vp.poc) {
+            signalPriceLinesRef.current.push(cs.createPriceLine({
+              price: vp.vah, color: 'rgba(251,191,36,0.45)',
+              lineWidth: 1, lineStyle: LineStyle.Dotted,
+              axisLabelVisible: true, title: 'VAH',
+            }));
+          }
+          if (vp.val && vp.val !== vp.poc) {
+            signalPriceLinesRef.current.push(cs.createPriceLine({
+              price: vp.val, color: 'rgba(251,191,36,0.45)',
+              lineWidth: 1, lineStyle: LineStyle.Dotted,
+              axisLabelVisible: true, title: 'VAL',
+            }));
+          }
+        }
+      } catch {
+        // VP is optional
+      }
+
       // ── Fit content on first load ──
       if (isFirstLoad.current) {
         mainChartRef.current?.timeScale().fitContent();
@@ -745,19 +811,37 @@ export function CandlestickChart() {
       isFirstLoad.current = false;
     } catch (err) {
       console.error('Chart data error:', err);
-      if (isFirstLoad.current) setError('Failed to load chart data');
+      if (isFirstLoad.current) {setError('Failed to load chart data');}
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedInterval, smcVisible]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedInterval, computeIndicators]);
 
   /* ── Fetch on mount + interval change + 60s auto-refresh ───────────────── */
   useEffect(() => {
-    void fetchData();
-    const timer = setInterval(() => void fetchData(), 60_000);
-    return () => clearInterval(timer);
+    const controller = new AbortController();
+    void fetchData(controller.signal);
+    const timer = setInterval(() => void fetchData(controller.signal), 60_000);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
   }, [fetchData]);
+
+  /* ── Toggle SMC overlay without refetching data ───────────────────────── */
+  useEffect(() => {
+    if (!smcOverlayRef.current || !rawCandlesRef.current.length) {return;}
+    if (smcVisible) {
+      const smcResult = detectAllSmcZones(
+        rawCandlesRef.current as Array<{ time: number; open: number; high: number; low: number; close: number }>
+      );
+      smcOverlayRef.current.setZones(smcResult.zones);
+    } else {
+      smcOverlayRef.current.setZones([]);
+    }
+  }, [smcVisible]);
 
 
   /* ── Render ──────────────────────────────────────────────────────────── */
@@ -765,7 +849,7 @@ export function CandlestickChart() {
     <div className="flex flex-col h-full w-full">
       <IntervalToolbar
         selected={selectedInterval}
-        onSelect={setSelectedInterval}
+        onSelect={(v) => startTransition(() => setSelectedInterval(v))}
         refreshing={refreshing}
         onRefresh={() => void fetchData()}
         smcVisible={smcVisible}
@@ -784,24 +868,30 @@ export function CandlestickChart() {
           currentColor={drawColor}
           onDeleteSelected={handleDeleteSelected}
           onClearAll={handleClearAll}
-          hasSelection={!!selectedDrawingId}
+          hasSelection={Boolean(selectedDrawingId)}
+          magneticMode={magneticMode}
+          onToggleMagnetic={handleToggleMagnetic}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
         />
 
-        <OHLCVLegend data={legendData} interval={selectedInterval} />
+        <OHLCVLegend data={deferredLegend} interval={selectedInterval} />
         {refreshing && (
-          <div className="absolute top-1 right-2 z-20 flex items-center gap-1 text-[10px] text-gray-600">
+          <div className="absolute top-1 right-2 z-20 flex items-center gap-1 text-[10px] text-[#787b86]">
             <RefreshCw size={9} className="animate-spin" /> updating…
           </div>
         )}
         {/* Loading / error overlays – container always in DOM so refs attach on first render */}
         {loading && isFirstLoad.current && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#0d1117]/80 text-gray-500 text-sm gap-2">
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#131722]/80 text-[#787b86] text-sm gap-2">
             <RefreshCw size={14} className="animate-spin" />
             Loading chart…
           </div>
         )}
         {error && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#0d1117]/80 text-red-400 text-xs gap-2">
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#131722]/80 text-[#ef5350] text-xs gap-2">
             <AlertCircle size={16} /> {error}
           </div>
         )}
@@ -845,7 +935,7 @@ export function CandlestickChart() {
               autoFocus
               type="text"
               placeholder="Enter text..."
-              className="bg-[#1a2030] border border-blue-500/60 text-white text-xs px-2 py-1 rounded outline-none w-40 shadow-lg"
+              className="bg-[#2a2e39] border border-[#2962ff]/60 text-[#d1d4dc] text-xs px-2 py-1 rounded outline-none w-40 shadow-lg"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   handleTextSubmit((e.target as HTMLInputElement).value);
@@ -867,8 +957,8 @@ export function CandlestickChart() {
       </div>
 
       {/* RSI sub-chart */}
-      <div className="relative shrink-0">
-        <span className="absolute top-0.5 left-2 z-20 text-[10px] text-gray-600 font-mono pointer-events-none">
+      <div className="relative shrink-0 border-t border-[#2a2e39]">
+        <span className="absolute top-0.5 left-2 z-20 text-[10px] text-[#787b86] font-sans pointer-events-none">
           RSI(14)
         </span>
         <div ref={rsiContainerRef} className="w-full" style={{ height: 120 }} />

@@ -12,13 +12,69 @@ Odpowiada za:
   - Detekcja Swing High/Low, Liquidity Grab, Market Structure Shift, Order Blocks, DBR/RBD
   - Obliczanie reżimu makro na podstawie USD/JPY Z-score i ATR
   - Caching wyników (TTL 60 sekund) dla optymalizacji wydajności
+  - Session awareness (Asian/London/NY killzones)
+  - Multi-timeframe confluence scoring
 """
 
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
+from datetime import datetime, timezone
 from src.cache import cached_with_key
 from src.logger import logger
+
+
+# ==================== SESSION / KILLZONE DETECTION ====================
+
+def get_active_session(utc_hour: int = None) -> dict:
+    """
+    Określa aktywną sesję tradingową i killzone na podstawie godziny UTC.
+
+    Killzones (godziny UTC):
+    - Asian:   00:00-06:00 (niska zmienność na złocie)
+    - London:  07:00-10:00 (wysoka zmienność — otwarcie Europy)
+    - NY:      12:00-15:00 (najwyższa zmienność — otwarcie USA)
+    - Overlap: 12:00-16:00 (London+NY — max płynność)
+
+    XAU/USD: weekend zamknięty, przerwa 23:00-00:00 UTC.
+    """
+    if utc_hour is None:
+        utc_hour = datetime.now(timezone.utc).hour
+
+    if 0 <= utc_hour < 6:
+        session = 'asian'
+        is_killzone = False
+    elif 6 <= utc_hour < 7:
+        session = 'london_pre'
+        is_killzone = False
+    elif 7 <= utc_hour < 10:
+        session = 'london'
+        is_killzone = True  # London killzone
+    elif 10 <= utc_hour < 12:
+        session = 'london'
+        is_killzone = False
+    elif 12 <= utc_hour < 15:
+        session = 'new_york'
+        is_killzone = True  # NY killzone
+    elif 15 <= utc_hour < 17:
+        session = 'new_york'
+        is_killzone = False
+    elif 17 <= utc_hour < 20:
+        session = 'new_york_late'
+        is_killzone = False
+    elif 20 <= utc_hour < 23:
+        session = 'off_hours'
+        is_killzone = False
+    else:
+        session = 'off_hours'
+        is_killzone = False
+
+    return {
+        'session': session,
+        'is_killzone': is_killzone,
+        'utc_hour': utc_hour,
+        'volatility_expected': 'high' if is_killzone else ('medium' if session in ('london', 'new_york') else 'low'),
+    }
 
 
 def _get_data_provider():
@@ -162,33 +218,41 @@ def detect_market_structure_shift(df: pd.DataFrame, swing_points: dict, liquidit
 def detect_order_block(df: pd.DataFrame, trend: str) -> float:
     """
     Ulepszona detekcja Order Block.
-    Dla trendu bull: ostatnia świeca spadkowa przed silną świecą wzrostową (body > avg_body).
+    Dla trendu bull: ostatnia świeca spadkowa przed silną świecą wzrostową (body > 1.5 * avg_body).
     Dla trendu bear: ostatnia świeca wzrostowa przed silną świecą spadkową.
+    Sprawdza też, czy OB nie został już „zmitigowany" (cena przeszła przez niego).
     Zwraca cenę OB (low dla bull, high dla bear).
     """
     body = abs(df['close'] - df['open'])
     avg_body = body.tail(20).mean()
     ob_price = df['close'].iloc[-1]  # fallback
+    impulse_mult = 1.5  # Silniejszy filtr — wymaga 1.5x średniego body
 
     for i in range(len(df)-2, max(0, len(df)-30), -1):
         if trend == "bull":
-            # Szukamy świecy spadkowej (close < open) przed dużą wzrostową (i+1)
-            if df['close'].iloc[i] < df['open'].iloc[i] and body.iloc[i+1] > avg_body:
+            if df['close'].iloc[i] < df['open'].iloc[i] and body.iloc[i+1] > avg_body * impulse_mult:
                 if df['close'].iloc[i+1] > df['open'].iloc[i+1]:
-                    ob_price = df['low'].iloc[i]
-                    break
+                    candidate = df['low'].iloc[i]
+                    # Sprawdź, czy OB nie został zmitigowany (cena spadła poniżej)
+                    mitigated = any(df['low'].iloc[j] < candidate for j in range(i+2, len(df)))
+                    if not mitigated:
+                        ob_price = candidate
+                        break
         else:
-            # Szukamy świecy wzrostowej przed dużą spadkową
-            if df['close'].iloc[i] > df['open'].iloc[i] and body.iloc[i+1] > avg_body:
+            if df['close'].iloc[i] > df['open'].iloc[i] and body.iloc[i+1] > avg_body * impulse_mult:
                 if df['close'].iloc[i+1] < df['open'].iloc[i+1]:
-                    ob_price = df['high'].iloc[i]
-                    break
+                    candidate = df['high'].iloc[i]
+                    mitigated = any(df['high'].iloc[j] > candidate for j in range(i+2, len(df)))
+                    if not mitigated:
+                        ob_price = candidate
+                        break
     return round(ob_price, 2)
 
 
-def detect_fvg(df: pd.DataFrame) -> dict:
+def detect_fvg(df: pd.DataFrame, atr: float = None) -> dict:
     """
     Wykrywa Fair Value Gap (FVG) – luka między świecą i-2 a i.
+    Filtruje szum: FVG musi mieć rozmiar >= 0.3 * ATR (jeśli ATR dostępny).
     Zwraca słownik: typ (bullish/bearish), górna/dolna granica, wielkość.
     """
     fvg = {
@@ -200,23 +264,30 @@ def detect_fvg(df: pd.DataFrame) -> dict:
     }
     if len(df) < 3:
         return fvg
+
+    min_gap = atr * 0.3 if atr and atr > 0 else 0  # Filtr szumu
+
     c1_high = df['high'].iloc[-3]
     c1_low = df['low'].iloc[-3]
     c3_high = df['high'].iloc[-1]
     c3_low = df['low'].iloc[-1]
 
     if c3_low > c1_high:
-        fvg["type"] = "bullish"
-        fvg["lower"] = c1_high
-        fvg["upper"] = c3_low
-        fvg["size"] = round(c3_low - c1_high, 2)
-        fvg["description"] = f"Bullish (+{fvg['size']}$)"
+        gap_size = c3_low - c1_high
+        if gap_size >= min_gap:
+            fvg["type"] = "bullish"
+            fvg["lower"] = c1_high
+            fvg["upper"] = c3_low
+            fvg["size"] = round(gap_size, 2)
+            fvg["description"] = f"Bullish (+{fvg['size']}$)"
     elif c3_high < c1_low:
-        fvg["type"] = "bearish"
-        fvg["lower"] = c3_high
-        fvg["upper"] = c1_low
-        fvg["size"] = round(c1_low - c3_high, 2)
-        fvg["description"] = f"Bearish (-{fvg['size']}$)"
+        gap_size = c1_low - c3_high
+        if gap_size >= min_gap:
+            fvg["type"] = "bearish"
+            fvg["lower"] = c3_high
+            fvg["upper"] = c1_low
+            fvg["size"] = round(gap_size, 2)
+            fvg["description"] = f"Bearish (-{fvg['size']}$)"
     return fvg
 
 
@@ -474,9 +545,6 @@ def detect_rsi_divergence(df: pd.DataFrame, lookback: int = 20, swing_lookback: 
 # Następnie w słowniku zwracanym dodaj nowe klucze:
 
 
-from src.cache import cached_with_key
-
-
 @cached_with_key(lambda tf: f"smc_analysis_{tf}", ttl=60)
 def get_smc_analysis(tf: str) -> dict | None:
     """
@@ -527,8 +595,8 @@ def get_smc_analysis(tf: str) -> dict | None:
         # 8. ORDER BLOCK
         ob_price = detect_order_block(df, trend)
 
-        # 9. FAIR VALUE GAP
-        fvg = detect_fvg(df)
+        # 9. FAIR VALUE GAP (z filtrem ATR)
+        fvg = detect_fvg(df, atr=atr)
 
         # 10. EQUILIBRIUM
         swing_high = swings["swing_high"]
@@ -600,6 +668,9 @@ def get_smc_analysis(tf: str) -> dict | None:
             logger.debug(f"Volume profile calc error: {e}")
 
         near_poc = abs(price - poc_price) < atr * 0.5  # cena blisko POC
+
+        # ========== SESSION / KILLZONE ==========
+        session_info = get_active_session()
         # ===================================
 
         return {
@@ -650,9 +721,123 @@ def get_smc_analysis(tf: str) -> dict | None:
             # Volume Profile
             'poc_price': round(poc_price, 2),
             'near_poc': near_poc,
+            # Session / Killzone
+            'session': session_info['session'],
+            'is_killzone': session_info['is_killzone'],
+            'volatility_expected': session_info['volatility_expected'],
         }
 
     except Exception as e:
         logger.error(f"❌ Błąd silnika SMC Master: {e}")
         return None
 
+
+# ==================== MULTI-TIMEFRAME CONFLUENCE ====================
+
+@cached_with_key(lambda: "mtf_confluence", ttl=120)
+def get_mtf_confluence(symbol: str = "XAU/USD") -> dict:
+    """
+    Analiza SMC na M5/M15/H1/H4 jednocześnie.
+    Zwraca zbiorczą konfluencję: wynik 0-100, per-TF breakdown, rekomendację.
+
+    Cache: 120s (dwa razy dłużej niż pojedyncza analiza — oszczędność kredytów).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    timeframes = ["5m", "15m", "1h", "4h"]
+    tf_weights = {"5m": 0.10, "15m": 0.25, "1h": 0.35, "4h": 0.30}
+    results = {}
+
+    try:
+        # Prefetch
+        try:
+            provider = _get_data_provider()
+            provider.prefetch_all_timeframes(symbol)
+        except Exception:
+            pass
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(get_smc_analysis, tf): tf for tf in timeframes}
+            for future in as_completed(futures, timeout=30):
+                tf = futures[future]
+                try:
+                    data = future.result()
+                    if data:
+                        results[tf] = data
+                except Exception as e:
+                    logger.debug(f"MTF {tf} error: {e}")
+    except Exception as e:
+        logger.error(f"MTF confluence error: {e}")
+
+    if not results:
+        return {"confluence_score": 0, "direction": "CZEKAJ", "timeframes": {}}
+
+    # Confluence scoring
+    bull_score = 0.0
+    bear_score = 0.0
+    tf_breakdown = {}
+
+    for tf, data in results.items():
+        w = tf_weights.get(tf, 0.2)
+        tf_signal = {"trend": data.get("trend"), "rsi": data.get("rsi"), "weight": w}
+
+        # Trend
+        if data.get("trend") == "bull":
+            bull_score += w * 30
+        else:
+            bear_score += w * 30
+
+        # Liquidity Grab + MSS
+        if data.get("liquidity_grab") and data.get("mss"):
+            if data.get("liquidity_grab_dir") == "bullish":
+                bull_score += w * 40
+            else:
+                bear_score += w * 40
+
+        # FVG
+        if data.get("fvg_type") == "bullish":
+            bull_score += w * 15
+        elif data.get("fvg_type") == "bearish":
+            bear_score += w * 15
+
+        # BOS
+        if data.get("bos_bullish"):
+            bull_score += w * 10
+        if data.get("bos_bearish"):
+            bear_score += w * 10
+
+        # Candlestick patterns
+        if data.get("engulfing") == "bullish":
+            bull_score += w * 5
+        elif data.get("engulfing") == "bearish":
+            bear_score += w * 5
+
+        tf_breakdown[tf] = tf_signal
+
+    total = max(bull_score + bear_score, 1)
+    bull_pct = round(bull_score / total * 100)
+    bear_pct = round(bear_score / total * 100)
+
+    if bull_pct >= 65:
+        direction = "STRONG_BULL"
+    elif bull_pct >= 55:
+        direction = "BULL"
+    elif bear_pct >= 65:
+        direction = "STRONG_BEAR"
+    elif bear_pct >= 55:
+        direction = "BEAR"
+    else:
+        direction = "MIXED"
+
+    confluence_score = max(bull_pct, bear_pct)
+
+    return {
+        "confluence_score": confluence_score,
+        "direction": direction,
+        "bull_pct": bull_pct,
+        "bear_pct": bear_pct,
+        "bull_tf_count": sum(1 for d in results.values() if d.get("trend") == "bull"),
+        "bear_tf_count": sum(1 for d in results.values() if d.get("trend") == "bear"),
+        "timeframes": tf_breakdown,
+        "session": get_active_session(),
+    }

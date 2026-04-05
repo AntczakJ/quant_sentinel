@@ -5,6 +5,7 @@ database.py — warstwa dostępu do bazy danych SQLite lub Turso (libsql).
 import os
 import json
 import datetime
+import threading
 from typing import Optional
 
 from src.logger import logger
@@ -13,6 +14,9 @@ from src.logger import logger
 
 DATABASE_URL = os.getenv("DATABASE_URL", "data/sentinel.db")
 DATABASE_TOKEN = os.getenv("DATABASE_TOKEN")  # optional, used only for Turso
+
+# Thread lock for concurrent access (FastAPI runs handlers in thread pool)
+_db_lock = threading.Lock()
 
 if DATABASE_URL.startswith("libsql://"):
     # Use Turso (remote SQLite)
@@ -32,7 +36,7 @@ if DATABASE_URL.startswith("libsql://"):
 else:
     # Use local SQLite
     import sqlite3
-    os.makedirs(os.path.dirname(DATABASE_URL), exist_ok=True)
+    os.makedirs(os.path.dirname(DATABASE_URL) or ".", exist_ok=True)
     _conn = sqlite3.connect(DATABASE_URL, check_same_thread=False)
     _cursor = _conn.cursor()
     _using_sqlite = True
@@ -53,22 +57,46 @@ class NewsDB:
             _db_initialized = True
 
     def _execute(self, sql: str, params: tuple = (), _silent: bool = False):
-        """Execute SQL, committing if needed (works for both sqlite3 and libsql)."""
-        try:
-            self.cursor.execute(sql, params)
-            # For modifications, commit
-            if sql.strip().upper().startswith(("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER")):
-                self.conn.commit()
-        except Exception as e:
-            if not _silent:
-                logger.error(f"Database error: {e}\nSQL: {sql}\nParams: {params}")
-            raise
+        """Execute SQL, committing if needed (works for both sqlite3 and libsql). Thread-safe."""
+        with _db_lock:
+            try:
+                self.cursor.execute(sql, params)
+                # For modifications, commit
+                if sql.strip().upper().startswith(("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER")):
+                    self.conn.commit()
+            except Exception as e:
+                if not _silent:
+                    logger.error(f"Database error: {e}\nSQL: {sql}\nParams: {params}")
+                raise
 
     def _fetchone(self):
         return self.cursor.fetchone()
 
     def _fetchall(self):
         return self.cursor.fetchall()
+
+    def _query(self, sql: str, params: tuple = ()):
+        """Execute a SELECT query thread-safely and return all rows."""
+        with _db_lock:
+            self.cursor.execute(sql, params)
+            return self.cursor.fetchall()
+
+    def _query_one(self, sql: str, params: tuple = ()):
+        """Execute a SELECT query thread-safely and return first row."""
+        with _db_lock:
+            self.cursor.execute(sql, params)
+            return self.cursor.fetchone()
+
+    # ----- Batch portfolio read (single query instead of 5) -----
+    def get_portfolio_params(self) -> dict:
+        """Read all portfolio-related params in a single query — 5x faster than individual reads."""
+        rows = self._query(
+            "SELECT param_name, param_value FROM dynamic_params WHERE param_name LIKE 'portfolio_%'"
+        )
+        result = {}
+        for name, value in rows:
+            result[name] = value
+        return result
 
     # ----- Table creation (SQLite syntax, works with libsql) -----
     def create_tables(self):
@@ -240,8 +268,12 @@ class NewsDB:
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_pattern ON trades(pattern)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_trades_status_ts ON trades(status, timestamp DESC)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_scanner_timestamp ON scanner_signals(timestamp)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_scanner_status ON scanner_signals(status)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_scanner_status_ts ON scanner_signals(status, timestamp DESC)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_pattern_stats_win_rate ON pattern_stats(win_rate)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_dynamic_params_name ON dynamic_params(param_name)")
             logger.debug("Database indexes verified")
         except Exception as e:
             logger.warning(f"Index creation: {e}")
@@ -618,9 +650,83 @@ class NewsDB:
     # ----- ML predictions log -----
     def get_recent_ml_predictions(self, limit: int = 20) -> list:
         """Pobiera ostatnie predykcje ML."""
-        self.cursor.execute("""
+        rows = self._query("""
             SELECT id, timestamp, lstm_pred, xgb_pred, dqn_action, ensemble_score, ensemble_signal, confidence
             FROM ml_predictions ORDER BY timestamp DESC LIMIT ?
         """, (limit,))
-        return self.cursor.fetchall()
+        return rows
+
+    # ----- Advanced trade metrics -----
+    def get_trade_performance_metrics(self) -> dict:
+        """
+        Oblicza zaawansowane metryki wydajności:
+        - max drawdown, consecutive wins/losses, avg profit/loss, profit factor, expectancy
+        """
+        rows = self._query("""
+            SELECT status, profit FROM trades
+            WHERE status IN ('WIN', 'LOSS', 'PROFIT')
+            ORDER BY id ASC
+        """)
+        if not rows:
+            return {
+                "total": 0, "wins": 0, "losses": 0, "win_rate": 0,
+                "avg_win": 0, "avg_loss": 0, "profit_factor": 0,
+                "expectancy": 0, "max_consecutive_wins": 0,
+                "max_consecutive_losses": 0, "max_drawdown": 0,
+                "total_profit": 0,
+            }
+
+        wins = losses = 0
+        total_win_profit = 0.0
+        total_loss_amount = 0.0
+        equity_curve = [0.0]
+        peak = 0.0
+        max_dd = 0.0
+        consec_wins = consec_losses = 0
+        max_consec_wins = max_consec_losses = 0
+
+        for status, profit in rows:
+            p = float(profit or 0)
+            is_win = status in ('WIN', 'PROFIT')
+
+            if is_win:
+                wins += 1
+                total_win_profit += p
+                consec_wins += 1
+                consec_losses = 0
+                max_consec_wins = max(max_consec_wins, consec_wins)
+            else:
+                losses += 1
+                total_loss_amount += abs(p)
+                consec_losses += 1
+                consec_wins = 0
+                max_consec_losses = max(max_consec_losses, consec_losses)
+
+            eq = equity_curve[-1] + p
+            equity_curve.append(eq)
+            peak = max(peak, eq)
+            dd = peak - eq
+            max_dd = max(max_dd, dd)
+
+        total = wins + losses
+        avg_win = total_win_profit / wins if wins > 0 else 0
+        avg_loss = total_loss_amount / losses if losses > 0 else 0
+        profit_factor = total_win_profit / total_loss_amount if total_loss_amount > 0 else float('inf') if total_win_profit > 0 else 0
+        win_rate = wins / total if total > 0 else 0
+        expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss) if total > 0 else 0
+
+        return {
+            "total": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(win_rate * 100, 2),
+            "avg_win": round(avg_win, 2),
+            "avg_loss": round(avg_loss, 2),
+            "profit_factor": round(profit_factor, 2) if profit_factor != float('inf') else 999.0,
+            "expectancy": round(expectancy, 2),
+            "max_consecutive_wins": max_consec_wins,
+            "max_consecutive_losses": max_consec_losses,
+            "max_drawdown": round(max_dd, 2),
+            "total_profit": round(equity_curve[-1], 2),
+        }
 

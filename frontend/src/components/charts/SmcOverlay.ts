@@ -33,7 +33,7 @@ class ZonesPaneRenderer implements ISeriesPrimitivePaneRenderer {
   rects: RectDraw[] = [];
 
   draw(target: { useBitmapCoordinateSpace: Function; useMediaCoordinateSpace: Function }) {
-    if (!this.rects.length) return;
+    if (!this.rects.length) {return;}
 
     // Use media coordinate space (CSS pixels — matches timeToCoordinate / priceToCoordinate)
     target.useMediaCoordinateSpace((scope: { context: CanvasRenderingContext2D }) => {
@@ -41,7 +41,7 @@ class ZonesPaneRenderer implements ISeriesPrimitivePaneRenderer {
       for (const r of this.rects) {
         const w = r.x2 - r.x1;
         const h = r.y2 - r.y1;
-        if (w <= 0 || h <= 0) continue;
+        if (w <= 0 || h <= 0) {continue;}
 
         // Filled rectangle
         ctx.fillStyle = r.color;
@@ -174,8 +174,8 @@ export class SmcZonesOverlay implements ISeriesPrimitive<Time> {
       const y1 = series.priceToCoordinate(z.upper);
       const y2 = series.priceToCoordinate(z.lower);
 
-      if (x1 === null || y1 === null || y2 === null) continue;
-      if (x2 <= x1) continue; // skip fully off-screen or zero-width zones
+      if (x1 === null || y1 === null || y2 === null) {continue;}
+      if (x2 <= x1) {continue;} // skip fully off-screen or zero-width zones
 
       rects.push({
         x1: Math.max(0, x1),

@@ -2,7 +2,8 @@
  * drawings/InteractionManager.ts — State-machine for drawing interaction.
  *
  * Handles click-to-place, rubber-band preview, hit-testing for selection,
- * drag-move, and keyboard shortcuts (Delete, Escape).
+ * drag-move, keyboard shortcuts (Delete, Escape), undo/redo (Ctrl+Z / Ctrl+Shift+Z),
+ * and magnetic snap to nearest candle OHLC.
  */
 
 import type { IChartApi, ISeriesApi, SeriesType, Time } from 'lightweight-charts';
@@ -25,6 +26,8 @@ export interface InteractionCallbacks {
 
 type State = 'idle' | 'placing' | 'dragging';
 
+const MAX_UNDO_HISTORY = 50;
+
 export class InteractionManager {
   private chart: IChartApi;
   private series: ISeriesApi<SeriesType, Time>;
@@ -45,6 +48,14 @@ export class InteractionManager {
 
   // Stored drawings for hit-testing
   private _drawings: Drawing[] = [];
+
+  // Undo / Redo stacks
+  private _undoStack: Drawing[][] = [];
+  private _redoStack: Drawing[][] = [];
+
+  // Magnetic snap mode — snaps price to nearest candle OHLC
+  private _magneticMode = true;
+  private _candleData: Array<{ time: number; open: number; high: number; low: number; close: number }> = [];
 
   // Double-click detection (track last pointer-down hit)
   private _lastClickId: string | null = null;
@@ -102,16 +113,101 @@ export class InteractionManager {
 
   getStyle() { return { ...this.style }; }
 
-  /** Convert pointer event to time/price point */
+  /** Update candle data for magnetic snap */
+  setCandleData(candles: Array<{ time: number; open: number; high: number; low: number; close: number }>) {
+    this._candleData = candles;
+  }
+
+  /** Toggle magnetic snap mode */
+  setMagneticMode(enabled: boolean) {
+    this._magneticMode = enabled;
+  }
+
+  getMagneticMode(): boolean {
+    return this._magneticMode;
+  }
+
+  // ── Undo / Redo ──
+
+  private pushUndoState() {
+    this._undoStack.push(this._drawings.map(d => ({
+      ...d,
+      points: d.points.map(p => ({ ...p })),
+      style: { ...d.style },
+    })));
+    if (this._undoStack.length > MAX_UNDO_HISTORY) {
+      this._undoStack.shift();
+    }
+    this._redoStack = []; // New action clears redo
+  }
+
+  undo(): Drawing[] | null {
+    if (this._undoStack.length === 0) {return null;}
+    // Save current state to redo
+    this._redoStack.push(this._drawings.map(d => ({
+      ...d,
+      points: d.points.map(p => ({ ...p })),
+      style: { ...d.style },
+    })));
+    const prev = this._undoStack.pop()!;
+    this._drawings = prev;
+    return prev;
+  }
+
+  redo(): Drawing[] | null {
+    if (this._redoStack.length === 0) {return null;}
+    // Save current to undo
+    this._undoStack.push(this._drawings.map(d => ({
+      ...d,
+      points: d.points.map(p => ({ ...p })),
+      style: { ...d.style },
+    })));
+    const next = this._redoStack.pop()!;
+    this._drawings = next;
+    return next;
+  }
+
+  /** Convert pointer event to time/price point with magnetic snap */
   private eventToPoint(e: PointerEvent | MouseEvent): DrawingPoint | null {
-    const rect = this.container.getBoundingClientRect();
+    // Use the chart's own element rect — accounts for container padding (toolbar offset)
+    const chartEl: HTMLElement | null = (this.chart as any).chartElement?.() ?? null;
+    const rect = chartEl ? chartEl.getBoundingClientRect() : this.container.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
     const time = this.chart.timeScale().coordinateToTime(x);
-    const price = this.series.coordinateToPrice(y);
-    if (time === null || price === null) return null;
-    return { time: time as unknown as number, price };
+    let price = this.series.coordinateToPrice(y);
+    if (time === null || price === null) {return null;}
+
+    // Magnetic snap: snap price to nearest candle OHLC within 8px
+    if (this._magneticMode && this.activeTool !== 'cursor' && this._candleData.length > 0) {
+      const SNAP_PX = 8;
+      let bestDist = Infinity;
+      let bestPrice = price as number;
+
+      for (const candle of this._candleData) {
+        const ohlc = [candle.open, candle.high, candle.low, candle.close];
+        for (const p of ohlc) {
+          const pCoord = this.series.priceToCoordinate(p);
+          if (pCoord !== null) {
+            const dist = Math.abs(y - pCoord);
+            if (dist < SNAP_PX && dist < bestDist) {
+              bestDist = dist;
+              bestPrice = p;
+            }
+          }
+        }
+      }
+      price = bestPrice as typeof price;
+    }
+
+    // Snap hline to $0.50 increments
+    if (this.activeTool === 'hline') {
+      price = (Math.round((price as number) * 2) / 2) as typeof price;
+    }
+
+    if (price === null) {return null;}
+    return { time: time as unknown as number, price: price as number };
   }
 
   private cancel() {
@@ -132,11 +228,11 @@ export class InteractionManager {
 
     const px = this.chart.timeScale().timeToCoordinate(pt.time as unknown as Time);
     const py = this.series.priceToCoordinate(pt.price);
-    if (px === null || py === null) return null;
+    if (px === null || py === null) {return null;}
 
     for (let i = this._drawings.length - 1; i >= 0; i--) {
       const d = this._drawings[i];
-      if (!d.visible) continue;
+      if (!d.visible) {continue;}
 
       const pixPts = d.points.map(p => ({
         x: this.chart.timeScale().timeToCoordinate(p.time as unknown as Time),
@@ -145,8 +241,8 @@ export class InteractionManager {
 
       // Check handle proximity
       for (const pp of pixPts) {
-        if (pp.x === null || pp.y === null) continue;
-        if (Math.sqrt((px - pp.x) ** 2 + (py - pp.y) ** 2) <= THRESHOLD) return d.id;
+        if (pp.x === null || pp.y === null) {continue;}
+        if (Math.sqrt((px - pp.x) ** 2 + (py - pp.y) ** 2) <= THRESHOLD) {return d.id;}
       }
 
       // Line segments
@@ -154,8 +250,8 @@ export class InteractionManager {
         for (let j = 0; j < pixPts.length - 1; j++) {
           const a = pixPts[j];
           const b = pixPts[j + 1];
-          if (a.x === null || a.y === null || b.x === null || b.y === null) continue;
-          if (pointToSegmentDist(px, py, a.x, a.y, b.x, b.y) <= THRESHOLD) return d.id;
+          if (a.x === null || a.y === null || b.x === null || b.y === null) {continue;}
+          if (pointToSegmentDist(px, py, a.x, a.y, b.x, b.y) <= THRESHOLD) {return d.id;}
         }
       }
 
@@ -168,23 +264,23 @@ export class InteractionManager {
           const maxX = Math.max(a.x, b.x) + 4;
           const minY = Math.min(a.y, b.y) - 4;
           const maxY = Math.max(a.y, b.y) + 4;
-          if (px >= minX && px <= maxX && py >= minY && py <= maxY) return d.id;
+          if (px >= minX && px <= maxX && py >= minY && py <= maxY) {return d.id;}
         }
       }
 
       // hline
       if (d.tool === 'hline' && pixPts[0]?.y !== null) {
-        if (Math.abs(py - pixPts[0].y!) <= THRESHOLD) return d.id;
+        if (Math.abs(py - pixPts[0].y) <= THRESHOLD) {return d.id;}
       }
 
       // vline
       if (d.tool === 'vline' && pixPts[0]?.x !== null) {
-        if (Math.abs(px - pixPts[0].x!) <= THRESHOLD) return d.id;
+        if (Math.abs(px - pixPts[0].x) <= THRESHOLD) {return d.id;}
       }
 
       // text
       if (d.tool === 'text' && pixPts[0]?.x !== null && pixPts[0]?.y !== null) {
-        if (Math.abs(px - pixPts[0].x!) < 60 && Math.abs(py - pixPts[0].y!) < 20) return d.id;
+        if (Math.abs(px - pixPts[0].x) < 60 && Math.abs(py - pixPts[0].y) < 20) {return d.id;}
       }
     }
     return null;
@@ -193,9 +289,9 @@ export class InteractionManager {
   /* ── Pointer handlers ─────────────────────────────────────────────────── */
 
   private onPointerDown(e: PointerEvent) {
-    if (e.button !== 0) return;
+    if (e.button !== 0) {return;}
     const pt = this.eventToPoint(e);
-    if (!pt) return;
+    if (!pt) {return;}
 
     // ── Cursor mode: hit-test for selection / start drag ──
     if (this.activeTool === 'cursor') {
@@ -238,8 +334,12 @@ export class InteractionManager {
 
     // ── Text tool: show inline input ──
     if (this.activeTool === 'text' && this.pendingPoints.length === 0) {
-      const rect = this.container.getBoundingClientRect();
-      this.cb.onTextInput(e.clientX - rect.left, e.clientY - rect.top, pt);
+      const chartEl: HTMLElement | null = (this.chart as any).chartElement?.() ?? null;
+      const rect = chartEl ? chartEl.getBoundingClientRect() : this.container.getBoundingClientRect();
+      const containerRect = this.container.getBoundingClientRect();
+      // Pixel position relative to container (for CSS absolute positioning of input)
+      const offsetX = rect.left - containerRect.left;
+      this.cb.onTextInput(e.clientX - containerRect.left - offsetX, e.clientY - containerRect.top, pt);
       e.stopPropagation();
       return;
     }
@@ -266,7 +366,7 @@ export class InteractionManager {
 
   private onPointerMove(e: PointerEvent) {
     const pt = this.eventToPoint(e);
-    if (!pt) return;
+    if (!pt) {return;}
 
     // ── Dragging ──
     if (this.state === 'dragging' && this.dragDrawingId && this.dragStartPt) {
@@ -295,7 +395,7 @@ export class InteractionManager {
       return;
     }
 
-    if (this.state !== 'placing') return;
+    if (this.state !== 'placing') {return;}
 
     // Path accumulate
     if (this.activeTool === 'path' && this.isDrawingPath) {
@@ -325,6 +425,7 @@ export class InteractionManager {
     // Path finalize
     if (this.activeTool === 'path' && this.isDrawingPath) {
       if (this.pathPoints.length >= 2) {
+        this.pushUndoState();
         this.cb.onDrawingComplete(this.makeDrawing(this.pathPoints));
         this.cb.onToolAutoReset();
       }
@@ -334,9 +435,32 @@ export class InteractionManager {
 
   private onKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape') { this.cancel(); return; }
+
+    // Undo: Ctrl+Z (or Cmd+Z on Mac)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      const prev = this.undo();
+      if (prev) {
+        this.cb.onDrawingMoved(); // Trigger re-render
+      }
+      return;
+    }
+
+    // Redo: Ctrl+Shift+Z (or Ctrl+Y)
+    if (((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z') ||
+        ((e.ctrlKey || e.metaKey) && e.key === 'y')) {
+      e.preventDefault();
+      const next = this.redo();
+      if (next) {
+        this.cb.onDrawingMoved(); // Trigger re-render
+      }
+      return;
+    }
+
     if (e.key === 'Delete' || e.key === 'Backspace') {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {return;}
+      this.pushUndoState();
       this.cb.onDeleteSelected();
     }
   }
@@ -349,7 +473,7 @@ export class InteractionManager {
 
   /** Finalize text from inline input */
   finalizeText(text: string, point: DrawingPoint) {
-    if (!text.trim()) return;
+    if (!text.trim()) {return;}
     this.cb.onDrawingComplete({
       id: uid(), tool: 'text', points: [point],
       style: { ...this.style, text }, visible: true,
@@ -358,8 +482,9 @@ export class InteractionManager {
   }
 
   private finalize() {
+    this.pushUndoState();
     const drawing = this.makeDrawing(this.pendingPoints);
-    if (drawing.tool === 'hline') drawing.style.text = drawing.points[0].price.toFixed(2);
+    if (drawing.tool === 'hline') {drawing.style.text = drawing.points[0].price.toFixed(2);}
     this.cb.onDrawingComplete(drawing);
     this.cancel();
     this.cb.onToolAutoReset();
@@ -371,7 +496,7 @@ export class InteractionManager {
 function pointToSegmentDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
   const dx = bx - ax, dy = by - ay;
   const lenSq = dx * dx + dy * dy;
-  if (lenSq === 0) return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2);
+  if (lenSq === 0) {return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2);}
   const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
   return Math.sqrt((px - (ax + t * dx)) ** 2 + (py - (ay + t * dy)) ** 2);
 }

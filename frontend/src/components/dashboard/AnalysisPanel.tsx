@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useState, useRef } from 'react';
-import { AlertCircle, RefreshCw, Zap, Clock } from 'lucide-react';
+import { AlertCircle, RefreshCw, Zap, Clock, BarChart2 } from 'lucide-react';
 import { analysisAPI } from '../../api/client';
 import { MarkdownText } from '../ui/MarkdownText';
 
@@ -28,11 +28,66 @@ interface AnalysisData {
   };
 }
 
+interface MtfConfluence {
+  confluence_score: number;
+  direction: string;
+  bull_pct: number;
+  bear_pct: number;
+  bull_tf_count: number;
+  bear_tf_count: number;
+  timeframes: Record<string, { trend: string; rsi: number; weight: number }>;
+  session: { session: string; is_killzone: boolean; volatility_expected: string };
+}
+
 const fmt = (val: number | null | undefined, decimals = 2): string =>
-  val != null ? val.toFixed(decimals) : '—';
+  val !== null && val !== undefined ? val.toFixed(decimals) : '—';
+
+const TF_ORDER = ['5m', '15m', '1h', '4h'] as const;
+
+function MtfWidget({ data }: { data: MtfConfluence }) {
+  const dir = data.direction;
+  const dirColor = dir.includes('BULL') ? 'text-green-400' : dir.includes('BEAR') ? 'text-red-400' : 'text-amber-400';
+  const score = Math.round(data.confluence_score);
+  return (
+    <div className="bg-dark-bg rounded p-2.5 border border-dark-secondary text-xs">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-gray-500 flex items-center gap-1"><BarChart2 size={10} /> MTF Confluence</span>
+        <span className={`font-bold ${dirColor}`}>{dir}</span>
+      </div>
+      {/* Progress bar */}
+      <div className="relative h-1.5 bg-red-900/40 rounded-full overflow-hidden mb-2">
+        <div
+          className="absolute left-0 top-0 h-full bg-green-500/70 rounded-full transition-all"
+          style={{ width: `${data.bull_pct}%` }}
+        />
+      </div>
+      <div className="flex justify-between text-gray-600 mb-2">
+        <span className="text-green-500">▲ {data.bull_pct.toFixed(0)}%</span>
+        <span className="font-mono font-bold text-gray-400">{score}/10</span>
+        <span className="text-red-500">▼ {data.bear_pct.toFixed(0)}%</span>
+      </div>
+      {/* TF breakdown */}
+      <div className="grid grid-cols-4 gap-1">
+        {TF_ORDER.map(tf => {
+          const t = data.timeframes?.[tf];
+          if (!t) {return <div key={tf} className="text-center text-gray-700">{tf}</div>;}
+          const isBull = t.trend === 'bull' || t.trend === 'bullish';
+          return (
+            <div key={tf} className={`text-center rounded py-0.5 font-mono ${isBull ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+              <div className="text-gray-500 text-[9px]">{tf}</div>
+              <div className="text-[10px] font-bold">{isBull ? '▲' : '▼'}</div>
+              <div className="text-[9px] opacity-75">{t.rsi?.toFixed(0) ?? '—'}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function AnalysisPanel() {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
+  const [mtfData, setMtfData] = useState<MtfConfluence | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,11 +97,19 @@ export function AnalysisPanel() {
 
   const fetchAnalysis = async (tf: string, forceRefresh = false) => {
     try {
-      if (isFirstLoad.current) setLoading(true);
-      else setRefreshing(true);
+      if (isFirstLoad.current) {setLoading(true);}
+      else {setRefreshing(true);}
       setError(null);
-      const response = await analysisAPI.getQuantPro(tf, forceRefresh);
-      setAnalysis(response);
+      const [response, mtf] = await Promise.allSettled([
+        analysisAPI.getQuantPro(tf, forceRefresh),
+        analysisAPI.getMtfConfluence(),
+      ]);
+      if (response.status === 'fulfilled') {
+        setAnalysis(response.value as AnalysisData);
+      }
+      if (mtf.status === 'fulfilled') {
+        setMtfData(mtf.value);
+      }
       setLastUpdated(new Date());
       isFirstLoad.current = false;
     } catch (err: unknown) {
@@ -54,7 +117,7 @@ export function AnalysisPanel() {
         err instanceof Error && err.message?.includes('timeout')
           ? 'Analysis timeout — backend is processing. Try again in a moment.'
           : 'Failed to fetch analysis';
-      if (isFirstLoad.current) setError(msg);
+      if (isFirstLoad.current) {setError(msg);}
       console.error(err);
     } finally {
       setLoading(false);
@@ -64,7 +127,6 @@ export function AnalysisPanel() {
 
   useEffect(() => {
     void fetchAnalysis(selectedTF);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTF]);
 
   if (loading && !analysis) {
@@ -149,6 +211,9 @@ export function AnalysisPanel() {
             <div className="text-xs font-bold text-amber-400">{smc_analysis.fvg}</div>
           </div>
         </div>
+
+        {/* MTF Confluence */}
+        {mtfData && <MtfWidget data={mtfData} />}
 
         {/* Position */}
         <div className="bg-dark-bg rounded-lg p-3 border border-dark-secondary">

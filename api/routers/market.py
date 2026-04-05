@@ -457,6 +457,17 @@ async def get_indicators(
         except Exception as macd_err:
             logger.debug(f"MACD calculation skipped: {macd_err}")
 
+        # Bollinger Bands (20-period SMA ± 2 std)
+        try:
+            if len(df['close']) >= 20:
+                sma20 = df['close'].rolling(window=20).mean()
+                std20 = df['close'].rolling(window=20).std()
+                bb_mid = float(sma20.iloc[-1])
+                bb_upper = float(sma20.iloc[-1] + 2 * std20.iloc[-1])
+                bb_lower = float(sma20.iloc[-1] - 2 * std20.iloc[-1])
+        except Exception as bb_err:
+            logger.debug(f"Bollinger Bands calculation skipped: {bb_err}")
+
         logger.info(f"📈 Indicators for {symbol}: RSI={rsi}")
 
         result = IndicatorResponse(
@@ -506,4 +517,31 @@ async def get_market_status():
     }
 
 
-
+@router.get("/volume-profile", summary="Get Volume Profile data")
+async def get_volume_profile(
+    symbol: str = Query("XAU/USD", description="Symbol"),
+    interval: str = Query("15m", description="Interval"),
+    limit: int = Query(100, description="Number of candles"),
+):
+    """
+    Zwraca Volume Profile: POC, VAH, VAL i histogram price-volume dla wizualizacji.
+    """
+    try:
+        from src.indicators import volume_profile as calc_vp
+        provider = get_provider()
+        df = await asyncio.to_thread(provider.get_candles, symbol, interval, limit)
+        if df is None or df.empty:
+            return {"poc": 0, "vah": 0, "val": 0, "histogram": [], "is_mock": True}
+        vp = calc_vp(df)
+        return {
+            "poc": vp.get("poc"),
+            "vah": vp.get("vah"),
+            "val": vp.get("val"),
+            "histogram": vp.get("histogram", []),
+            "symbol": symbol,
+            "interval": interval,
+            "is_mock": False,
+        }
+    except Exception as e:
+        logger.error(f"Volume profile error: {e}")
+        return {"poc": 0, "vah": 0, "val": 0, "histogram": [], "error": str(e)}

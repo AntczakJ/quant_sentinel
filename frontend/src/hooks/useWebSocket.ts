@@ -28,7 +28,7 @@ const IDLE_RETRY_INTERVAL = 120_000;
  */
 function resolveWsBase(): string {
   const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  if (envUrl) return envUrl.replace(/\/$/, '');
+  if (envUrl) {return envUrl.replace(/\/$/, '');}
 
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${window.location.host}`;
@@ -45,7 +45,7 @@ const WS_BASE_URL = resolveWsBase();
  */
 function resolveHealthUrl(): string {
   const envUrl = import.meta.env.VITE_API_URL as string | undefined;
-  if (envUrl) return `${envUrl.replace(/\/$/, '')}/health`;
+  if (envUrl) {return `${envUrl.replace(/\/$/, '')}/health`;}
   // Relative path — goes through Vite proxy in dev, works in prod when
   // the API serves the frontend from the same origin.
   return '/api/health';
@@ -109,7 +109,7 @@ export function useWebSocket<T = unknown>(
   }, []);
 
   const scheduleReconnect = useCallback(() => {
-    if (!mountedRef.current || !enabled) return;
+    if (!mountedRef.current || !enabled) {return;}
 
     reconnectAttemptsRef.current += 1;
 
@@ -123,7 +123,7 @@ export function useWebSocket<T = unknown>(
         );
       }
       reconnectTimerRef.current = setTimeout(async () => {
-        if (!mountedRef.current || !enabled) return;
+        if (!mountedRef.current || !enabled) {return;}
         const alive = await isBackendReachable();
         if (alive) {
           console.log('[WebSocket] Backend is back — reconnecting');
@@ -152,7 +152,7 @@ export function useWebSocket<T = unknown>(
   scheduleReconnectRef.current = scheduleReconnect;
 
   const connect = useCallback(() => {
-    if (!enabled || !mountedRef.current) return;
+    if (!enabled || !mountedRef.current) {return;}
 
     // Clear any pending reconnect timer
     if (reconnectTimerRef.current) {
@@ -180,10 +180,10 @@ export function useWebSocket<T = unknown>(
     }
 
     wsRef.current = ws;
-    if (mountedRef.current) setStatus('connecting');
+    if (mountedRef.current) {setStatus('connecting');}
 
     ws.onopen = () => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) {return;}
       console.log(`[WebSocket] Connected to ${path}`);
       setStatus('connected');
       reconnectAttemptsRef.current = 0;
@@ -191,7 +191,7 @@ export function useWebSocket<T = unknown>(
     };
 
     ws.onmessage = (event: MessageEvent) => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) {return;}
       try {
         const data = JSON.parse(event.data as string) as T;
         onMessageRef.current(data);
@@ -201,7 +201,7 @@ export function useWebSocket<T = unknown>(
     };
 
     ws.onclose = (event) => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) {return;}
       if (reconnectAttemptsRef.current <= 1) {
         console.log(`[WebSocket] Disconnected from ${path} (code ${event.code})`);
       }
@@ -233,7 +233,7 @@ export function useWebSocket<T = unknown>(
     (async () => {
       // Quick first check — backend may already be up
       if (await isBackendReachable()) {
-        if (!cancelled) connect();
+        if (!cancelled) {connect();}
         return;
       }
       // Poll every 5 s until the backend is ready (or component unmounts)

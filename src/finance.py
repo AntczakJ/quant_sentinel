@@ -58,6 +58,11 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     swing_low = analysis_data.get('swing_low')
     atr = analysis_data.get('atr', 2.0)
 
+    # Session awareness — widen SL during killzones, skip off-hours
+    session = analysis_data.get('session', 'unknown')
+    is_killzone = analysis_data.get('is_killzone', False)
+    sl_multiplier = 1.2 if is_killzone else 1.0  # Killzone = wyższa zmienność → szerszy SL
+
     # Pobranie dynamicznych parametrów
     from src.database import NewsDB
     db = NewsDB()
@@ -164,9 +169,9 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     # --- 2. SL i TP ---
     if direction == "LONG":
         if grab and grab_dir == "bullish":
-            sl = round(swing_low - 1.0, 2)
+            sl = round(swing_low - 1.0 * sl_multiplier, 2)
         else:
-            sl = round(entry - 2.0, 2)
+            sl = round(entry - 2.0 * sl_multiplier, 2)
 
         if fvg_type == "bullish" and fvg_upper and fvg_upper > entry:
             tp = round(fvg_upper, 2)
@@ -181,9 +186,9 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
 
     else:  # SHORT
         if grab and grab_dir == "bearish":
-            sl = round(swing_high + 1.0, 2)
+            sl = round(swing_high + 1.0 * sl_multiplier, 2)
         else:
-            sl = round(entry + 2.0, 2)
+            sl = round(entry + 2.0 * sl_multiplier, 2)
 
         if fvg_type == "bearish" and fvg_lower and fvg_lower < entry:
             tp = round(fvg_lower, 2)

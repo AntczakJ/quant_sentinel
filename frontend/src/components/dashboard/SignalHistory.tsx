@@ -2,7 +2,7 @@
  * src/components/dashboard/SignalHistory.tsx - Historical trading signals (rich SMC view)
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { signalsAPI } from '../../api/client';
 import { History, TrendingUp, TrendingDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -21,7 +21,7 @@ interface ScannerSignal {
 
 const fmt = (v: number | undefined | null, d = 2) => (v != null ? v.toFixed(d) : '—');
 
-export function SignalHistory() {
+export const SignalHistory = memo(function SignalHistory() {
   const [signals, setSignals] = useState<ScannerSignal[]>([]);
   const [stats, setStats] = useState({ total: 0, wins: 0, losses: 0, win_rate: 0 });
   const [loading, setLoading] = useState(true);
@@ -201,4 +201,4 @@ export function SignalHistory() {
       )}
     </div>
   );
-}
+});

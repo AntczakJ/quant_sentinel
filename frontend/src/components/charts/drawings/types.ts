@@ -82,10 +82,10 @@ export function requiredPoints(tool: DrawingTool): number {
 }
 
 export const DEFAULT_STYLE: DrawingStyle = {
-  color: '#3b82f6',
+  color: '#2962ff',
   lineWidth: 2,
   lineStyle: 'solid',
-  fillColor: 'rgba(59,130,246,0.12)',
+  fillColor: 'rgba(41,98,255,0.12)',
   fontSize: 12,
   text: '',
 };

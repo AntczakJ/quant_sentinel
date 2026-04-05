@@ -1,13 +1,13 @@
 /**
- * DrawingPropertiesPanel.tsx — Professional floating editor for drawing properties.
+ * DrawingPropertiesPanel.tsx — TradingView-style properties dialog.
  *
- * Appears on the right side when a drawing is double-clicked.
- * Features: collapsible sections, color palette + custom picker, line width/style,
- * fill opacity, font/text, fibonacci level editor, lock toggle, coordinates display.
+ * Tabs: Styl (Style), Współrzędne (Coordinates), Widoczność (Visibility)
+ * Floating panel that appears when a drawing is selected/double-clicked.
+ * Professional dark theme matching TradingView's dialog aesthetic.
  */
 
-import { useState } from 'react';
-import { X, Trash2, Eye, EyeOff, Lock, Unlock, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { X, Trash2, Eye, EyeOff, Lock, Unlock } from 'lucide-react';
 import type { Drawing, DrawingStyle, FibLevel } from './types';
 import { DEFAULT_FIB_LEVELS } from './types';
 
@@ -19,13 +19,15 @@ interface Props {
 }
 
 const PALETTE = [
-  '#3b82f6', '#22c55e', '#ef4444', '#f59e0b', '#8b5cf6',
-  '#ec4899', '#06b6d4', '#f97316', '#e2e8f0', '#6b7280',
-  '#ffffff', '#000000',
+  '#2962ff', '#2196f3', '#00bcd4', '#009688', '#4caf50',
+  '#8bc34a', '#cddc39', '#ffeb3b', '#ffc107', '#ff9800',
+  '#ff5722', '#f44336', '#e91e63', '#9c27b0', '#673ab7',
+  '#787b86', '#b2b5be', '#d1d4dc', '#ffffff', '#000000',
 ];
 
 function hexToRgba(hex: string, alpha: number) {
   const h = hex.replace('#', '');
+  if (h.length < 6) { return `rgba(128,128,128,${alpha})`; }
   const r = parseInt(h.substring(0, 2), 16);
   const g = parseInt(h.substring(2, 4), 16);
   const b = parseInt(h.substring(4, 6), 16);
@@ -33,43 +35,362 @@ function hexToRgba(hex: string, alpha: number) {
 }
 
 /* Tool metadata for header */
-const TOOL_META: Record<string, { label: string; emoji: string }> = {
-  trendline:     { label: 'Trend Line',       emoji: '📐' },
-  ray:           { label: 'Ray',              emoji: '↗' },
-  extendedline:  { label: 'Extended Line',    emoji: '↔' },
-  hline:         { label: 'Horizontal Line',  emoji: '➖' },
-  vline:         { label: 'Vertical Line',    emoji: '│' },
-  channel:       { label: 'Parallel Channel', emoji: '▬' },
-  fib:           { label: 'Fibonacci',        emoji: '📊' },
-  rect:          { label: 'Rectangle',        emoji: '⬜' },
-  path:          { label: 'Brush',            emoji: '🖌' },
-  text:          { label: 'Text',             emoji: '🔤' },
-  measure:       { label: 'Measure',          emoji: '📏' },
-  longposition:  { label: 'Long Position',    emoji: '🟢' },
-  shortposition: { label: 'Short Position',   emoji: '🔴' },
+const TOOL_META: Record<string, { label: string; icon: string }> = {
+  trendline:     { label: 'Linia trendu',       icon: '📐' },
+  ray:           { label: 'Promień',             icon: '↗' },
+  extendedline:  { label: 'Linia rozszerzona',   icon: '↔' },
+  hline:         { label: 'Linia pozioma',       icon: '➖' },
+  vline:         { label: 'Linia pionowa',       icon: '│' },
+  channel:       { label: 'Kanał równoległy',    icon: '▬' },
+  fib:           { label: 'Fibonacci',           icon: '📊' },
+  rect:          { label: 'Prostokąt',           icon: '⬜' },
+  path:          { label: 'Pędzel',              icon: '🖌' },
+  text:          { label: 'Tekst',               icon: '🔤' },
+  measure:       { label: 'Miara',               icon: '📏' },
+  longposition:  { label: 'Pozycja Long',        icon: '🟢' },
+  shortposition: { label: 'Pozycja Short',       icon: '🔴' },
 };
 
 function formatTimestamp(ts: number): string {
   try {
     const d = new Date(ts * 1000);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
-           d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return d.toLocaleDateString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit' }) + ' ' +
+           d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', hour12: false });
   } catch { return '—'; }
 }
 
-/* ── Collapsible Section ── */
-function Section({ title, children, defaultOpen = true }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+type TabId = 'style' | 'coords' | 'visibility';
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  TAB CONTENT: STYLE                                                       */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+function StyleTab({ drawing, onUpdate }: { drawing: Drawing; onUpdate: (id: string, patch: Partial<Drawing>) => void }) {
+  const s = drawing.style;
+  const isText = drawing.tool === 'text';
+  const isFib = drawing.tool === 'fib';
+  const hasLineWidth = !['text'].includes(drawing.tool);
+  const hasFill = ['rect', 'channel', 'measure', 'fib', 'longposition', 'shortposition'].includes(drawing.tool);
+
+  const [fibLevels, setFibLevels] = useState<FibLevel[]>(
+    s.fibLevels ?? DEFAULT_FIB_LEVELS.map(l => ({ ...l }))
+  );
+
+  const updateStyle = useCallback((patch: Partial<DrawingStyle>) => {
+    onUpdate(drawing.id, { style: { ...s, ...patch } });
+  }, [drawing.id, s, onUpdate]);
+
+  const updateFibLevel = useCallback((i: number, patch: Partial<FibLevel>) => {
+    const next = fibLevels.map((l, idx) => idx === i ? { ...l, ...patch } : l);
+    setFibLevels(next);
+    onUpdate(drawing.id, { style: { ...s, fibLevels: next } });
+  }, [drawing.id, s, fibLevels, onUpdate]);
+
   return (
-    <div className="border-b border-[#1a2030] last:border-b-0">
+    <div className="p-3 space-y-4">
+      {/* ── Color palette ── */}
+      <div>
+        <label className="text-[10px] text-[#787b86] uppercase tracking-wider font-semibold block mb-2">Kolor</label>
+        <div className="grid grid-cols-10 gap-1">
+          {PALETTE.map(c => (
+            <button
+              key={c}
+              onClick={() => updateStyle({ color: c, fillColor: hexToRgba(c, 0.12) })}
+              className={`w-full aspect-square rounded-sm border transition-all hover:scale-110 ${
+                s.color === c ? 'border-white scale-105 ring-1 ring-white/30' : 'border-transparent hover:border-[#787b86]'
+              }`}
+              style={{ backgroundColor: c }}
+            />
+          ))}
+        </div>
+        <input
+          type="color"
+          value={s.color.startsWith('#') ? s.color : '#2962ff'}
+          onChange={e => updateStyle({ color: e.target.value, fillColor: hexToRgba(e.target.value, 0.12) })}
+          className="w-full h-6 rounded cursor-pointer border border-[#363a45] bg-transparent mt-2"
+        />
+      </div>
+
+      {/* ── Line width & style ── */}
+      {hasLineWidth && (
+        <div>
+          <label className="text-[10px] text-[#787b86] uppercase tracking-wider font-semibold block mb-2">Linia</label>
+          {/* Width */}
+          <div className="flex gap-1 mb-2">
+            {[1, 2, 3, 4, 5].map(w => (
+              <button
+                key={w}
+                onClick={() => updateStyle({ lineWidth: w })}
+                className={`flex-1 py-2.5 rounded border transition-colors flex items-center justify-center ${
+                  s.lineWidth === w
+                    ? 'border-[#2962ff] bg-[#2962ff]/15 text-[#2962ff]'
+                    : 'border-[#363a45] text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
+                }`}
+              >
+                <div style={{ width: '60%', height: Math.max(w, 1), backgroundColor: 'currentColor', borderRadius: 1 }} />
+              </button>
+            ))}
+          </div>
+          {/* Style */}
+          <div className="flex gap-1">
+            {([
+              { key: 'solid' as const,  visual: '━━━━━━' },
+              { key: 'dashed' as const, visual: '╌ ╌ ╌ ╌' },
+              { key: 'dotted' as const, visual: '• • • • •' },
+            ]).map(ls => (
+              <button
+                key={ls.key}
+                onClick={() => updateStyle({ lineStyle: ls.key })}
+                className={`flex-1 py-1.5 rounded text-[10px] border transition-colors font-mono ${
+                  s.lineStyle === ls.key
+                    ? 'border-[#2962ff] bg-[#2962ff]/15 text-[#2962ff]'
+                    : 'border-[#363a45] text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
+                }`}
+              >
+                {ls.visual}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Fill opacity ── */}
+      {hasFill && !isFib && (
+        <div>
+          <label className="text-[10px] text-[#787b86] uppercase tracking-wider font-semibold block mb-2">Tło</label>
+          <div className="flex gap-1">
+            {[
+              { val: 0, label: 'Brak' },
+              { val: 0.08, label: '8%' },
+              { val: 0.15, label: '15%' },
+              { val: 0.25, label: '25%' },
+              { val: 0.4, label: '40%' },
+            ].map(o => (
+              <button
+                key={o.val}
+                onClick={() => {
+                  const hex = s.color.startsWith('#') ? s.color : '#2962ff';
+                  updateStyle({ fillColor: hexToRgba(hex, o.val) });
+                }}
+                className="flex-1 py-1.5 rounded text-[10px] border border-[#363a45] text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39] transition-colors"
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Text section ── */}
+      {isText && (
+        <div>
+          <label className="text-[10px] text-[#787b86] uppercase tracking-wider font-semibold block mb-2">Tekst</label>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[#787b86] w-14">Rozmiar</span>
+              <input
+                type="range" min={8} max={32} step={1}
+                value={s.fontSize}
+                onChange={e => updateStyle({ fontSize: Number(e.target.value) })}
+                className="flex-1 accent-[#2962ff]"
+              />
+              <span className="text-[10px] text-[#d1d4dc] w-8 text-right font-mono">{s.fontSize}px</span>
+            </div>
+            <input
+              type="text"
+              value={s.text}
+              onChange={e => updateStyle({ text: e.target.value })}
+              className="w-full bg-[#1e222d] border border-[#363a45] rounded px-2.5 py-1.5 text-[#d1d4dc] text-[11px] outline-none focus:border-[#2962ff] transition-colors"
+              placeholder="Wpisz tekst..."
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Fibonacci levels ── */}
+      {isFib && (
+        <div>
+          <label className="text-[10px] text-[#787b86] uppercase tracking-wider font-semibold block mb-2">Poziomy ceny</label>
+          <div className="space-y-0.5 max-h-52 overflow-y-auto pr-0.5">
+            {fibLevels.map((fl, i) => (
+              <div key={i} className="flex items-center gap-2 py-1.5 rounded hover:bg-[#1e222d] px-1.5 -mx-1.5 group">
+                {/* Toggle */}
+                <button
+                  onClick={() => updateFibLevel(i, { visible: !fl.visible })}
+                  className={`w-4 h-4 rounded-sm border flex items-center justify-center transition-colors flex-shrink-0 ${
+                    fl.visible
+                      ? 'bg-[#2962ff] border-[#2962ff]'
+                      : 'border-[#363a45] hover:border-[#787b86]'
+                  }`}
+                >
+                  {fl.visible && (
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="2,5 4.5,7.5 8,3" />
+                    </svg>
+                  )}
+                </button>
+
+                {/* Level value */}
+                <span className={`w-14 font-mono text-[11px] tabular-nums ${fl.visible ? 'text-[#d1d4dc]' : 'text-[#787b86]'}`}>
+                  {fl.level}
+                </span>
+
+                {/* Color swatch */}
+                <input
+                  type="color"
+                  value={fl.color.startsWith('#') ? fl.color : '#787b86'}
+                  onChange={e => updateFibLevel(i, { color: hexToRgba(e.target.value, 0.6) })}
+                  className="w-5 h-5 rounded cursor-pointer border border-[#363a45] bg-transparent flex-shrink-0"
+                />
+
+                {/* Color line preview */}
+                <div className="flex-1 h-[2px] rounded-full" style={{ backgroundColor: fl.color }} />
+              </div>
+            ))}
+          </div>
+
+          {/* Preset buttons */}
+          <div className="flex gap-1 mt-3">
+            {[
+              {
+                label: 'Kluczowe',
+                title: 'Pokaż 0, 0.382, 0.5, 0.618, 1',
+                action: () => {
+                  const preset = fibLevels.map(l => ({ ...l, visible: [0, 0.382, 0.5, 0.618, 1].includes(l.level) }));
+                  setFibLevels(preset);
+                  onUpdate(drawing.id, { style: { ...s, fibLevels: preset } });
+                },
+              },
+              {
+                label: 'Wszystkie',
+                title: 'Pokaż wszystkie poziomy',
+                action: () => {
+                  const all = fibLevels.map(l => ({ ...l, visible: true }));
+                  setFibLevels(all);
+                  onUpdate(drawing.id, { style: { ...s, fibLevels: all } });
+                },
+              },
+              {
+                label: 'Szary',
+                title: 'Ustaw kolor na szary',
+                action: () => {
+                  const gray = fibLevels.map(l => ({ ...l, color: 'rgba(156,163,175,0.6)' }));
+                  setFibLevels(gray);
+                  onUpdate(drawing.id, { style: { ...s, fibLevels: gray } });
+                },
+              },
+            ].map(p => (
+              <button
+                key={p.label}
+                onClick={p.action}
+                title={p.title}
+                className="flex-1 py-1.5 rounded text-[10px] border border-[#363a45] text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39] transition-colors font-medium"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  TAB CONTENT: COORDINATES                                                 */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+function CoordsTab({ drawing }: { drawing: Drawing }) {
+  return (
+    <div className="p-3">
+      <label className="text-[10px] text-[#787b86] uppercase tracking-wider font-semibold block mb-3">Punkty</label>
+      <div className="space-y-2">
+        {drawing.points.map((pt, i) => (
+          <div key={i} className="bg-[#1e222d] rounded border border-[#363a45] p-2.5">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-[10px] text-[#787b86] font-semibold uppercase">Punkt {i + 1}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-[9px] text-[#787b86] block mb-0.5">Cena</span>
+                <div className="text-[11px] text-[#d1d4dc] font-mono tabular-nums bg-[#131722] rounded px-2 py-1 border border-[#363a45]">
+                  {pt.price.toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <span className="text-[9px] text-[#787b86] block mb-0.5">Czas</span>
+                <div className="text-[10px] text-[#d1d4dc] font-mono tabular-nums bg-[#131722] rounded px-2 py-1 border border-[#363a45]">
+                  {formatTimestamp(pt.time)}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {drawing.points.length === 0 && (
+        <div className="text-[11px] text-[#787b86] text-center py-4">Brak punktów</div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  TAB CONTENT: VISIBILITY                                                  */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+function VisibilityTab({ drawing, onUpdate }: { drawing: Drawing; onUpdate: (id: string, patch: Partial<Drawing>) => void }) {
+  const isLocked = drawing.locked ?? false;
+
+  return (
+    <div className="p-3 space-y-3">
+      {/* Visible toggle */}
       <button
-        onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-3 py-2 text-[10px] text-gray-500 font-semibold uppercase tracking-wider hover:text-gray-400 transition-colors"
+        onClick={() => onUpdate(drawing.id, { visible: !drawing.visible })}
+        className="w-full flex items-center gap-3 p-3 rounded border border-[#363a45] hover:bg-[#1e222d] transition-colors"
       >
-        <span>{title}</span>
-        {open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+        <div className={`w-4 h-4 rounded-sm border flex items-center justify-center ${
+          drawing.visible ? 'bg-[#2962ff] border-[#2962ff]' : 'border-[#363a45]'
+        }`}>
+          {drawing.visible && (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="2,5 4.5,7.5 8,3" />
+            </svg>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-1">
+          {drawing.visible ? <Eye size={14} className="text-[#d1d4dc]" /> : <EyeOff size={14} className="text-[#787b86]" />}
+          <span className={`text-[11px] ${drawing.visible ? 'text-[#d1d4dc]' : 'text-[#787b86]'}`}>
+            {drawing.visible ? 'Widoczny' : 'Ukryty'}
+          </span>
+        </div>
       </button>
-      {open && <div className="px-3 pb-3 space-y-2.5">{children}</div>}
+
+      {/* Lock toggle */}
+      <button
+        onClick={() => onUpdate(drawing.id, { locked: !isLocked })}
+        className="w-full flex items-center gap-3 p-3 rounded border border-[#363a45] hover:bg-[#1e222d] transition-colors"
+      >
+        <div className={`w-4 h-4 rounded-sm border flex items-center justify-center ${
+          isLocked ? 'bg-[#f0b90b] border-[#f0b90b]' : 'border-[#363a45]'
+        }`}>
+          {isLocked && (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="2,5 4.5,7.5 8,3" />
+            </svg>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-1">
+          {isLocked ? <Lock size={14} className="text-[#f0b90b]" /> : <Unlock size={14} className="text-[#787b86]" />}
+          <span className={`text-[11px] ${isLocked ? 'text-[#f0b90b]' : 'text-[#787b86]'}`}>
+            {isLocked ? 'Zablokowany (nie można przesuwać)' : 'Odblokowany'}
+          </span>
+        </div>
+      </button>
+
+      {/* Timeframe note */}
+      <div className="text-[10px] text-[#787b86] mt-4 px-1">
+        Rysunek jest widoczny na bieżącym interwale czasowym. Zmiana interwału ładuje osobny zestaw rysunków.
+      </div>
     </div>
   );
 }
@@ -79,299 +400,128 @@ function Section({ title, children, defaultOpen = true }: { title: string; child
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 export function DrawingPropertiesPanel({ drawing, onUpdate, onDelete, onClose }: Props) {
-  const s = drawing.style;
-  const meta = TOOL_META[drawing.tool] ?? { label: drawing.tool, emoji: '📝' };
-  const isFib = drawing.tool === 'fib';
-  const isText = drawing.tool === 'text';
-  const hasLineWidth = !['text'].includes(drawing.tool);
-  const hasFill = ['rect', 'channel', 'measure', 'fib', 'longposition', 'shortposition'].includes(drawing.tool);
-  const isLocked = drawing.locked ?? false;
+  const [activeTab, setActiveTab] = useState<TabId>('style');
+  const meta = TOOL_META[drawing.tool] ?? { label: drawing.tool, icon: '📝' };
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  const [fibLevels, setFibLevels] = useState<FibLevel[]>(
-    s.fibLevels ?? DEFAULT_FIB_LEVELS.map(l => ({ ...l }))
-  );
+  // Dragging support for the panel
+  const [dragging, setDragging] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const dragOffset = useRef({ x: 0, y: 0 });
 
-  const updateStyle = (patch: Partial<DrawingStyle>) => {
-    onUpdate(drawing.id, { style: { ...s, ...patch } });
-  };
+  const onHeaderPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    setDragging(true);
+    const rect = panelRef.current?.getBoundingClientRect();
+    if (rect) {
+      dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+  }, []);
 
-  const updateFibLevel = (i: number, patch: Partial<FibLevel>) => {
-    const next = fibLevels.map((l, idx) => idx === i ? { ...l, ...patch } : l);
-    setFibLevels(next);
-    onUpdate(drawing.id, { style: { ...s, fibLevels: next } });
-  };
+  useEffect(() => {
+    if (!dragging) { return; }
+    const onMove = (e: PointerEvent) => {
+      const parent = panelRef.current?.parentElement;
+      if (!parent) { return; }
+      const parentRect = parent.getBoundingClientRect();
+      setPos({
+        x: e.clientX - parentRect.left - dragOffset.current.x,
+        y: e.clientY - parentRect.top - dragOffset.current.y,
+      });
+    };
+    const onUp = () => setDragging(false);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [dragging]);
+
+  const tabs: { id: TabId; label: string }[] = [
+    { id: 'style', label: 'Styl' },
+    { id: 'coords', label: 'Współrzędne' },
+    { id: 'visibility', label: 'Widoczność' },
+  ];
+
+  const panelStyle: React.CSSProperties = pos
+    ? { left: pos.x, top: pos.y, right: 'auto' }
+    : { right: 8, top: 40 };
 
   return (
     <div
-      className="absolute right-2 top-10 z-40 bg-[#0d1117] border border-[#1a2030] rounded-xl shadow-2xl text-xs select-none overflow-hidden"
-      style={{ width: 280, backdropFilter: 'blur(12px)' }}
+      ref={panelRef}
+      className="absolute z-40 bg-[#131722] border border-[#363a45] rounded-lg shadow-2xl text-xs select-none overflow-hidden"
+      style={{ width: 300, ...panelStyle }}
     >
-      {/* ═══ Header ═══ */}
-      <div className="flex items-center justify-between px-3 py-2.5 bg-[#0f1520] border-b border-[#1a2030]">
+      {/* ═══ Header — draggable ═══ */}
+      <div
+        className="flex items-center justify-between px-3 py-2 bg-[#1e222d] border-b border-[#363a45] cursor-move"
+        onPointerDown={onHeaderPointerDown}
+      >
         <div className="flex items-center gap-2">
-          <span className="text-sm leading-none">{meta.emoji}</span>
-          <span className="text-gray-300 font-semibold text-[11px]">{meta.label}</span>
+          <span className="text-sm leading-none">{meta.icon}</span>
+          <span className="text-[#d1d4dc] font-semibold text-[12px]">{meta.label}</span>
         </div>
         <div className="flex items-center gap-0.5">
-          {/* Lock toggle */}
-          <button
-            onClick={() => onUpdate(drawing.id, { locked: !isLocked })}
-            className={`p-1.5 rounded-md transition-colors ${
-              isLocked ? 'text-amber-400 bg-amber-400/10' : 'text-gray-600 hover:text-gray-400 hover:bg-[#1a2030]'
-            }`}
-            title={isLocked ? 'Unlock drawing' : 'Lock drawing (prevent moving)'}
-          >
-            {isLocked ? <Lock size={12} /> : <Unlock size={12} />}
-          </button>
-          {/* Visibility */}
-          <button
-            onClick={() => onUpdate(drawing.id, { visible: !drawing.visible })}
-            className={`p-1.5 rounded-md transition-colors ${
-              drawing.visible ? 'text-gray-400 hover:bg-[#1a2030]' : 'text-gray-600 bg-gray-600/10 hover:bg-[#1a2030]'
-            }`}
-            title={drawing.visible ? 'Hide drawing' : 'Show drawing'}
-          >
-            {drawing.visible ? <Eye size={12} /> : <EyeOff size={12} />}
-          </button>
-          {/* Delete */}
           <button
             onClick={() => onDelete(drawing.id)}
-            className="p-1.5 rounded-md text-red-500/80 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-            title="Delete drawing"
+            className="p-1.5 rounded text-[#ef5350]/70 hover:text-[#ef5350] hover:bg-[#ef5350]/10 transition-colors"
+            title="Usuń rysunek"
           >
             <Trash2 size={12} />
           </button>
-          {/* Close */}
           <button
             onClick={onClose}
-            className="p-1.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-[#1a2030] transition-colors"
-            title="Close panel"
+            className="p-1.5 rounded text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39] transition-colors"
+            title="Zamknij"
           >
             <X size={12} />
           </button>
         </div>
       </div>
 
-      {/* ═══ Content (scrollable) ═══ */}
-      <div className="max-h-[70vh] overflow-y-auto">
+      {/* ═══ Tabs ═══ */}
+      <div className="flex border-b border-[#363a45]">
+        {tabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex-1 py-2 text-[11px] font-medium transition-colors relative ${
+              activeTab === tab.id
+                ? 'text-[#2962ff]'
+                : 'text-[#787b86] hover:text-[#d1d4dc]'
+            }`}
+          >
+            {tab.label}
+            {activeTab === tab.id && (
+              <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#2962ff]" />
+            )}
+          </button>
+        ))}
+      </div>
 
-        {/* ── Color Section ── */}
-        <Section title="Color">
-          <div className="grid grid-cols-6 gap-1.5">
-            {PALETTE.map(c => (
-              <button
-                key={c}
-                onClick={() => updateStyle({ color: c, fillColor: hexToRgba(c, 0.12) })}
-                className={`w-full aspect-square rounded-md border-2 transition-all hover:scale-110 ${
-                  s.color === c ? 'border-white scale-105 shadow-lg' : 'border-transparent hover:border-gray-600'
-                }`}
-                style={{ backgroundColor: c }}
-              />
-            ))}
-          </div>
-          <input
-            type="color"
-            value={s.color.startsWith('#') ? s.color : '#3b82f6'}
-            onChange={e => updateStyle({ color: e.target.value, fillColor: hexToRgba(e.target.value, 0.12) })}
-            className="w-full h-7 rounded-md cursor-pointer border border-[#1a2030] bg-transparent mt-1"
-            title="Custom color"
-          />
-        </Section>
+      {/* ═══ Tab content (scrollable) ═══ */}
+      <div className="max-h-[65vh] overflow-y-auto">
+        {activeTab === 'style' && <StyleTab drawing={drawing} onUpdate={onUpdate} />}
+        {activeTab === 'coords' && <CoordsTab drawing={drawing} />}
+        {activeTab === 'visibility' && <VisibilityTab drawing={drawing} onUpdate={onUpdate} />}
+      </div>
 
-        {/* ── Line Section ── */}
-        {hasLineWidth && (
-          <Section title="Line">
-            {/* Width */}
-            <div>
-              <label className="text-gray-500 text-[10px] block mb-1.5">Width</label>
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map(w => (
-                  <button
-                    key={w}
-                    onClick={() => updateStyle({ lineWidth: w })}
-                    className={`flex-1 py-2 rounded-md border transition-colors flex items-center justify-center ${
-                      s.lineWidth === w
-                        ? 'border-blue-500 bg-blue-500/15 text-blue-300'
-                        : 'border-[#1a2030] text-gray-500 hover:text-gray-300 hover:bg-[#1a2030]'
-                    }`}
-                  >
-                    <div style={{ width: '60%', height: Math.max(w, 1), backgroundColor: 'currentColor', borderRadius: 1 }} />
-                  </button>
-                ))}
-              </div>
-            </div>
-            {/* Style */}
-            <div>
-              <label className="text-gray-500 text-[10px] block mb-1.5">Style</label>
-              <div className="flex gap-1">
-                {([
-                  { key: 'solid' as const,  label: 'Solid',  visual: '━━━━━━' },
-                  { key: 'dashed' as const, label: 'Dashed', visual: '╌ ╌ ╌ ╌' },
-                  { key: 'dotted' as const, label: 'Dotted', visual: '• • • • •' },
-                ]).map(ls => (
-                  <button
-                    key={ls.key}
-                    onClick={() => updateStyle({ lineStyle: ls.key })}
-                    className={`flex-1 py-1.5 rounded-md text-[10px] border transition-colors font-mono ${
-                      s.lineStyle === ls.key
-                        ? 'border-blue-500 bg-blue-500/15 text-blue-300'
-                        : 'border-[#1a2030] text-gray-500 hover:text-gray-300 hover:bg-[#1a2030]'
-                    }`}
-                    title={ls.label}
-                  >
-                    {ls.visual}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </Section>
-        )}
-
-        {/* ── Fill Section ── */}
-        {hasFill && !isFib && (
-          <Section title="Fill">
-            <div className="flex gap-1">
-              {[
-                { val: 0, label: 'None' },
-                { val: 0.08, label: '8%' },
-                { val: 0.15, label: '15%' },
-                { val: 0.25, label: '25%' },
-                { val: 0.4, label: '40%' },
-              ].map(o => (
-                <button
-                  key={o.val}
-                  onClick={() => {
-                    const hex = s.color.startsWith('#') ? s.color : '#3b82f6';
-                    updateStyle({ fillColor: hexToRgba(hex, o.val) });
-                  }}
-                  className="flex-1 py-1.5 rounded-md text-[10px] border border-[#1a2030] text-gray-500 hover:text-gray-300 hover:bg-[#1a2030] transition-colors"
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {/* ── Text Section ── */}
-        {isText && (
-          <Section title="Text">
-            <div>
-              <label className="text-gray-500 text-[10px] block mb-1.5">Font Size: {s.fontSize}px</label>
-              <input
-                type="range" min={8} max={32} step={1}
-                value={s.fontSize}
-                onChange={e => updateStyle({ fontSize: Number(e.target.value) })}
-                className="w-full accent-blue-500"
-              />
-            </div>
-            <div>
-              <label className="text-gray-500 text-[10px] block mb-1.5">Content</label>
-              <input
-                type="text"
-                value={s.text}
-                onChange={e => updateStyle({ text: e.target.value })}
-                className="w-full bg-[#1a2030] border border-[#2a3040] rounded-md px-2.5 py-1.5 text-white text-[11px] outline-none focus:border-blue-500/60 transition-colors"
-                placeholder="Enter text..."
-              />
-            </div>
-          </Section>
-        )}
-
-        {/* ── Fibonacci Levels Section ── */}
-        {isFib && (
-          <Section title="Fibonacci Levels">
-            <div className="space-y-0.5 max-h-48 overflow-y-auto pr-0.5">
-              {fibLevels.map((fl, i) => (
-                <div key={i} className="flex items-center gap-2 py-1 rounded-md hover:bg-[#1a2030]/50 px-1.5 -mx-1.5">
-                  {/* Toggle visibility */}
-                  <button
-                    onClick={() => updateFibLevel(i, { visible: !fl.visible })}
-                    className={`flex-shrink-0 transition-colors ${fl.visible ? 'text-gray-300' : 'text-gray-600'}`}
-                    title={fl.visible ? 'Hide level' : 'Show level'}
-                  >
-                    {fl.visible ? <Eye size={10} /> : <EyeOff size={10} />}
-                  </button>
-
-                  {/* Level label */}
-                  <span className={`w-12 font-mono text-[10px] tabular-nums ${fl.visible ? 'text-gray-300' : 'text-gray-600'}`}>
-                    {(fl.level * 100).toFixed(1)}%
-                  </span>
-
-                  {/* Color swatch */}
-                  <input
-                    type="color"
-                    value={fl.color.startsWith('#') ? fl.color : '#6b7280'}
-                    onChange={e => updateFibLevel(i, { color: hexToRgba(e.target.value, 0.6) })}
-                    className="w-5 h-4 rounded cursor-pointer border border-[#2a3040] bg-transparent flex-shrink-0"
-                    title="Level color"
-                  />
-
-                  {/* Color strip preview */}
-                  <div className="flex-1 h-0.5 rounded-full" style={{ backgroundColor: fl.color }} />
-                </div>
-              ))}
-            </div>
-
-            {/* Preset buttons */}
-            <div className="flex gap-1 mt-2">
-              {[
-                {
-                  label: 'Key levels',
-                  title: 'Show 0%, 38.2%, 50%, 61.8%, 100%',
-                  action: () => {
-                    const preset = fibLevels.map(l => ({ ...l, visible: [0, 0.382, 0.5, 0.618, 1].includes(l.level) }));
-                    setFibLevels(preset);
-                    onUpdate(drawing.id, { style: { ...s, fibLevels: preset } });
-                  },
-                },
-                {
-                  label: 'Gray',
-                  title: 'Set all levels to gray',
-                  action: () => {
-                    const gray = fibLevels.map(l => ({ ...l, color: 'rgba(156,163,175,0.6)' }));
-                    setFibLevels(gray);
-                    onUpdate(drawing.id, { style: { ...s, fibLevels: gray } });
-                  },
-                },
-                {
-                  label: 'All',
-                  title: 'Show all levels',
-                  action: () => {
-                    const all = fibLevels.map(l => ({ ...l, visible: true }));
-                    setFibLevels(all);
-                    onUpdate(drawing.id, { style: { ...s, fibLevels: all } });
-                  },
-                },
-              ].map(p => (
-                <button
-                  key={p.label}
-                  onClick={p.action}
-                  title={p.title}
-                  className="flex-1 py-1.5 rounded-md text-[9px] border border-[#1a2030] text-gray-500 hover:text-gray-300 hover:bg-[#1a2030] transition-colors font-medium"
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {/* ── Coordinates Section (collapsed by default) ── */}
-        {drawing.points.length > 0 && (
-          <Section title="Coordinates" defaultOpen={false}>
-            <div className="space-y-1.5">
-              {drawing.points.map((pt, i) => (
-                <div key={i} className="flex items-center gap-2 text-[10px] font-mono bg-[#1a2030]/40 rounded-md px-2 py-1.5">
-                  <span className="text-gray-600 font-semibold w-5">P{i + 1}</span>
-                  <span className="text-gray-400 tabular-nums">{pt.price.toFixed(2)}</span>
-                  <span className="text-gray-600">@</span>
-                  <span className="text-gray-500 tabular-nums">{formatTimestamp(pt.time)}</span>
-                </div>
-              ))}
-            </div>
-          </Section>
-        )}
+      {/* ═══ Footer ═══ */}
+      <div className="flex items-center justify-end gap-2 px-3 py-2 border-t border-[#363a45] bg-[#1e222d]">
+        <button
+          onClick={onClose}
+          className="px-4 py-1.5 rounded text-[11px] text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39] transition-colors"
+        >
+          Anuluj
+        </button>
+        <button
+          onClick={onClose}
+          className="px-4 py-1.5 rounded text-[11px] bg-[#2962ff] text-white hover:bg-[#2962ff]/80 transition-colors font-medium"
+        >
+          Ok
+        </button>
       </div>
     </div>
   );

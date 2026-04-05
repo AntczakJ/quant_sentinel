@@ -66,7 +66,7 @@ export function AgentChat() {
   }, [messages]);
 
   const sendMessage = async (text: string) => {
-    if (!text.trim() || loading) return;
+    if (!text.trim() || loading) {return;}
 
     const userMessage: Message = {
       role: 'user',
@@ -89,7 +89,7 @@ export function AgentChat() {
     const timeoutId = setTimeout(() => {
       if (!isAbortedRef.current) {
         isAbortedRef.current = true;
-        if (timerRef.current) clearInterval(timerRef.current);
+        if (timerRef.current) {clearInterval(timerRef.current);}
         setLoading(false);
         setLoadingTime(0);
         setMessages((prev) => [
@@ -106,10 +106,10 @@ export function AgentChat() {
     try {
       const result = await agentAPI.chat(text.trim(), threadId);
       clearTimeout(timeoutId);
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {clearInterval(timerRef.current);}
 
       // If timeout already fired and set isAborted, discard late response
-      if (isAbortedRef.current) return;
+      if (isAbortedRef.current) {return;}
       isAbortedRef.current = true; // mark as handled
 
       if (result.thread_id) {
@@ -127,7 +127,7 @@ export function AgentChat() {
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (err) {
       clearTimeout(timeoutId);
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {clearInterval(timerRef.current);}
       if (!isAbortedRef.current) {
         isAbortedRef.current = true;
         setMessages((prev) => [
@@ -209,7 +209,7 @@ export function AgentChat() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto space-y-3 mb-3 min-h-0 max-h-[400px] pr-1">
+      <div className="flex-1 overflow-y-auto space-y-3 mb-3 min-h-0 max-h-[60vh] pr-1">
         {messages.map((msg, idx) => (
           <div key={idx} className={`flex gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
             {/* Avatar */}

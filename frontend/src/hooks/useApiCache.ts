@@ -29,7 +29,7 @@ export function useApiCache() {
 
   const get = useCallback(<T,>(key: string, ttl: number = 30000): T | null => {
     const entry = store.current[key];
-    if (!entry) return null;
+    if (!entry) {return null;}
     if (Date.now() - entry.timestamp > ttl) {
       delete store.current[key];
       return null;
@@ -48,7 +48,7 @@ export function useApiCache() {
   const invalidatePattern = useCallback((pattern: string): void => {
     const regex = new RegExp(pattern);
     Object.keys(store.current).forEach(k => {
-      if (regex.test(k)) delete store.current[k];
+      if (regex.test(k)) {delete store.current[k];}
     });
   }, []);
 
@@ -127,7 +127,7 @@ export function useCachedFetch<T,>(
   }, [key, ttl]);   // ← only primitives, no object refs
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {return;}
     void doFetch();
     const interval = setInterval(() => void doFetch(), ttl);
     return () => clearInterval(interval);

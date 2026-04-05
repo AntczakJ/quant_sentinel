@@ -12,15 +12,20 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css,md}\""
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "@tanstack/react-query": "^5.28.0",
+    "@tanstack/react-virtual": "^3.13.23",
     "axios": "^1.6.5",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
     "date-fns": "^3.0.0",
+    "idb-keyval": "^6.2.2",
     "lightweight-charts": "^4.1.0",
     "lucide-react": "^0.383.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^6.30.3",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",
     "zustand": "^4.4.1"
@@ -32,12 +37,15 @@
     "@typescript-eslint/parser": "^6.13.2",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
+    "comlink": "^4.4.2",
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
     "postcss": "^8.4.32",
     "prettier": "^3.1.0",
     "terser": "^5.46.1",
-    "vite": "^5.0.8"
+    "vite": "^5.0.8",
+    "vite-plugin-compression": "^0.5.1",
+    "vite-plugin-pwa": "^1.2.0"
   }
 }
