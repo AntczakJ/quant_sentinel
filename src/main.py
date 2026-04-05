@@ -23,14 +23,15 @@ from src.logger import logger
 from src.config import TOKEN, USER_PREFS, CHAT_ID, TD_API_KEY, \
     ENABLE_ML, ENABLE_RL, ENABLE_ADVANCED_INDICATORS, ENABLE_PATTERNS
 from src.interface import main_menu, tf_menu
-from src.smc_engine import get_smc_analysis, request_with_retry
+from src.smc_engine import get_smc_analysis
 from src.finance import calculate_position
 from src.scanner import scan_market_task, resolve_trades_task
 from src.ai_engine import ask_ai_gold
 from src.database import NewsDB
 from src.sentiment import get_sentiment_data
 from src.news import get_latest_news, get_economic_calendar
-from src.self_learning import auto_analyze_and_learn
+from src.self_learning import auto_analyze_and_learn, run_learning_cycle
+from src.openai_agent import get_agent, ask_agent_with_memory
 
 from flask import Flask, request as flask_request
 
@@ -40,6 +41,49 @@ from src.indicators import ichimoku, volume_profile
 from src.candlestick_patterns import engulfing, pin_bar, inside_bar
 from src.ml_models import ml
 from src.rl_agent import DQNAgent
+
+
+# =============================================================================
+# HELPER — czyszczenie odpowiedzi AI dla Telegrama
+# =============================================================================
+def clean_for_telegram(text: str) -> str:
+    """
+    Konwertuje nagłówki Markdown (###/##/#/####) na format Telegrama (*Bold*).
+    Telegram nie obsługuje nagłówków Markdown — wyświetla # literalnie.
+    """
+    # #### Heading 4 → *HEADING 4*
+    text = re.sub(r'^#{4}\s+(.+)$', r'*\1*', text, flags=re.MULTILINE)
+    # ### Heading 3 → *HEADING 3*
+    text = re.sub(r'^#{3}\s+(.+)$', r'*\1*', text, flags=re.MULTILINE)
+    # ## Heading 2 → *HEADING 2*
+    text = re.sub(r'^#{2}\s+(.+)$', r'*\1*', text, flags=re.MULTILINE)
+    # # Heading 1 → *HEADING 1*
+    text = re.sub(r'^#{1}\s+(.+)$', r'*\1*', text, flags=re.MULTILINE)
+    # Usuń wszelkie pozostałe # na początku linii
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+    # Zastąp ___/--- liniami poziomymi na Telegram separator
+    text = re.sub(r'^[-_]{3,}$', '━━━━━━━━━━━━━━', text, flags=re.MULTILINE)
+    return text
+
+
+def get_portfolio_balance_display() -> str:
+    """Pobiera aktualny balans portfela z bazy danych (preferuje portfolio_balance z dynamic_params)."""
+    try:
+        db_local = NewsDB()
+        portfolio_balance = db_local.get_param("portfolio_balance", None)
+        if portfolio_balance is not None:
+            try:
+                db_local.cursor.execute(
+                    "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
+                )
+                row = db_local.cursor.fetchone()
+                currency = str(row[0]) if row and row[0] else "PLN"
+            except Exception:
+                currency = "PLN"
+            return f"{float(portfolio_balance):.2f} {currency}"
+    except Exception:
+        pass
+    return "10000 PLN"
 
 # =============================================================================
 # INICJALIZACJA
@@ -99,10 +143,10 @@ def run_flask():
 # =============================================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    balance = db.get_balance(user_id)
+    balance_display = get_portfolio_balance_display()
     await update.message.reply_text(
         f"🚀 *QUANT SENTINEL AI ONLINE*\n"
-        f"💰 Kapitał w bazie: `{balance}$` | Interwał: `{USER_PREFS['tf']}`",
+        f"💰 Portfel: `{balance_display}` | Interwał: `{USER_PREFS['tf']}`",
         parse_mode="Markdown",
         reply_markup=main_menu()
     )
@@ -113,14 +157,28 @@ async def cap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.args or len(context.args) < 1:
             raise IndexError
         amount = float(context.args[0])
-        currency = context.args[1].upper() if len(context.args) > 1 else "USD"
+        currency = context.args[1].upper() if len(context.args) > 1 else "PLN"
         supported = ["USD", "PLN", "EUR", "GBP"]
         if currency not in supported:
             await update.message.reply_text(f"⚠️ Obsługiwane waluty: {', '.join(supported)}")
-            currency = "USD"
+            currency = "PLN"
+        # Zapisz do obu systemów: user_settings (Telegram) i portfolio dynamic_params (frontend)
         db.update_balance(user_id, amount)
         USER_PREFS["currency"] = currency
-        await update.message.reply_text(f"✅ *Portfel ustawiony!*\n💰 Kapitał: `{amount} {currency}`", parse_mode="Markdown")
+        db.set_param("portfolio_balance", amount)
+        db.set_param("portfolio_initial_balance", amount)
+        db.set_param("portfolio_equity", amount)
+        db.set_param("portfolio_pnl", 0.0)
+        db._execute(
+            "INSERT INTO dynamic_params (param_name, param_value) VALUES (?, ?) "
+            "ON CONFLICT(param_name) DO UPDATE SET param_value=excluded.param_value",
+            ("portfolio_currency_text", currency)
+        )
+        await update.message.reply_text(
+            f"✅ *Portfel ustawiony!*\n💰 Kapitał: `{amount} {currency}`\n"
+            f"_Zsynchronizowano z panelem web._",
+            parse_mode="Markdown"
+        )
     except IndexError:
         await update.message.reply_text("❌ Użycie: `/cap KWOTA WALUTA` (np. `/cap 2500 PLN`)")
     except ValueError:
@@ -195,6 +253,74 @@ async def backtest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"📊 *Backtest zakończony*\nNajlepsze parametry:\n"
     msg += f"• risk_percent: {best_risk}\n• min_tp_distance_mult: {best_mult}\n• target_rr: {best_rr}\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Komenda /agent <wiadomość> — rozmawia z Quant Sentinel Gold Trader Agent.
+    Agent pamięta historię rozmowy na poziomie użytkownika Telegram.
+    Użycie: /agent Przeanalizuj XAU/USD na M15
+            /agent reset  (kasuje historię rozmowy)
+    """
+    user_id = update.effective_user.id
+    user_text = " ".join(context.args) if context.args else ""
+
+    if not user_text:
+        await update.message.reply_text(
+            "🤖 *Quant Sentinel Agent*\n\n"
+            "Użycie: `/agent <wiadomość>`\n"
+            "Przykłady:\n"
+            "• `/agent Przeanalizuj złoto na M15`\n"
+            "• `/agent Daj mi sygnał tradingowy`\n"
+            "• `/agent Jakie newsy są teraz?`\n"
+            "• `/agent reset` — resetuje historię rozmowy",
+            parse_mode="Markdown",
+        )
+        return
+
+    # Reset historii rozmowy
+    if user_text.strip().lower() == "reset":
+        db.set_agent_thread(str(user_id), "")
+        await update.message.reply_text("✅ Historia rozmowy z agentem zresetowana.")
+        return
+
+    agent = get_agent()
+    if not agent:
+        await update.message.reply_text(
+            "❌ *Agent niedostępny*\nSprawdź klucz OPENAI_API_KEY w pliku .env.",
+            parse_mode="Markdown",
+        )
+        return
+
+    # Pobierz lub utwórz wątek dla tego użytkownika
+    thread_id = db.get_agent_thread(str(user_id)) or None
+
+    await update.message.reply_text("🤖 *Quant Sentinel Agent analizuje...*", parse_mode="Markdown")
+
+    try:
+        result = await asyncio.to_thread(agent.chat, user_text, thread_id)
+        # Zapisz thread_id do bazy (pamięć między sesjami)
+        db.set_agent_thread(str(user_id), result["thread_id"])
+
+        response = result["response"]
+        # Wyczyść markdown headers (###/####) dla Telegrama
+        response = clean_for_telegram(response)
+        # Telegram ma limit 4096 znaków — przytnij jeśli za długie
+        if len(response) > 4000:
+            response = response[:3997] + "..."
+
+        tool_info = ""
+        if result.get("tool_calls"):
+            tools_used = ", ".join(tc["name"] for tc in result["tool_calls"])
+            tool_info = f"\n\n_🔧 Użyte narzędzia: {tools_used}_"
+
+        await update.message.reply_text(
+            f"{response}{tool_info}",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"Błąd /agent command: {e}")
+        await update.message.reply_text(f"❌ Błąd agenta: {e}")
 
 async def portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.cursor.execute("SELECT timestamp, profit FROM trades WHERE status IN ('PROFIT','LOSS') AND profit IS NOT NULL ORDER BY timestamp ASC")
@@ -353,7 +479,11 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         17. Inside Bar -> +0.5
         Wydaj: [WYNIK: X/10] [POWÓD] [RADA]
         """
-        ai_verdict = await asyncio.to_thread(ask_ai_gold, "smc", learning_context + "\n" + learning_prompt)
+        ai_verdict = await asyncio.to_thread(
+            ask_agent_with_memory,
+            f"Oceń ten setup tradingowy XAU/USD według metodologii SMC (0-10):\n{learning_context}\n{learning_prompt}",
+            str(user_id),
+        )
         ai_match = re.search(r"WYNIK:\s*(\d+(?:\.\d+)?)/10", ai_verdict)
         ai_score = float(ai_match.group(1)) if ai_match else 0
         if ai_score < 4.0:
@@ -423,15 +553,14 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             factors['ob_confluence'] = ob_confluence
 
         # Strefy Supply/Demand
-        sd_zones = s.get('sd_zones', {})
-        demand_zones = sd_zones.get('demand', [])
-        supply_zones = sd_zones.get('supply', [])
+        demand_zones = s.get('demand', [])
+        supply_zones = s.get('supply', [])
         current_price = s['price']
         if direction == "LONG":
-            if any(abs(current_price - low) < 5.0 for low, _ in demand_zones):
+            if any(abs(current_price - z) < 5.0 for z in demand_zones):
                 factors['sd_zone'] = 1
         elif direction == "SHORT":
-            if any(abs(current_price - high) < 5.0 for _, high in supply_zones):
+            if any(abs(current_price - z) < 5.0 for z in supply_zones):
                 factors['sd_zone'] = 1
 
         # Dywergencja RSI
@@ -559,9 +688,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ... pozostałe przyciski (status_check, sentiment, news, itp.) pozostają bez zmian ...
     # (poniższy kod skopiuj z poprzedniej wersji – nie wymaga modyfikacji)
     elif query.data in ['change_cap', 'status_check']:
-        balance = db.get_balance(user_id)
-        currency = USER_PREFS.get("currency", "USD")
-        await safe_edit(f"📊 *DASHBOARD FINANSOWY*\n━━━━━━━━━━━━━━━━━━━━\n💰 Kapitał: `{balance} {currency}`\n💵 Przelicznik: `Automatyczny`\n━━━━━━━━━━━━━━━━━━━━\n👉 Aby zmienić: `/cap 5000 PLN`")
+        balance_display = get_portfolio_balance_display()
+        currency = USER_PREFS.get("currency", "PLN")
+        await safe_edit(f"📊 *DASHBOARD FINANSOWY*\n━━━━━━━━━━━━━━━━━━━━\n💰 Portfel: `{balance_display}`\n💵 Przelicznik: `Automatyczny`\n━━━━━━━━━━━━━━━━━━━━\n👉 Aby zmienić: `/cap 5000 PLN`")
     elif query.data == 'sentiment':
         await safe_edit("🎭 *Badanie nastrojów rynkowych...*")
         try:
@@ -570,7 +699,11 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sentiment_raw = await asyncio.to_thread(get_sentiment_data)
             full_context = (f"AKTUALNE DANE ZŁOTA:\nCena: {s['price']}, Trend: {s['trend']}, RSI: {s['rsi']}, FVG: {s['fvg']}\n"
                             f"HISTORIA TWOICH BŁĘDÓW:\n{failure_report}\nNEWSY Z RYNKU:\n{sentiment_raw}")
-            ai_opinion = await asyncio.to_thread(ask_ai_gold, "trading_signal", full_context)
+            ai_opinion = await asyncio.to_thread(
+                ask_agent_with_memory,
+                f"Wydaj pełny werdykt tradingowy dla XAU/USD na podstawie poniższych danych:\n{full_context}",
+                str(user_id),
+            )
             await safe_edit(f"🎯 *WERDYKT AI:* \n\n{ai_opinion}")
         except Exception as e:
             await safe_edit(f"❌ Błąd: {e}")
@@ -578,18 +711,23 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit("📰 *AI filtruje newsy...*")
         try:
             raw_news = await asyncio.to_thread(get_latest_news)
-            ai_news = await asyncio.to_thread(ask_ai_gold, "news", raw_news)
+            ai_news = await asyncio.to_thread(
+                ask_agent_with_memory,
+                f"Zinterpretuj poniższe newsy rynkowe pod kątem wpływu na cenę złota (XAU/USD). "
+                f"Czy są bycze, niedźwiedzie, czy neutralne? Jakie wnioski tradingowe?\n\n{raw_news}",
+                str(user_id),
+            )
             await safe_edit(f"📰 *INTERPRETACJA NEWSÓW:*\n\n{ai_news}")
         except Exception as e:
             await safe_edit(f"❌ Błąd newsów: {e}")
     elif query.data == 'stats_btn':
         await stats_command(update, context)
     elif query.data == 'settings':
-        balance = db.get_balance(user_id)
-        await safe_edit(f"⚙️ *USTAWIENIA*\n\nKapitał: `{balance}$` | Interwał: `{USER_PREFS['tf']}`")
+        balance_display = get_portfolio_balance_display()
+        await safe_edit(f"⚙️ *USTAWIENIA*\n\nPortfel: `{balance_display}` | Interwał: `{USER_PREFS['tf']}`")
     elif query.data == 'back':
-        balance = db.get_balance(user_id)
-        await safe_edit(f"🚀 *QUANT SENTINEL DASHBOARD*\nKapitał: `{balance}$`")
+        balance_display = get_portfolio_balance_display()
+        await safe_edit(f"🚀 *QUANT SENTINEL DASHBOARD*\nPortfel: `{balance_display}`")
     elif query.data == 'menu_tf':
         await safe_edit("⏱ *Wybierz interwał analizy:*", reply_markup=tf_menu())
     elif query.data.startswith('set_'):
@@ -641,6 +779,11 @@ def run_bot():
 
             logger.info("🧠 Rejestrowanie zadania: auto_analyze_and_learn (co 30 min)")
             app.job_queue.run_repeating(auto_analyze_and_learn, interval=1800, first=60, job_kwargs=job_settings)
+
+            logger.info("📈 Rejestrowanie zadania: run_learning_cycle (co 2h)")
+            async def learning_cycle_job(context):
+                await asyncio.to_thread(run_learning_cycle)
+            app.job_queue.run_repeating(learning_cycle_job, interval=7200, first=300, job_kwargs=job_settings)
         except Exception as e:
             logger.error(f"❌ Błąd rejestrowania zadań: {e}")
     else:
@@ -654,6 +797,7 @@ def run_bot():
     app.add_handler(CommandHandler("set", set_param_command))
     app.add_handler(CommandHandler("backtest", backtest_command))
     app.add_handler(CommandHandler("portfolio", portfolio_command))
+    app.add_handler(CommandHandler("agent", agent_command))
     app.add_handler(CallbackQueryHandler(handle_buttons))
     logger.info("🤖 Bot startuje w trybie POLLING...")
     app.run_polling()

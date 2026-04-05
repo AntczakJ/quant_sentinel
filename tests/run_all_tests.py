@@ -10,6 +10,9 @@ import time
 import subprocess
 from pathlib import Path
 
+# Ensure subprocesses use UTF-8 I/O on Windows (emoji in print() calls)
+_UTF8_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
 print("="*90)
 print("🧪 QUANT SENTINEL - MASTER TEST SUITE")
 print("="*90)
@@ -39,14 +42,18 @@ for test_name, test_file in TESTS:
             result = subprocess.run(
                 [sys.executable, test_file],
                 capture_output=True,
-                timeout=120
+                timeout=120,
+                env=_UTF8_ENV
             )
             if result.returncode == 0:
                 print(f"✅ {test_name}: PRZEJĘTY")
                 results.append((test_name, True))
             else:
                 print(f"❌ {test_name}: FAILED")
-                print(result.stdout.decode()[-500:] if result.stdout else "")
+                if result.stdout:
+                    print(result.stdout.decode("utf-8", errors="replace")[-500:])
+                if result.stderr:
+                    print("STDERR:", result.stderr.decode("utf-8", errors="replace")[-300:])
                 results.append((test_name, False))
         except subprocess.TimeoutExpired:
             print(f"❌ {test_name}: TIMEOUT")

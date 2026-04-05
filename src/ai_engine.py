@@ -97,15 +97,13 @@ def ask_ai_gold(context_type: str, raw_data: str) -> str:
     system_prompt = PROMPTS.get(context_type, "Analizuj dane rynkowe.")
 
     try:
-        response = client.chat.completions.create(
+        response = client.responses.create(
             model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"DANE RYNKOWE: {raw_data}"}
-            ],
+            instructions=system_prompt,
+            input=f"DANE RYNKOWE: {raw_data}",
             temperature=0.5  # Niższa temperatura = bardziej logiczne, powtarzalne odpowiedzi
         )
-        return response.choices[0].message.content
+        return response.output_text
 
     except Exception as e:
         error_msg = f"⚠️ Błąd AI ({type(e).__name__}): {str(e)}"

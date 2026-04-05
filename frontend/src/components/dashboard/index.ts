@@ -8,4 +8,5 @@ export { SignalPanel } from './SignalPanel';
 export { PortfolioStats } from './PortfolioStats';
 export { ModelStats } from './ModelStats';
 export { SignalHistory } from './SignalHistory';
+export { AgentChat } from './AgentChat';
 

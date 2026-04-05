@@ -58,10 +58,10 @@ export function ModelStats() {
       }
     };
 
-    fetchStats();
+    void fetchStats();
 
-    // Refresh every 10 seconds
-    const interval = setInterval(fetchStats, 10000);
+    // Refresh every 120 seconds (model stats barely change)
+    const interval = setInterval(fetchStats, 120000);
     return () => clearInterval(interval);
   }, [setModelsStats]);
 
@@ -79,7 +79,7 @@ export function ModelStats() {
     );
   }
 
-  if (!stats) return null;
+  if (!stats) { return null; }
 
   return (
     <div className="space-y-3">
@@ -91,7 +91,7 @@ export function ModelStats() {
 
       {/* Ensemble Accuracy */}
       {stats.ensemble_accuracy !== undefined && (
-        <div className="bg-gradient-to-r from-purple-900/20 to-blue-900/20 border border-purple-500/30 rounded p-3">
+        <div className="bg-dark-bg border border-purple-600/20 rounded p-3">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs text-gray-400">Ensemble Accuracy</span>
             <span className="text-xl font-bold text-purple-400">
@@ -100,7 +100,7 @@ export function ModelStats() {
           </div>
           <div className="bg-dark-secondary rounded-full h-1.5 overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-purple-500 to-blue-500 transition-all"
+              className="h-full bg-purple-500 transition-all"
               style={{ width: `${Math.min(stats.ensemble_accuracy * 100, 100)}%` }}
             />
           </div>

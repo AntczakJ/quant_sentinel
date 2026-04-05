@@ -26,9 +26,6 @@ interface TradingStore {
   selectedInterval: string;
   setSelectedInterval: (interval: string) => void;
 
-  // WebSocket status
-  wsConnected: boolean;
-  setWsConnected: (connected: boolean) => void;
 
   // API status
   apiConnected: boolean;
@@ -61,9 +58,6 @@ export const useTradingStore = create<TradingStore>((set) => ({
   selectedInterval: '15m',
   setSelectedInterval: (interval) => set({ selectedInterval: interval }),
 
-  // WebSocket status
-  wsConnected: false,
-  setWsConnected: (connected) => set({ wsConnected: connected }),
 
   // API status
   apiConnected: false,

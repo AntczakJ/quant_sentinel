@@ -1,316 +1,171 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── Minimal Dark Theme ── */
+
 :root {
-  --color-bg: #0f0f1e;
-  --color-surface: #1a1a2e;
-  --color-secondary: #26264f;
-  --color-accent-green: #00ff88;
-  --color-accent-red: #ff3355;
-  --color-accent-blue: #00d4ff;
-  --color-accent-cyan: #00f5ff;
-  --color-accent-purple: #a78bfa;
+  --color-bg: #0b0e14;
+  --color-surface: #111622;
+  --color-secondary: #1a2030;
+  --color-border: #222a3a;
+  --color-accent-green: #22c55e;
+  --color-accent-red: #ef4444;
+  --color-accent-blue: #3b82f6;
+  --color-accent-cyan: #06b6d4;
+  --color-accent-purple: #8b5cf6;
 }
 
-* {
-  box-sizing: border-box;
-}
-
-html {
-  scroll-behavior: smooth;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
   padding: 0;
   min-height: 100vh;
   min-width: 320px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 0.875rem;
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
-  color: rgba(255, 255, 255, 0.95);
-
-  /* Premium gradient background */
-  background: linear-gradient(135deg, #0f0f1e 0%, #1a0f2e 25%, #0f1a2e 50%, #1a1a2e 100%);
-  background-attachment: fixed;
-  background-size: 400% 400%;
+  color: #e2e8f0;
+  background: #0b0e14;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Animated background */
-@keyframes gradientShift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-body {
-  animation: gradientShift 15s ease infinite;
-}
-
-/* Root container */
 #root {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
 }
 
-/* Scrollbar styling - premium look */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
+/* Scrollbar — thin, subtle */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a3344; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3a4a5c; }
 
-::-webkit-scrollbar-track {
-  background: rgba(26, 26, 46, 0.5);
-  border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #00ff88 0%, #00d4ff 50%, #a78bfa 100%);
-  border-radius: 10px;
-  transition: all 0.3s ease;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #00dd77 0%, #00bfff 50%, #9876d4 100%);
-  box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
-}
-
-/* Selection styling */
 ::selection {
-  background-color: rgba(0, 255, 136, 0.3);
-  color: #00ff88;
-}
-
-/* Price flash animations */
-.price-up {
-  animation: pulse-green 0.3s ease-in-out;
-}
-
-.price-down {
-  animation: pulse-red 0.3s ease-in-out;
+  background-color: rgba(34, 197, 94, 0.25);
+  color: #fff;
 }
 
 /* Signal colors */
-.signal-strong-buy {
-  @apply bg-green-950 bg-opacity-30 text-accent-green;
-  box-shadow: inset 0 0 20px rgba(0, 255, 136, 0.2);
-}
+.signal-strong-buy { @apply bg-green-950/20 text-green-400; }
+.signal-buy { @apply text-green-400; }
+.signal-hold { @apply text-blue-400; }
+.signal-sell { @apply text-red-400; }
+.signal-strong-sell { @apply bg-red-950/20 text-red-400; }
 
-.signal-buy {
-  @apply text-accent-green;
-}
-
-.signal-hold {
-  @apply text-accent-blue;
-}
-
-.signal-sell {
-  @apply text-accent-red;
-}
-
-.signal-strong-sell {
-  @apply bg-red-950 bg-opacity-30 text-accent-red;
-  box-shadow: inset 0 0 20px rgba(255, 51, 85, 0.2);
-}
-
-/* Card styling */
+/* Card — flat, clean */
 .card {
-  @apply bg-dark-surface border border-dark-secondary rounded-xl p-4;
-  backdrop-filter: blur(10px);
-  background-color: rgba(26, 26, 46, 0.6);
-  border: 1px solid rgba(0, 255, 136, 0.1);
-  transition: all 0.3s ease;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  @apply rounded-lg p-4;
+  background: #111622;
+  border: 1px solid #1e2736;
 }
 
 .card:hover {
-  border-color: rgba(0, 255, 136, 0.3);
-  box-shadow: 0 12px 48px rgba(0, 255, 136, 0.15), inset 0 0 20px rgba(0, 255, 136, 0.05);
-  transform: translateY(-2px);
+  border-color: #2a3544;
 }
 
-/* Section title */
+/* Section title — clean, no glow */
 .section-title {
-  @apply text-sm font-bold uppercase tracking-wider;
-  color: #00ff88;
-  text-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
-  letter-spacing: 2px;
-  font-family: 'Space Grotesk', sans-serif;
+  @apply text-xs font-semibold uppercase tracking-widest text-gray-400;
+  font-family: 'Inter', sans-serif;
+  letter-spacing: 0.1em;
 }
 
 /* Button styling */
 .btn {
-  @apply px-4 py-2 rounded-lg font-semibold transition-all duration-300;
-  font-family: 'Space Grotesk', sans-serif;
-  border: 2px solid transparent;
+  @apply px-4 py-2 rounded-md font-medium text-sm transition-colors;
 }
 
 .btn-primary {
-  @apply bg-accent-green text-black hover:bg-accent-green-dark;
-  box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
-}
-
-.btn-primary:hover {
-  transform: scale(1.05);
-  box-shadow: 0 0 25px rgba(0, 255, 136, 0.5);
+  @apply bg-green-600 text-white hover:bg-green-500;
 }
 
 .btn-secondary {
-  @apply bg-dark-secondary text-accent-blue border-accent-blue hover:bg-dark-tertiary;
-  box-shadow: 0 0 15px rgba(0, 212, 255, 0.2);
+  @apply bg-gray-800 text-gray-300 hover:bg-gray-700;
 }
 
 /* Price display */
 .price-display {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 1.875rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: #00ff88;
-  text-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: #e2e8f0;
 }
 
-/* Glowing text */
-.glow-text {
-  color: #00ff88;
-  text-shadow: 0 0 10px rgba(0, 255, 136, 0.5), 0 0 20px rgba(0, 255, 136, 0.3);
-}
+/* Glow text — toned down to simple color */
+.glow-text { color: #22c55e; }
+.glow-text-red { color: #ef4444; }
+.glow-text-blue { color: #3b82f6; }
 
-.glow-text-red {
-  color: #ff3355;
-  text-shadow: 0 0 10px rgba(255, 51, 85, 0.5), 0 0 20px rgba(255, 51, 85, 0.3);
-}
-
-.glow-text-blue {
-  color: #00d4ff;
-  text-shadow: 0 0 10px rgba(0, 212, 255, 0.5), 0 0 20px rgba(0, 212, 255, 0.3);
-}
-
-/* Divider */
 .divider {
-  @apply bg-gradient-to-r from-transparent via-accent-green to-transparent;
   height: 1px;
-  opacity: 0.3;
+  background: #1e2736;
 }
 
 /* Chart container */
 .chart-container {
-  background: rgba(10, 10, 20, 0.4);
-  border-radius: 12px;
+  background: #0d1117;
+  border-radius: 8px;
   overflow: hidden;
-  box-shadow: inset 0 0 20px rgba(0, 255, 136, 0.05);
 }
 
 /* Stats grid */
 .stats-grid {
   display: grid;
-  gap: 1rem;
-  grid-auto-flow: row;
+  gap: 0.75rem;
 }
-
 @media (min-width: 768px) {
-  .stats-grid {
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  }
+  .stats-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 }
 
 /* Status badge */
 .status-connected {
-  @apply flex items-center gap-2 text-accent-green;
+  @apply flex items-center gap-2 text-green-400;
 }
-
 .status-connected::before {
   content: '';
-  width: 8px;
-  height: 8px;
-  background: #00ff88;
+  width: 6px; height: 6px;
+  background: #22c55e;
   border-radius: 50%;
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
 }
-
 .status-disconnected {
-  @apply flex items-center gap-2 text-accent-red;
+  @apply flex items-center gap-2 text-red-400;
 }
-
 .status-disconnected::before {
   content: '';
-  width: 8px;
-  height: 8px;
-  background: #ff3355;
+  width: 6px; height: 6px;
+  background: #ef4444;
   border-radius: 50%;
-  box-shadow: 0 0 10px rgba(255, 51, 85, 0.5);
 }
 
 /* Responsive grid */
-.dashboard-grid {
-  display: grid;
-  gap: 1.5rem;
-  grid-template-columns: 1fr;
-}
+.dashboard-grid { display: grid; gap: 1rem; grid-template-columns: 1fr; }
+@media (min-width: 1024px) { .dashboard-grid { grid-template-columns: 2fr 1fr; } }
+@media (min-width: 1536px) { .dashboard-grid { grid-template-columns: 3fr 1fr; } }
 
-@media (min-width: 1024px) {
-  .dashboard-grid {
-    grid-template-columns: 2fr 1fr;
-  }
-}
-
-@media (min-width: 1536px) {
-  .dashboard-grid {
-    grid-template-columns: 3fr 1fr;
-  }
-}
-
-/* Utility animations */
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
-}
-
-@keyframes glow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-
-@keyframes shimmer {
-  0% { background-position: -1000px 0; }
-  100% { background-position: 1000px 0; }
-}
-
-.float {
-  animation: float 3s ease-in-out infinite;
-}
-
-.glow {
-  animation: glow 2s ease-in-out infinite;
-}
-
-/* Text utilities */
+/* Text gradient utility */
 .text-gradient {
-  background: linear-gradient(135deg, #00ff88 0%, #00d4ff 50%, #a78bfa 100%);
+  background: linear-gradient(135deg, #22c55e 0%, #3b82f6 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* Code block styling */
+/* Code block */
 code {
-  @apply bg-dark-secondary px-2 py-1 rounded text-accent-cyan text-xs;
+  @apply bg-gray-800/80 px-1.5 py-0.5 rounded text-cyan-400 text-xs;
   font-family: 'JetBrains Mono', monospace;
 }
 
 /* Link styling */
 a {
-  @apply text-accent-blue hover:text-accent-cyan transition-colors;
+  @apply text-blue-400 hover:text-blue-300 transition-colors;
   text-decoration: none;
-  border-bottom: 1px dotted rgba(0, 212, 255, 0.3);
 }
 
-a:hover {
-  border-bottom-color: rgba(0, 212, 255, 0.7);
-}
+a:hover { text-decoration: underline; }

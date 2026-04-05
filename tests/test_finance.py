@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """tests/test_finance.py - Finance calculations tests"""
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.finance import calculate_position
 
 print("Testing finance calculations...")

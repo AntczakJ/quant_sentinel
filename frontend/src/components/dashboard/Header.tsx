@@ -1,11 +1,11 @@
 /**
  * src/components/dashboard/Header.tsx - Dashboard header with live price
- * Optimized: Uses cached ticker instead of making new requests
  */
 
 import { useEffect, useState } from 'react';
-import { TrendingUp, TrendingDown, Radio } from 'lucide-react';
+import { TrendingUp, TrendingDown } from 'lucide-react';
 import { useTradingStore } from '../../store/tradingStore';
+import { ScrollProgressBar } from './ScrollProgressBar';
 
 export function Header() {
   const { ticker, apiConnected } = useTradingStore();
@@ -13,25 +13,20 @@ export function Header() {
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
 
   useEffect(() => {
-    // Flash animation on price change only
     if (!ticker) return;
-
     if (prevPrice !== null) {
-      if (ticker.price > prevPrice) {
-        setPriceFlash('up');
-      } else if (ticker.price < prevPrice) {
-        setPriceFlash('down');
-      }
-
+      if (ticker.price > prevPrice) setPriceFlash('up');
+      else if (ticker.price < prevPrice) setPriceFlash('down');
       setTimeout(() => setPriceFlash(null), 300);
     }
     setPrevPrice(ticker.price);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticker?.price]);
 
   if (!ticker) {
     return (
-      <header className="sticky top-0 z-50 backdrop-blur-xl bg-gradient-to-r from-dark-tertiary via-dark-secondary to-dark-tertiary border-b border-dark-secondary border-opacity-20 shadow-2xl">
-        <div className="px-6 py-4 text-center text-gray-400">Loading...</div>
+      <header className="sticky top-0 z-50 bg-dark-surface border-b border-dark-secondary">
+        <div className="px-6 py-3 text-center text-gray-500 text-sm">Loading...</div>
       </header>
     );
   }
@@ -39,57 +34,39 @@ export function Header() {
   const isPositive = ticker.change >= 0;
 
   return (
-    <header className="sticky top-0 z-50 backdrop-blur-xl bg-gradient-to-r from-dark-tertiary via-dark-secondary to-dark-tertiary border-b border-dark-secondary border-opacity-20 shadow-2xl">
-      <div className="px-6 py-4 flex items-center justify-between gap-8">
+    <header className="sticky top-0 z-50 bg-dark-surface/95 backdrop-blur-sm border-b border-dark-secondary">
+      <div className="px-4 lg:px-6 py-3 flex items-center justify-between gap-6 max-w-[1600px] mx-auto">
 
-        {/* Logo and Symbol */}
-        <div className="flex items-center gap-4 min-w-max">
-          <div className="flex items-center gap-2">
-            <div className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-accent-cyan via-accent-green to-accent-purple font-display">
-              QUANT
-            </div>
-            <div className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-accent-purple via-accent-blue to-accent-cyan font-display">
-              SENTINEL
-            </div>
-          </div>
-          <div className="h-8 w-px bg-gradient-to-b from-transparent via-accent-green to-transparent opacity-50"></div>
-          <div className="text-lg font-bold text-accent-cyan font-display">{ticker.symbol}</div>
+        {/* Logo */}
+        <div className="flex items-center gap-3 min-w-max">
+          <span className="text-lg font-bold text-white tracking-wide">QUANT</span>
+          <span className="text-lg font-bold text-green-400 tracking-wide">SENTINEL</span>
+          <span className="text-xs text-gray-500 ml-1 hidden sm:block">{ticker.symbol}</span>
         </div>
 
-         {/* Price Info - Center (Flex-grow) */}
-         <div className={`flex-1 text-center transition-all duration-300 ${priceFlash === 'up' ? 'animate-pulse-blue' : priceFlash === 'down' ? 'animate-pulse' : ''}`}>
-           <div className="text-4xl font-bold font-mono glow-text">
-             ${ticker.price.toFixed(2)}
-           </div>
-           <div className={`flex items-center justify-center gap-2 mt-1 font-semibold text-sm ${isPositive ? 'text-accent-green' : 'text-accent-red'}`}>
-             {isPositive ? (
-               <>
-                 <TrendingUp size={16} className="animate-float" />
-                 <span>+${ticker.change.toFixed(2)} (+{ticker.change_pct.toFixed(2)}%)</span>
-               </>
-             ) : (
-               <>
-                 <TrendingDown size={16} className="animate-float" />
-                 <span>-${Math.abs(ticker.change).toFixed(2)} ({ticker.change_pct.toFixed(2)}%)</span>
-               </>
-             )}
-           </div>
-         </div>
+        {/* Price */}
+        <div className={`flex-1 text-center transition-colors duration-200 ${priceFlash === 'up' ? 'text-green-400' : priceFlash === 'down' ? 'text-red-400' : ''}`}>
+          <div className="text-2xl lg:text-3xl font-bold font-mono text-white">
+            ${ticker.price.toFixed(2)}
+          </div>
+          <div className={`flex items-center justify-center gap-1.5 text-xs font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+            {isPositive ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+            <span>
+              {isPositive ? '+' : ''}{ticker.change.toFixed(2)} ({isPositive ? '+' : ''}{ticker.change_pct.toFixed(2)}%)
+            </span>
+          </div>
+        </div>
 
-        {/* Status - Right */}
+        {/* Status */}
         <div className="text-right min-w-max">
-          <div className="text-xs font-bold text-gray-400 mb-1 uppercase tracking-widest font-display">API Status</div>
-          <div className={`flex items-center justify-end gap-2 font-semibold text-sm ${apiConnected ? 'text-accent-green' : 'text-accent-red'}`}>
-            <div className={`w-3 h-3 rounded-full ${apiConnected ? 'bg-accent-green animate-pulse glow' : 'bg-accent-red'}`}></div>
-            <span className="font-mono">{apiConnected ? 'CONNECTED' : 'DISCONNECTED'}</span>
-            <Radio size={14} className={apiConnected ? 'animate-spin' : ''} />
+          <div className={`flex items-center justify-end gap-1.5 text-xs font-medium ${apiConnected ? 'text-green-400' : 'text-red-400'}`}>
+            <div className={`w-1.5 h-1.5 rounded-full ${apiConnected ? 'bg-green-400' : 'bg-red-400'}`} />
+            <span>{apiConnected ? 'API' : 'Offline'}</span>
           </div>
         </div>
       </div>
-
-      {/* Divider line with gradient */}
-      <div className="h-px w-full bg-gradient-to-r from-transparent via-accent-green to-transparent opacity-20"></div>
+      {/* Pasek postępu scrolla – pod całym headerem */}
+      <ScrollProgressBar />
     </header>
   );
 }
-

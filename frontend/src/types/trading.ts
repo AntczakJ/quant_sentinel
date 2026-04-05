@@ -104,7 +104,7 @@ export interface TrainingStatus {
 
 export interface WebSocketMessage {
   type: 'price_update' | 'signal_update' | 'ping';
-  data?: any;
+  data?: unknown;
   timestamp?: string;
 }
 

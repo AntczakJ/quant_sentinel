@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """tests/test_performance.py - Performance and benchmark tests"""
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import time
 from src.smc_engine import get_smc_analysis
 from src.cache import cached_with_key

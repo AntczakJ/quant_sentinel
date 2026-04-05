@@ -10,77 +10,65 @@ import { ModelStats } from './ModelStats';
 import { CandlestickChart } from '../charts/CandlestickChart';
 import { SignalHistory } from './SignalHistory';
 import { TradeHistory } from './TradeHistory';
+import { AgentChat } from './AgentChat';
 
 export function Dashboard() {
   return (
-    <div className="min-h-screen bg-dark-bg text-white font-mono flex flex-col">
-      {/* Header - Full width */}
+    <div className="min-h-screen bg-dark-bg text-gray-200 font-sans flex flex-col">
       <Header />
 
-      {/* Main Content Container */}
-      <div className="flex-1 w-full px-4 py-6 lg:px-6 lg:py-8 max-w-full">
-        {/* Main Grid Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 auto-rows-max">
-
-          {/* Large Chart - Takes 2/3 width */}
-          <div className="lg:col-span-3">
-            <div className="card">
-              <h2 className="section-title mb-4">📊 CANDLESTICK CHART</h2>
-              <div className="chart-container h-[400px] lg:h-[500px]">
-                <CandlestickChart />
-              </div>
-            </div>
+      <div className="flex-1 w-full px-4 py-4 lg:px-6 lg:py-6 max-w-[1600px] mx-auto space-y-4">
+        {/* Top: Chart + Sidebar */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          <div className="lg:col-span-3 card p-3 flex flex-col" style={{ height: '750px' }}>
+            <CandlestickChart />
           </div>
 
-          {/* Right Sidebar - Takes 1/3 width */}
-          <div className="flex flex-col gap-6">
-            {/* Signal Panel */}
+          <div className="flex flex-col gap-4">
             <div className="card">
-              <h2 className="section-title mb-4">⚡ SIGNALS</h2>
-              <div className="space-y-4">
-                <SignalPanel />
-              </div>
+              <h2 className="section-title mb-3">Signals</h2>
+              <SignalPanel />
             </div>
-
-            {/* Portfolio Stats */}
             <div className="card">
-              <h2 className="section-title mb-4">💰 PORTFOLIO</h2>
+              <h2 className="section-title mb-3">Portfolio</h2>
               <PortfolioStats />
             </div>
           </div>
         </div>
 
-        {/* Bottom Section - Full Width Stats & Analysis */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-
-          {/* QUANT PRO Analysis */}
+        {/* Middle: Analysis + Signal History */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2">
             <AnalysisPanel />
           </div>
-
-          {/* Signal History */}
           <div className="card">
-            <h2 className="section-title mb-4">📜 SIGNAL HISTORY</h2>
+            <h2 className="section-title mb-3">Signal History</h2>
             <SignalHistory />
           </div>
         </div>
 
-        {/* Trade History & Model Stats */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-          {/* Trade History */}
+        {/* Bottom: Trades + Models */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="card">
-            <h2 className="section-title mb-4">💹 TRADE HISTORY</h2>
+            <h2 className="section-title mb-3">Trade History <span className="text-xs text-gray-500 font-normal">— ostatnie 10</span></h2>
             <TradeHistory />
           </div>
-
-          {/* Model Stats */}
           <div className="card">
-            <h2 className="section-title mb-4">🤖 MODEL STATS</h2>
+            <h2 className="section-title mb-3">ML Models</h2>
             <ModelStats />
           </div>
+        </div>
+
+        {/* Agent Chat */}
+        <div className="card">
+          <h2 className="section-title mb-3">
+            AI Agent
+            {' '}
+            <span className="text-xs text-green-500 font-normal ml-1">● memory</span>
+          </h2>
+          <AgentChat />
         </div>
       </div>
     </div>
   );
 }
-

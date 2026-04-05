@@ -10,6 +10,7 @@ Konwersje walut TYLKO w portfelu!
 
 import sys
 import os
+import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -36,13 +37,21 @@ def _get_portfolio():
         # Próbuj pobrać istniejące portfolio
         balance = db.get_param("portfolio_balance", None)
         if balance is not None:
+            # Odczytaj walutę — przechowywana jako tekst w osobnej kolumnie
+            try:
+                db.cursor.execute("SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'")
+                row = db.cursor.fetchone()
+                currency = str(row[0]) if row and row[0] else "PLN"
+            except Exception:
+                currency = "PLN"
+
             return {
                 "balance": float(balance),
-                "initial_balance": float(db.get_param("portfolio_initial_balance", balance)),
-                "equity": float(db.get_param("portfolio_equity", balance)),
-                "pnl": float(db.get_param("portfolio_pnl", 0)),
-                "currency": db.get_param("portfolio_currency", "PLN"),
-                "current_price": float(db.get_param("current_price", 2050.0))
+                "initial_balance": float(db.get_param("portfolio_initial_balance", balance) or balance),
+                "equity": float(db.get_param("portfolio_equity", balance) or balance),
+                "pnl": float(db.get_param("portfolio_pnl", 0) or 0),
+                "currency": currency,
+                "current_price": float(db.get_param("current_price", 2050.0) or 2050.0)
             }
     except Exception as e:
         logger.debug(f"Could not load portfolio from database: {e}")
@@ -62,11 +71,16 @@ def _save_portfolio(portfolio_data):
     """Zapisz portfolio do bazy danych (persistentne)"""
     try:
         db = NewsDB()
-        db.set_param("portfolio_balance", str(portfolio_data["balance"]))
-        db.set_param("portfolio_initial_balance", str(portfolio_data["initial_balance"]))
-        db.set_param("portfolio_equity", str(portfolio_data["equity"]))
-        db.set_param("portfolio_pnl", str(portfolio_data["pnl"]))
-        db.set_param("portfolio_currency", portfolio_data.get("currency", "PLN"))
+        db.set_param("portfolio_balance", float(portfolio_data["balance"]))
+        db.set_param("portfolio_initial_balance", float(portfolio_data["initial_balance"]))
+        db.set_param("portfolio_equity", float(portfolio_data["equity"]))
+        db.set_param("portfolio_pnl", float(portfolio_data["pnl"]))
+        # Waluta (text) — przechowywana jako string w osobnym param
+        db._execute(
+            "INSERT INTO dynamic_params (param_name, param_value) VALUES (?, ?) "
+            "ON CONFLICT(param_name) DO UPDATE SET param_value=excluded.param_value",
+            ("portfolio_currency_text", portfolio_data.get("currency", "PLN"))
+        )
         logger.debug("Portfolio saved to database")
     except Exception as e:
         logger.warning(f"Could not save portfolio to database: {e}")
@@ -77,7 +91,7 @@ def _save_portfolio(portfolio_data):
     summary="Get portfolio status",
     description="Get current portfolio balance in PLN, P&L, and position info"
 )
-async def get_portfolio_status():
+def get_portfolio_status():
     """Get current portfolio status (in PLN)"""
     try:
         portfolio = _get_portfolio()
@@ -105,7 +119,7 @@ async def get_portfolio_status():
     summary="Get portfolio history",
     description="Get historical portfolio values in PLN"
 )
-async def get_portfolio_history():
+def get_portfolio_history():
     """Get portfolio equity history (in PLN)"""
     try:
         db = NewsDB()
@@ -127,7 +141,7 @@ async def get_portfolio_history():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/summary", summary="Get portfolio summary")
-async def get_portfolio_summary():
+def get_portfolio_summary():
     """Get quick portfolio summary (in PLN)"""
     portfolio = _get_portfolio()
 
@@ -140,7 +154,7 @@ async def get_portfolio_summary():
     }
 
 @router.post("/update-balance", summary="Update portfolio balance")
-async def update_balance(update: BalanceUpdate):
+def update_balance(update: BalanceUpdate):
     """Update portfolio starting balance (in PLN)"""
     try:
         if update.balance <= 0:
@@ -169,7 +183,7 @@ async def update_balance(update: BalanceUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/current-price", summary="Get current gold price")
-async def get_current_price():
+def get_current_price():
     """Get current XAU/USD price from Twelve Data"""
     try:
         from src.data_sources import get_provider
@@ -183,7 +197,7 @@ async def get_current_price():
 
         # Zapisz cenę do bazy
         db = NewsDB()
-        db.set_param("current_price", str(current_price))
+        db.set_param("current_price", float(current_price))
 
         logger.info(f"💰 Current price: ${current_price:.2f}")
 
@@ -205,13 +219,13 @@ class TradeUpdate(BaseModel):
     logic: str = ""
 
 @router.post("/add-trade", summary="Add proposed trade to database")
-async def add_trade(trade: TradeUpdate):
+def add_trade(trade: TradeUpdate):
     """Add proposed trade from analysis to database"""
     try:
         db = NewsDB()
 
-        # Zapisz trade do bazy
-        db.cursor.execute(
+        # Używaj _execute() który auto-commituje (działa z SQLite i Turso)
+        db._execute(
             """
             INSERT INTO trades (direction, entry, sl, tp, status, timestamp, pattern)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -226,9 +240,15 @@ async def add_trade(trade: TradeUpdate):
                 trade.logic
             )
         )
-        db.conn.commit()
 
-        trade_id = db.cursor.lastrowid
+        # Pobierz last insert rowid w sposób kompatybilny z SQLite i Turso
+        try:
+            db.cursor.execute("SELECT last_insert_rowid()")
+            row = db.cursor.fetchone()
+            trade_id = row[0] if row else 0
+        except Exception:
+            trade_id = 0
+
         logger.info(f"✅ Trade #{trade_id} added: {trade.direction} @ ${trade.entry:.2f}")
 
         return {
@@ -244,3 +264,98 @@ async def add_trade(trade: TradeUpdate):
         logger.error(f"❌ Error adding trade: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/quick-trade", summary="Quick-add trade from SMC analysis (no AI call)")
+def quick_add_trade():
+    """
+    Szybkie dodanie transakcji na podstawie aktualnej analizy SMC.
+    NIE wywołuje OpenAI — używa tylko silnika SMC + Finance.
+    Natychmiastowy wynik (~1-3s).
+    """
+    try:
+        from src.smc_engine import get_smc_analysis
+        from src.finance import calculate_position
+
+        # Odczytaj aktualny balans portfela z bazy
+        portfolio = _get_portfolio()
+        balance = portfolio.get("balance", 10000.0)
+        currency = portfolio.get("currency", "USD")
+
+        # Analiza SMC (bez OpenAI)
+        analysis = get_smc_analysis("15m")
+        if not analysis:
+            return {
+                "success": False,
+                "direction": "WAIT",
+                "message": "Brak danych rynkowych — sprawdź połączenie z Twelve Data API"
+            }
+
+        price = float(analysis.get('price', 2000.0))
+        trend = analysis.get('trend', 'bull')
+
+        # Oblicz pozycję (bez AI)
+        try:
+            position = calculate_position(analysis, balance, currency, "")
+        except Exception as pos_err:
+            logger.warning(f"Position calc fallback: {pos_err}")
+            position = {
+                "direction": "LONG" if trend.lower() == "bull" else "SHORT",
+                "entry": price,
+                "sl": round(price - analysis.get('atr', 5.0), 2),
+                "tp": round(price + analysis.get('atr', 5.0) * 2.5, 2),
+                "lot": 0.01,
+                "logic": "SMC Auto"
+            }
+
+        direction = position.get("direction", "CZEKAJ")
+
+        if direction in ("CZEKAJ", "WAIT", None):
+            return {
+                "success": False,
+                "direction": "WAIT",
+                "message": position.get("reason", "Rynek nie daje wyraźnego sygnału — czekaj na setup.")
+            }
+
+        entry = float(position.get("entry") or price)
+        sl = float(position.get("sl") or (price - 10))
+        tp = float(position.get("tp") or (price + 20))
+
+        db = NewsDB()
+        db._execute(
+            "INSERT INTO trades (direction, entry, sl, tp, status, timestamp, pattern) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                direction,
+                entry,
+                sl,
+                tp,
+                "PROPOSED",
+                datetime.now(timezone.utc).isoformat(),
+                position.get("logic", "SMC Auto")
+            )
+        )
+
+        try:
+            db.cursor.execute("SELECT last_insert_rowid()")
+            row = db.cursor.fetchone()
+            trade_id = row[0] if row else 0
+        except Exception:
+            trade_id = 0
+
+        logger.info(f"✅ Quick-trade #{trade_id}: {direction} @ ${entry:.2f} SL:{sl:.2f} TP:{tp:.2f}")
+
+        return {
+            "success": True,
+            "trade_id": trade_id,
+            "direction": direction,
+            "entry": f"${entry:.2f}",
+            "sl": f"${sl:.2f}",
+            "tp": f"${tp:.2f}",
+            "lot": position.get("lot", 0.01),
+            "message": f"Trade {direction} dodany @ ${entry:.2f}",
+            "trend": trend,
+            "rsi": analysis.get("rsi"),
+        }
+
+    except Exception as e:
+        logger.error(f"❌ quick-trade error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

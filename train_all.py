@@ -1,0 +1,470 @@
+#!/usr/bin/env python3
+"""
+train_all.py — MASTER PIPELINE trenowania wszystkich modeli ML Quant Sentinel.
+
+🎯 CEL: Dążenie do 100% skuteczności przez systematyczne trenowanie i walidację.
+
+WYMAGANIA (.env):
+    ENABLE_ML=True
+    ENABLE_RL=True
+    ENABLE_BAYES=True
+    DATABASE_URL=data/sentinel.db     # Lokalna baza do trenowania (nie Turso!)
+
+UŻYCIE:
+    python train_all.py                    # Pełny pipeline
+    python train_all.py --skip-rl          # Bez RL (szybciej)
+    python train_all.py --skip-backtest    # Bez backtestingu
+    python train_all.py --epochs 100       # Więcej epok LSTM
+    python train_all.py --rl-episodes 500  # Więcej epizodów RL
+
+PIPELINE:
+    1. Pobieranie danych (yfinance, wiele interwałów, łączenie chunków)
+    2. Podział chronologiczny: Train (70%) / Validation (15%) / Holdout (15%)
+    3. Trening XGBoost (walk-forward validation, feature importance)
+    4. Trening LSTM (walk-forward, scaler persistence)
+    5. Trening DQN (Double DQN, ulepszone reward shaping)
+    6. Optymalizacja Bayesowska parametrów tradingowych
+    7. Backtest na danych holdout
+    8. Raport zbiorczy + zapis metryk do bazy
+
+KLUCZ DO WYSOKIEJ SKUTECZNOŚCI:
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ 1. WIĘCEJ DANYCH — im dłuższa historia, tym lepsze modele      │
+    │ 2. WIĘCEJ EPIZODÓW — RL potrzebuje setek epizodów              │
+    │ 3. REGULARNE RETRENOWANIE — rynek się zmienia                  │
+    │ 4. SELF-LEARNING — bot uczy się z własnych trade'ów            │
+    │ 5. ENSEMBLE — kombinacja modeli > pojedynczy model             │
+    │ 6. BAYESIAN OPT — automatyczna optymalizacja parametrów        │
+    │ 7. FILTROWANIE — odrzucaj słabe sygnały (min score, min TP)    │
+    └─────────────────────────────────────────────────────────────────┘
+"""
+
+import os
+import sys
+import time
+import argparse
+import warnings
+warnings.filterwarnings('ignore')
+
+# Ustaw lokalne DATABASE_URL jeśli nie ustawione (żeby nie mutować Turso)
+if not os.getenv("DATABASE_URL"):
+    os.environ["DATABASE_URL"] = "data/sentinel.db"
+
+import numpy as np
+import pandas as pd
+
+
+# =====================================================================
+# 1. POBIERANIE DANYCH
+# =====================================================================
+
+def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
+    """
+    Pobiera jak najwięcej danych historycznych.
+    Strategia: próbuj 15m (max ~60 dni), potem 1h (max ~2 lata), potem 1d.
+    Łączy dane z różnych interwałów jeśli trzeba.
+    """
+    import yfinance as yf
+
+    print(f"📡 Pobieranie danych dla {symbol}...")
+
+    all_dfs = []
+    ticker = yf.Ticker(symbol)
+
+    # Strategia 1: 15m data (ostatnie 60 dni)
+    try:
+        df_15m = ticker.history(period="60d", interval="15m")
+        if df_15m is not None and len(df_15m) > 100:
+            df_15m = _normalize_df(df_15m)
+            all_dfs.append(("15m", df_15m))
+            print(f"   ✅ 15m: {len(df_15m)} świec")
+    except Exception as e:
+        print(f"   ⚠️ 15m failed: {e}")
+
+    # Strategia 2: 1h data (ostatnie 2 lata)
+    try:
+        df_1h = ticker.history(period="2y", interval="1h")
+        if df_1h is not None and len(df_1h) > 100:
+            df_1h = _normalize_df(df_1h)
+            all_dfs.append(("1h", df_1h))
+            print(f"   ✅ 1h:  {len(df_1h)} świec")
+    except Exception as e:
+        print(f"   ⚠️ 1h failed: {e}")
+
+    # Strategia 3: 1d data (max history)
+    try:
+        df_1d = ticker.history(period="10y", interval="1d")
+        if df_1d is not None and len(df_1d) > 100:
+            df_1d = _normalize_df(df_1d)
+            all_dfs.append(("1d", df_1d))
+            print(f"   ✅ 1d:  {len(df_1d)} świec")
+    except Exception as e:
+        print(f"   ⚠️ 1d failed: {e}")
+
+    if not all_dfs:
+        raise ValueError(f"Nie udało się pobrać żadnych danych dla {symbol}")
+
+    # Wybierz najlepszy dataset (dużo danych + niski interwał)
+    # Priorytet: 1h (dobry balans), potem 15m (wysoka rozdzielczość), potem 1d
+    priority = {"1h": 1, "15m": 2, "1d": 3}
+    all_dfs.sort(key=lambda x: (priority.get(x[0], 99), -len(x[1])))
+    best_tf, best_df = all_dfs[0]
+
+    print(f"\n📊 Używam danych {best_tf}: {len(best_df)} świec")
+    return best_df
+
+
+def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalizuj DataFrame z yfinance do standardowego formatu."""
+    df = df.reset_index()
+    col_map = {c: c.lower() for c in df.columns}
+    df.rename(columns=col_map, inplace=True)
+    required = ['open', 'high', 'low', 'close', 'volume']
+    available = [c for c in required if c in df.columns]
+    df = df[available].dropna()
+    return df
+
+
+def split_data(df: pd.DataFrame, train_pct=0.70, val_pct=0.15):
+    """
+    Podział chronologiczny: Train / Validation / Holdout.
+    """
+    n = len(df)
+    train_end = int(n * train_pct)
+    val_end = int(n * (train_pct + val_pct))
+
+    train_df = df.iloc[:train_end].reset_index(drop=True)
+    val_df = df.iloc[train_end:val_end].reset_index(drop=True)
+    holdout_df = df.iloc[val_end:].reset_index(drop=True)
+
+    print(f"📐 Podział danych:")
+    print(f"   Train:   {len(train_df):>6d} ({train_pct:.0%})")
+    print(f"   Valid:   {len(val_df):>6d} ({val_pct:.0%})")
+    print(f"   Holdout: {len(holdout_df):>6d} ({1 - train_pct - val_pct:.0%})")
+
+    return train_df, val_df, holdout_df
+
+
+# =====================================================================
+# 2. TRENING XGBOOST
+# =====================================================================
+
+def train_xgboost(train_df: pd.DataFrame) -> dict:
+    """Trenuj XGBoost z walk-forward validation."""
+    print("\n" + "=" * 60)
+    print("🌳 TRENING XGBOOST")
+    print("=" * 60)
+
+    from src.ml_models import ml
+
+    t0 = time.time()
+    acc = ml.train_xgb(train_df)
+    elapsed = time.time() - t0
+
+    if acc is not None:
+        print(f"   ✅ Walk-forward accuracy: {acc:.1%}")
+        print(f"   ⏱️  Czas: {elapsed:.1f}s")
+
+        # Feature importance
+        if ml.xgb is not None and hasattr(ml.xgb, 'feature_importances_'):
+            from src.ml_models import FEATURE_COLS
+            importances = dict(zip(FEATURE_COLS, ml.xgb.feature_importances_))
+            top5 = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:5]
+            print(f"   📊 Top 5 features:")
+            for feat, imp in top5:
+                print(f"      {feat}: {imp:.3f}")
+    else:
+        print(f"   ❌ Trening nie powiódł się (za mało danych?)")
+
+    return {"accuracy": acc or 0, "time": elapsed}
+
+
+# =====================================================================
+# 3. TRENING LSTM
+# =====================================================================
+
+def train_lstm(train_df: pd.DataFrame, epochs: int = 50) -> dict:
+    """Trenuj LSTM z persystentnm scalerem."""
+    print("\n" + "=" * 60)
+    print("🧠 TRENING LSTM")
+    print("=" * 60)
+
+    from src.ml_models import ml
+
+    t0 = time.time()
+    model = ml.train_lstm(train_df)
+    elapsed = time.time() - t0
+
+    if model is not None:
+        # Odczytaj metryki z bazy
+        try:
+            from src.database import NewsDB
+            db = NewsDB()
+            val_acc = db.get_param("lstm_last_accuracy", 0)
+            wf_acc = db.get_param("lstm_walkforward_accuracy", 0)
+            print(f"   ✅ Validation accuracy: {val_acc:.1%}")
+            print(f"   ✅ Walk-forward accuracy: {wf_acc:.1%}")
+        except:
+            print(f"   ✅ Model wytrenowany")
+        print(f"   ⏱️  Czas: {elapsed:.1f}s")
+        print(f"   💾 Scaler zapisany do models/lstm_scaler.pkl")
+    else:
+        print(f"   ❌ Trening nie powiódł się")
+
+    return {"model": model is not None, "time": elapsed}
+
+
+# =====================================================================
+# 4. TRENING DQN (Double DQN)
+# =====================================================================
+
+def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
+    """Trenuj agenta DQN z ulepszonym reward shaping."""
+    print("\n" + "=" * 60)
+    print("🤖 TRENING DQN (Double DQN)")
+    print("=" * 60)
+
+    from src.rl_agent import TradingEnv, DQNAgent
+
+    if len(train_df) < 50:
+        print("   ❌ Za mało danych")
+        return {"error": "insufficient data"}
+
+    env = TradingEnv(train_df, initial_balance=10000, transaction_cost=0.001)
+    state = env.reset()
+    state_size = len(state)
+    agent = DQNAgent(state_size, action_size=3)
+
+    print(f"   State size: {state_size}")
+    print(f"   Episodes: {episodes}")
+    print(f"   Memory: {agent.memory.maxlen}")
+
+    t0 = time.time()
+    scores = []
+    best_reward = -float('inf')
+    info = {}
+
+    for episode in range(episodes):
+        state = env.reset()
+        total_reward = 0
+        done = False
+        step = 0
+
+        while not done:
+            action = agent.act(state)
+            next_state, reward, done, info = env.step(action)
+            agent.remember(state, action, reward, next_state, done)
+            state = next_state
+            total_reward += reward
+            step += 1
+            if step % 4 == 0:
+                agent.replay(batch_size=64)
+
+        scores.append(total_reward)
+        if total_reward > best_reward:
+            best_reward = total_reward
+
+        if (episode + 1) % 50 == 0:
+            avg = np.mean(scores[-20:])
+            wr = info.get('win_rate', 0) * 100
+            print(f"   Ep {episode+1}/{episodes}: avg_reward={avg:.4f}, "
+                  f"win_rate={wr:.0f}%, ε={agent.epsilon:.3f}")
+
+    elapsed = time.time() - t0
+
+    # Zapisz model
+    os.makedirs("models", exist_ok=True)
+    agent.save("models/rl_agent.keras")
+    print(f"\n   ✅ Model zapisany")
+    print(f"   📈 Najlepsza nagroda: {best_reward:.4f}")
+    print(f"   ⏱️  Czas: {elapsed:.1f}s")
+
+    # Metryki do bazy
+    try:
+        from src.database import NewsDB
+        db = NewsDB()
+        db.set_param("rl_best_reward", best_reward)
+        db.set_param("rl_episodes_trained", episodes)
+    except:
+        pass
+
+    return {"best_reward": best_reward, "episodes": episodes, "time": elapsed}
+
+
+# =====================================================================
+# 5. OPTYMALIZACJA BAYESOWSKA
+# =====================================================================
+
+def run_bayesian_optimization() -> dict:
+    """Uruchom optymalizację Bayesowską parametrów tradingowych."""
+    print("\n" + "=" * 60)
+    print("🔮 OPTYMALIZACJA BAYESOWSKA")
+    print("=" * 60)
+
+    try:
+        from src.self_learning import run_learning_cycle
+
+        # Tymczasowo włącz Bayes
+        import src.config
+        old_bayes = src.config.ENABLE_BAYES
+        src.config.ENABLE_BAYES = True
+
+        t0 = time.time()
+        run_learning_cycle()
+        elapsed = time.time() - t0
+
+        src.config.ENABLE_BAYES = old_bayes
+
+        # Odczytaj zoptymalizowane parametry
+        from src.database import NewsDB
+        db = NewsDB()
+        params = {}
+        for p in ['risk_percent', 'min_tp_distance_mult', 'target_rr', 'min_score']:
+            val = db.get_param(p, None)
+            if val is not None:
+                params[p] = val
+
+        print(f"   ✅ Zoptymalizowane parametry:")
+        for k, v in params.items():
+            print(f"      {k}: {v:.3f}" if isinstance(v, float) else f"      {k}: {v}")
+        print(f"   ⏱️  Czas: {elapsed:.1f}s")
+
+        return {"params": params, "time": elapsed}
+    except Exception as e:
+        print(f"   ⚠️ Optymalizacja pominięta: {e}")
+        return {"error": str(e)}
+
+
+# =====================================================================
+# 6. BACKTEST
+# =====================================================================
+
+def run_backtest(holdout_df: pd.DataFrame) -> dict:
+    """Uruchom backtest na danych holdout."""
+    from src.backtest import run_full_backtest
+    return run_full_backtest(holdout_df)
+
+
+# =====================================================================
+# 7. RAPORT KOŃCOWY
+# =====================================================================
+
+def print_final_report(results: dict):
+    """Wydrukuj podsumowanie treningu."""
+    print("\n" + "🏆" * 30)
+    print("🏆 PODSUMOWANIE TRENINGU QUANT SENTINEL")
+    print("🏆" * 30)
+
+    # XGBoost
+    xgb = results.get('xgb', {})
+    print(f"\n🌳 XGBoost:")
+    print(f"   Walk-forward accuracy: {xgb.get('accuracy', 0):.1%}")
+
+    # LSTM
+    lstm = results.get('lstm', {})
+    print(f"\n🧠 LSTM:")
+    print(f"   Trained: {'✅' if lstm.get('model') else '❌'}")
+
+    # DQN
+    dqn = results.get('dqn', {})
+    print(f"\n🤖 DQN:")
+    print(f"   Best reward: {dqn.get('best_reward', 0):.4f}")
+    print(f"   Episodes: {dqn.get('episodes', 0)}")
+
+    # Bayesian
+    bayes = results.get('bayes', {})
+    if 'params' in bayes:
+        print(f"\n🔮 Bayesian Optimization:")
+        for k, v in bayes['params'].items():
+            print(f"   {k}: {v}")
+
+    # Backtest
+    bt = results.get('backtest', {})
+    if bt:
+        print(f"\n📊 Backtest (holdout):")
+        for model_name, r in bt.items():
+            if isinstance(r, dict) and 'accuracy' in r:
+                print(f"   {model_name:>10s}: {r['accuracy']:.1%} accuracy, {r.get('sharpe', 0):.2f} Sharpe")
+
+    # Sugestie dalszego trenowania
+    print(f"\n💡 WSKAZÓWKI DO DALSZEJ POPRAWY:")
+    print(f"   1. Uruchom bota (python run.py) — self-learning uczy się z każdego trade'a")
+    print(f"   2. Po zebraniu 50+ trade'ów, uruchom ponownie: python train_all.py")
+    print(f"   3. Zwiększ epizody RL: python train_all.py --rl-episodes 1000")
+    print(f"   4. Włącz Bayesian optimization w .env: ENABLE_BAYES=True")
+    print(f"   5. Trenuj regularnie (co tydzień) — rynek się zmienia!")
+    print(f"   6. Monitoruj logi: logs/sentinel.log")
+
+    total_time = sum(v.get('time', 0) for v in results.values() if isinstance(v, dict))
+    print(f"\n⏱️  Łączny czas treningu: {total_time:.0f}s ({total_time/60:.1f} min)")
+
+
+# =====================================================================
+# MAIN
+# =====================================================================
+
+def main():
+    parser = argparse.ArgumentParser(description="Quant Sentinel — Master Training Pipeline")
+    parser.add_argument("--skip-rl", action="store_true", help="Pomiń trening DQN (szybciej)")
+    parser.add_argument("--skip-backtest", action="store_true", help="Pomiń backtest")
+    parser.add_argument("--skip-bayes", action="store_true", help="Pomiń optymalizację Bayesowską")
+    parser.add_argument("--epochs", type=int, default=50, help="Liczba epok LSTM (default: 50)")
+    parser.add_argument("--rl-episodes", type=int, default=300, help="Liczba epizodów RL (default: 300)")
+    parser.add_argument("--symbol", type=str, default="GC=F", help="Symbol do trenowania (default: GC=F / Gold)")
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("🚀 QUANT SENTINEL — MASTER TRAINING PIPELINE")
+    print("=" * 60)
+    print(f"Symbol: {args.symbol}")
+    print(f"LSTM epochs: {args.epochs}")
+    print(f"RL episodes: {args.rl_episodes}")
+    print(f"Skip RL: {args.skip_rl}")
+    print(f"Skip backtest: {args.skip_backtest}")
+    print(f"Skip Bayes: {args.skip_bayes}")
+    print()
+
+    results = {}
+
+    # ---- 1. Dane ----
+    df = fetch_training_data(args.symbol)
+    train_df, val_df, holdout_df = split_data(df)
+
+    # ---- 2. XGBoost ----
+    results['xgb'] = train_xgboost(train_df)
+
+    # ---- 3. LSTM ----
+    results['lstm'] = train_lstm(train_df, epochs=args.epochs)
+
+    # ---- 4. DQN ----
+    if not args.skip_rl:
+        results['dqn'] = train_dqn(train_df, episodes=args.rl_episodes)
+    else:
+        print("\n⏭️  DQN pominięty (--skip-rl)")
+        results['dqn'] = {"skipped": True}
+
+    # ---- 5. Bayesian Optimization ----
+    if not args.skip_bayes:
+        results['bayes'] = run_bayesian_optimization()
+    else:
+        print("\n⏭️  Bayesian pominięty (--skip-bayes)")
+        results['bayes'] = {"skipped": True}
+
+    # ---- 6. Backtest ----
+    if not args.skip_backtest:
+        results['backtest'] = run_backtest(holdout_df)
+    else:
+        print("\n⏭️  Backtest pominięty (--skip-backtest)")
+        results['backtest'] = {"skipped": True}
+
+    # ---- 7. Raport ----
+    print_final_report(results)
+
+    print("\n✅ Pipeline zakończony pomyślnie!")
+    return results
+
+
+if __name__ == "__main__":
+    main()
+
+
