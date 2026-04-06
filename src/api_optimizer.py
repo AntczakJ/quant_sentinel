@@ -21,7 +21,7 @@ class CreditWeights:
     BALANCE_SHEET = 100  # /balance_sheet (DANGEROUS - avoid!)
     CASH_FLOW = 100  # /cash_flow (DANGEROUS - avoid!)
     QUOTE = 1  # /quote endpoint
-    
+
     @staticmethod
     def get_cost(endpoint: str) -> int:
         """Get credit cost for endpoint"""
@@ -43,11 +43,11 @@ class RateLimiter:
     - Safe margin: 52 credits/minute (operational limit)
     - Bucket refills every 60 seconds
     """
-    
+
     def __init__(self, credits_per_minute: int = 55, safe_margin: int = 52):
         """
         Initialize rate limiter
-        
+
         Args:
             credits_per_minute: Hard limit from Twelve Data (55 for Grow plan)
             safe_margin: Operational limit to leave buffer (52 to be safe)
@@ -58,14 +58,14 @@ class RateLimiter:
         self.last_refill = time.time()
         self.lock = Lock()
         self.requests_made = []  # For analytics
-        
+
         logger.info(f"🔧 RateLimiter initialized: {credits_per_minute} credits/min, safe margin: {safe_margin}")
-    
+
     def _refill_bucket(self):
         """Refill bucket based on elapsed time"""
         now = time.time()
         elapsed = now - self.last_refill
-        
+
         if elapsed >= 60:
             # Full minute passed - reset to safe limit
             self.current_credits = self.safe_credits
@@ -77,45 +77,45 @@ class RateLimiter:
             refill_amount = refill_rate * elapsed
             old_credits = self.current_credits
             self.current_credits = min(self.safe_credits, self.current_credits + refill_amount)
-            
+
             if int(self.current_credits) > int(old_credits):
                 logger.debug(f"⬆️ Partial refill: {int(old_credits)} → {int(self.current_credits)} credits")
-    
+
     def can_use_credits(self, credits_needed: int) -> Tuple[bool, float]:
         """
         Check if we can use requested credits
-        
+
         Returns:
             (can_use, wait_time_seconds)
         """
         with self.lock:
             self._refill_bucket()
-            
+
             if self.current_credits >= credits_needed:
                 return True, 0.0
-            
+
             # Calculate wait time needed
             credits_deficit = credits_needed - self.current_credits
             refill_rate = self.max_credits / 60
             wait_time = credits_deficit / refill_rate
-            
+
             return False, wait_time
-    
+
     def use_credits(self, credits_needed: int, endpoint: str = "", symbol: str = "") -> bool:
         """
         Try to use credits
-        
+
         Args:
             credits_needed: Number of credits to consume
             endpoint: API endpoint (for logging)
             symbol: Stock symbol (for logging)
-        
+
         Returns:
             True if successful, False if rate limited
         """
         with self.lock:
             self._refill_bucket()
-            
+
             if self.current_credits >= credits_needed:
                 self.current_credits -= credits_needed
                 self.requests_made.append({
@@ -124,7 +124,7 @@ class RateLimiter:
                     'symbol': symbol,
                     'credits': credits_needed
                 })
-                
+
                 logger.info(
                     f"✅ Used {credits_needed} credits | "
                     f"Remaining: {int(self.current_credits)}/{self.safe_credits} | "
@@ -139,43 +139,43 @@ class RateLimiter:
                     f"Wait {wait_time:.1f}s | Endpoint: {endpoint}"
                 )
                 return False
-    
-    def wait_for_credits(self, credits_needed: int, max_wait_seconds: int = 65) -> bool:
+
+    def wait_for_credits(self, credits_needed: int, max_wait_seconds: int = 10) -> bool:
         """
         Wait until we have enough credits
-        
+
         Args:
             credits_needed: Credits needed
-            max_wait_seconds: Maximum time to wait (default 65s for next minute)
-        
+            max_wait_seconds: Maximum time to wait (default 10s — keep thread pool responsive)
+
         Returns:
             True if credits available, False if timeout
         """
         start_time = time.time()
-        
+
         while time.time() - start_time < max_wait_seconds:
             can_use, wait_time = self.can_use_credits(credits_needed)
             if can_use:
                 return True
-            
-            # Sleep for a bit (don't busy-wait)
-            sleep_time = min(wait_time + 0.5, 5.0)  # Max 5 second waits
+
+            # Sleep for a bit (don't busy-wait) — 1s max to release threads quickly
+            sleep_time = min(wait_time + 0.2, 1.0)
             logger.debug(f"⏳ Waiting {sleep_time:.1f}s for {credits_needed} credits...")
             time.sleep(sleep_time)
-        
-        logger.error(f"❌ Timeout waiting for {credits_needed} credits after {max_wait_seconds}s")
+
+        logger.warning(f"⚠️ Timeout waiting for {credits_needed} credits after {max_wait_seconds}s")
         return False
-    
+
     def validate_endpoint_cost(self, endpoint: str, num_symbols: int = 1) -> Tuple[bool, int, Optional[str]]:
         """
         Validate if endpoint is affordable with current plan
-        
+
         Returns:
             (is_affordable, cost, error_message)
         """
         unit_cost = CreditWeights.get_cost(endpoint)
         total_cost = unit_cost * num_symbols
-        
+
         # Check for expensive endpoints
         if unit_cost >= 100:
             error_msg = (
@@ -186,7 +186,7 @@ class RateLimiter:
             )
             logger.error(error_msg)
             return False, total_cost, error_msg
-        
+
         if total_cost > self.max_credits:
             error_msg = (
                 f"⚠️ Endpoint '{endpoint}' would cost {total_cost} credits for {num_symbols} symbols, "
@@ -194,20 +194,20 @@ class RateLimiter:
             )
             logger.warning(error_msg)
             return False, total_cost, error_msg
-        
+
         return True, total_cost, None
-    
+
     def get_stats(self) -> Dict:
         """Get rate limiter statistics"""
         with self.lock:
             self._refill_bucket()
-            
+
             # Calculate recent activity
             now = datetime.now()
             one_min_ago = now - timedelta(minutes=1)
             recent_requests = [r for r in self.requests_made if r['timestamp'] > one_min_ago]
             recent_credits = sum(r['credits'] for r in recent_requests)
-            
+
             return {
                 'current_credits': int(self.current_credits),
                 'safe_limit': self.safe_credits,
@@ -224,24 +224,24 @@ class BatchRequestGrouper:
     Groups multiple API requests into batch requests
     Reduces HTTP overhead and helps manage credits
     """
-    
+
     def __init__(self, max_symbols_per_batch: int = 10):
         """
         Initialize grouper
-        
+
         Args:
             max_symbols_per_batch: Max symbols per single batch request
         """
         self.max_symbols_per_batch = max_symbols_per_batch
         logger.info(f"🔗 BatchRequestGrouper initialized: max {max_symbols_per_batch} symbols/batch")
-    
+
     def group_symbols(self, symbols: List[str]) -> List[List[str]]:
         """
         Group symbols into batches
-        
+
         Args:
             symbols: List of symbols to group
-        
+
         Returns:
             List of symbol batches
         """
@@ -249,19 +249,19 @@ class BatchRequestGrouper:
         for i in range(0, len(symbols), self.max_symbols_per_batch):
             batch = symbols[i:i + self.max_symbols_per_batch]
             batches.append(batch)
-        
+
         logger.debug(f"📦 Grouped {len(symbols)} symbols into {len(batches)} batches")
         return batches
-    
+
     def create_batch_url(self, endpoint: str, symbols: List[str], base_url: str = "https://api.twelvedata.com") -> str:
         """
         Create batch request URL with comma-separated symbols
-        
+
         Args:
             endpoint: API endpoint
             symbols: List of symbols
             base_url: Base URL
-        
+
         Returns:
             Batch request URL
         """
@@ -274,11 +274,11 @@ class ExponentialBackoff:
     """
     Exponential backoff strategy for handling 429 errors
     """
-    
+
     def __init__(self, base_delay: float = 1.0, max_delay: float = 65.0, max_retries: int = 5):
         """
         Initialize backoff strategy
-        
+
         Args:
             base_delay: Initial delay in seconds
             max_delay: Maximum delay in seconds
@@ -288,49 +288,49 @@ class ExponentialBackoff:
         self.max_delay = max_delay
         self.max_retries = max_retries
         logger.info(f"🔄 ExponentialBackoff initialized: base {base_delay}s, max {max_delay}s, {max_retries} retries")
-    
+
     def get_wait_time(self, attempt: int) -> float:
         """
         Calculate wait time for given attempt
-        
+
         Args:
             attempt: Attempt number (0-indexed)
-        
+
         Returns:
             Wait time in seconds
         """
         # Exponential: base_delay * 2^attempt + jitter
         delay = self.base_delay * (2 ** attempt)
         delay = min(delay, self.max_delay)
-        
+
         # Add small random jitter to prevent thundering herd
         import random
         jitter = random.uniform(0, 0.1 * delay)
         delay += jitter
-        
+
         return delay
-    
+
     async def wait_and_retry(self, attempt: int, callback, *args, **kwargs):
         """
         Wait and retry a callback with exponential backoff
-        
+
         Args:
             attempt: Attempt number
             callback: Async function to retry
             *args, **kwargs: Arguments for callback
-        
+
         Returns:
             Result of callback or None if all retries exhausted
         """
         if attempt >= self.max_retries:
             logger.error(f"❌ Max retries ({self.max_retries}) exhausted")
             return None
-        
+
         wait_time = self.get_wait_time(attempt)
         logger.warning(f"⏳ Exponential backoff: waiting {wait_time:.1f}s before retry (attempt {attempt + 1}/{self.max_retries})")
-        
+
         await asyncio.sleep(wait_time)
-        
+
         try:
             result = await callback(*args, **kwargs)
             logger.info(f"✅ Retry successful on attempt {attempt + 1}")

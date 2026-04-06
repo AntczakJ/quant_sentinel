@@ -37,12 +37,13 @@ function StatRow({ label, value, format = 'text', color }: StatRowProps) {
 }
 
 export const ModelStats = memo(function ModelStats() {
-  const { setModelsStats } = useTradingStore();
+  const { setModelsStats, apiConnected } = useTradingStore();
   const [stats, setStatsState] = useState<AllModelsStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!apiConnected) return;
     const fetchStats = async () => {
       try {
         setLoading(true);
@@ -63,7 +64,7 @@ export const ModelStats = memo(function ModelStats() {
     // Refresh every 120 seconds (model stats barely change)
     const interval = setInterval(fetchStats, 120000);
     return () => clearInterval(interval);
-  }, [setModelsStats]);
+  }, [setModelsStats, apiConnected]);
 
   if (loading && !stats) {
     return (

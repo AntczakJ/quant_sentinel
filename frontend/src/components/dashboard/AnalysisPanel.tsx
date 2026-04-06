@@ -29,14 +29,14 @@ interface AnalysisData {
 }
 
 interface MtfConfluence {
-  confluence_score: number;
-  direction: string;
-  bull_pct: number;
-  bear_pct: number;
-  bull_tf_count: number;
-  bear_tf_count: number;
-  timeframes: Record<string, { trend: string; rsi: number; weight: number }>;
-  session: { session: string; is_killzone: boolean; volatility_expected: string };
+  confluence_score?: number;
+  direction?: string;
+  bull_pct?: number;
+  bear_pct?: number;
+  bull_tf_count?: number;
+  bear_tf_count?: number;
+  timeframes?: Record<string, { trend: string; rsi: number; weight: number }>;
+  session?: { session: string; is_killzone: boolean; volatility_expected: string };
 }
 
 const fmt = (val: number | null | undefined, decimals = 2): string =>
@@ -45,9 +45,11 @@ const fmt = (val: number | null | undefined, decimals = 2): string =>
 const TF_ORDER = ['5m', '15m', '1h', '4h'] as const;
 
 function MtfWidget({ data }: { data: MtfConfluence }) {
-  const dir = data.direction;
+  const dir = data.direction ?? 'CZEKAJ';
   const dirColor = dir.includes('BULL') ? 'text-green-400' : dir.includes('BEAR') ? 'text-red-400' : 'text-amber-400';
-  const score = Math.round(data.confluence_score);
+  const score = Math.round(data.confluence_score ?? 0);
+  const bullPct = data.bull_pct ?? 0;
+  const bearPct = data.bear_pct ?? 0;
   return (
     <div className="bg-dark-bg rounded p-2.5 border border-dark-secondary text-xs">
       <div className="flex items-center justify-between mb-2">
@@ -58,13 +60,13 @@ function MtfWidget({ data }: { data: MtfConfluence }) {
       <div className="relative h-1.5 bg-red-900/40 rounded-full overflow-hidden mb-2">
         <div
           className="absolute left-0 top-0 h-full bg-green-500/70 rounded-full transition-all"
-          style={{ width: `${data.bull_pct}%` }}
+          style={{ width: `${bullPct}%` }}
         />
       </div>
       <div className="flex justify-between text-gray-600 mb-2">
-        <span className="text-green-500">▲ {data.bull_pct.toFixed(0)}%</span>
+        <span className="text-green-500">▲ {bullPct.toFixed(0)}%</span>
         <span className="font-mono font-bold text-gray-400">{score}/10</span>
-        <span className="text-red-500">▼ {data.bear_pct.toFixed(0)}%</span>
+        <span className="text-red-500">▼ {bearPct.toFixed(0)}%</span>
       </div>
       {/* TF breakdown */}
       <div className="grid grid-cols-4 gap-1">

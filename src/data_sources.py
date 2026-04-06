@@ -34,6 +34,10 @@ session.headers.update({'User-Agent': 'QuantSentinel/2.3'})
 _live_prices: Dict[str, dict] = {}  # symbol → {price, timestamp}
 _live_price_lock = threading.Lock()
 
+# Last-known quote extras (change, change_pct, high, low) from /quote endpoint.
+# Used by WebSocket and cache layers so they can return change values too.
+_last_quote_extras: Dict[str, dict] = {}
+
 
 class DataProvider:
     def get_candles(self, symbol: str, interval: str, count: int) -> Optional[pd.DataFrame]:
@@ -95,7 +99,8 @@ class TwelveDataProvider(DataProvider):
             logger.error(f"❌ Cannot execute request: {error}")
             return {}
 
-        # Wait for credits if needed (with short timeout to avoid blocking API responses)
+        # Wait for credits if needed (5s max — keeps thread pool responsive;
+        # callers fall back to mock/cache on empty return).
         if not self.rate_limiter.wait_for_credits(cost, max_wait_seconds=5):
             logger.warning(f"⚠️ Credits unavailable for {cost} credits — returning empty (fallback to mock)")
             return {}
@@ -109,34 +114,29 @@ class TwelveDataProvider(DataProvider):
             return {}
 
         # Make request with session (connection pooling)
+        # Single attempt, no retry — callers have mock fallback, retries just
+        # waste credits and block the thread pool longer.
         params['apikey'] = self.api_key
-        max_retries = 2
 
-        for attempt in range(max_retries):
-            try:
-                response = session.get(
-                    f"{self.base}/{endpoint}",
-                    params=params,
-                    timeout=8
-                )
+        try:
+            response = session.get(
+                f"{self.base}/{endpoint}",
+                params=params,
+                timeout=5   # 5s — Twelve Data typically responds in <500ms
+            )
 
-                # Handle 429 rate limit errors
-                if response.status_code == 429:
-                    if not self._check_429_and_wait(attempt, max_retries):
-                        return {}
-                    continue
+            # Handle 429 rate limit errors — return empty, let caller use mock
+            if response.status_code == 429:
+                logger.warning(f"⚠️ Rate limited (429) on {endpoint} — returning empty")
+                return {}
 
-                response.raise_for_status()
-                return response.json()
+            response.raise_for_status()
+            return response.json()
 
-            except requests.exceptions.Timeout:
-                logger.error(f"⏱️ Timeout on {endpoint} - attempt {attempt + 1}/{max_retries}")
-                if attempt < max_retries - 1:
-                    time.sleep(1)
-            except requests.exceptions.RequestException as e:
-                logger.error(f"🌐 Request error on {endpoint}: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(1)
+        except requests.exceptions.Timeout:
+            logger.warning(f"⏱️ Timeout on {endpoint} (5s) — returning empty")
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"🌐 Request error on {endpoint}: {e}")
 
         return {}
 
@@ -206,7 +206,7 @@ class TwelveDataProvider(DataProvider):
         Get current price with layered fallback:
         1. WebSocket live price (0 credits, <1s latency)
         2. Short-lived cache (0 credits, <30s old)
-        3. REST API call (1 credit)
+        3. REST /quote API call (1 credit) — returns change, high, low too
         """
         # --- Layer 1: WebSocket live price (free, real-time) ---
         with _live_price_lock:
@@ -214,13 +214,14 @@ class TwelveDataProvider(DataProvider):
                 data = _live_prices[symbol]
                 age = time.time() - data.get('timestamp', 0)
                 if age < 30:  # WS price is fresh (< 30s)
+                    extras = _last_quote_extras.get(symbol, {})
                     logger.debug(f"💰 WS live price: {symbol} = ${data['price']} (age {age:.0f}s)")
                     return {
                         'price': data['price'],
-                        'change': 0.0,
-                        'change_pct': 0.0,
-                        'high_24h': None,
-                        'low_24h': None,
+                        'change': extras.get('change', 0.0),
+                        'change_pct': extras.get('change_pct', 0.0),
+                        'high_24h': extras.get('high_24h'),
+                        'low_24h': extras.get('low_24h'),
                         'source': 'websocket'
                     }
 
@@ -229,39 +230,55 @@ class TwelveDataProvider(DataProvider):
         cached = self.persistent_cache.get_intraday_data(symbol, '__price__')
         if cached is not None and not cached.empty:
             cached_price = cached['close'].iloc[-1]
+            extras = _last_quote_extras.get(symbol, {})
             logger.debug(f"💰 Cached price: {symbol} = ${cached_price}")
             return {
                 'price': float(cached_price),
-                'change': 0.0,
-                'change_pct': 0.0,
-                'high_24h': None,
-                'low_24h': None,
+                'change': extras.get('change', 0.0),
+                'change_pct': extras.get('change_pct', 0.0),
+                'high_24h': extras.get('high_24h'),
+                'low_24h': extras.get('low_24h'),
                 'source': 'cache'
             }
 
-        # --- Layer 3: REST API (1 credit) ---
-        logger.debug(f"💰 Fetching price (REST): {symbol}")
+        # --- Layer 3: REST /quote API (1 credit, returns change data) ---
+        logger.debug(f"💰 Fetching quote (REST): {symbol}")
 
-        data = self._req('price', {'symbol': symbol})
+        data = self._req('quote', {'symbol': symbol})
 
-        if 'price' not in data:
+        # /quote returns: close (or price), change, percent_change, high, low, open, previous_close
+        price_val = data.get('close') or data.get('price')
+        if not price_val:
             logger.warning(f"⚠️ No price for {symbol}")
             return None
 
+        change_val = float(data.get('change', 0) or 0)
+        change_pct_val = float(data.get('percent_change', 0) or 0)
+        high_val = float(data['high']) if data.get('high') else None
+        low_val = float(data['low']) if data.get('low') else None
+
         result = {
-            'price': float(data['price']),
-            'change': 0.0,
-            'change_pct': 0.0,
-            'high_24h': None,
-            'low_24h': None,
+            'price': float(price_val),
+            'change': change_val,
+            'change_pct': change_pct_val,
+            'high_24h': high_val,
+            'low_24h': low_val,
             'source': 'rest'
+        }
+
+        # Store extras so websocket/cache layers can use them
+        _last_quote_extras[symbol] = {
+            'change': change_val,
+            'change_pct': change_pct_val,
+            'high_24h': high_val,
+            'low_24h': low_val,
         }
 
         # Cache for 15s to avoid duplicate REST calls
         price_df = pd.DataFrame([{'close': result['price']}])
         self.persistent_cache.set_intraday_data(symbol, '__price__', price_df)
 
-        logger.info(f"✅ Price: {symbol} = ${result['price']}")
+        logger.info(f"✅ Quote: {symbol} = ${result['price']} (Δ{change_val:+.2f} / {change_pct_val:+.2f}%)")
         return result
 
     # ===== WebSocket Streaming (Grow plan: 1 WS connection, 0 credits) =====

@@ -47,9 +47,15 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
     }
   }, [setApiConnected]);
 
+  // Sync from global store (App.tsx runs the primary health check)
+  useEffect(() => {
+    setStatus(prev => ({ ...prev, api: apiConnected }));
+  }, [apiConnected]);
+
+  // Only run our own detailed check every 60s (App.tsx does the fast health ping)
   useEffect(() => {
     void checkStatus();
-    const interval = setInterval(checkStatus, 30_000);
+    const interval = setInterval(checkStatus, 60_000);
     return () => clearInterval(interval);
   }, [checkStatus]);
 

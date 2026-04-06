@@ -4,10 +4,8 @@ api/routers/signals.py - Trading signal endpoints
 
 import sys
 import os
-import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
-from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -25,7 +23,15 @@ _signal_cache = {"current": None, "history": []}
 
 def initialize_default_signal():
     """Initialize default signal for testing — no API call at startup"""
-    current_price = 3100.0  # Fallback price (nie wywołuj API przy starcie)
+    # Use market persistent cache price if available
+    current_price = 4720.0  # Fallback price (nie wywołuj API przy starcie)
+    try:
+        from api.routers.market import _persistent_cache as _mkt_pc
+        ref = float(_mkt_pc.get("ticker", {}).get("price", 0))
+        if ref > 1000:
+            current_price = ref
+    except Exception:
+        pass
 
     default_signal = SignalResponse(
         timestamp=datetime.now(timezone.utc),
@@ -54,22 +60,26 @@ _signal_cache["current"] = initialize_default_signal()
     summary="Get current trading signal",
     description="Get latest signal from all three models with consensus"
 )
-async def get_current_signal():
+def get_current_signal():
     """Get current combined signal from RL, LSTM, and XGBoost models"""
     try:
-        # Pobierz live price z timeoutem
+        # Use cached price from market router instead of calling external API again
+        # (market/ticker caches last price; avoids duplicate provider call + 8s timeout)
         current_price = 3100.0
         try:
-            from src.data_sources import get_provider
-            provider = get_provider()
-            ticker = await asyncio.wait_for(
-                asyncio.to_thread(provider.get_current_price, 'XAU/USD'),
-                timeout=8.0
-            )
-            if ticker and ticker.get('price'):
-                current_price = float(ticker['price'])
-        except (asyncio.TimeoutError, Exception) as e:
-            logger.warning(f"Could not fetch current price (using fallback): {e}")
+            from api.routers.market import _data_cache as _market_data_cache, _ticker_cache as _market_ticker_cache
+            cached_price = _market_data_cache.get("last_price")
+            if cached_price and float(cached_price) > 0:
+                current_price = float(cached_price)
+            else:
+                # Try ticker cache
+                ticker_cached = _market_ticker_cache.get("XAU/USD")
+                if ticker_cached and ticker_cached.get("data"):
+                    p = ticker_cached["data"].get("price")
+                    if p and float(p) > 0:
+                        current_price = float(p)
+        except Exception as e:
+            logger.debug(f"Could not read cached price from market router: {e}")
 
         # Try to get latest signal from database first
         try:
@@ -99,20 +109,20 @@ async def get_current_signal():
                         entry_f = current_price
 
                     signal = SignalResponse(
-                        timestamp=datetime.now(timezone.utc),
+                        timestamp=parsed_ts,
                         symbol="XAU/USD",
                         rl_action=_RL_ACTION_MAP.get(direction, "HOLD"),
                         rl_confidence=0.75,
                         rl_epsilon=0.1,
                         lstm_prediction=entry_f,
-                        lstm_change_pct=0.0,
+                        lstm_change_pct=round((entry_f - current_price) / current_price * 100, 2) if current_price > 0 else 0.0,
                         xgb_direction=_XGB_DIR_MAP.get(direction, "NEUTRAL"),
                         xgb_probability=0.75,
                         consensus=consensus,
                         consensus_score=0.75,
-                        current_price=current_price,
+                        current_price=current_price,  # live price, not entry
                         current_rsi=float(rsi) if rsi else 50.0,
-                        signal_id=str(signal_id)
+                        signal_id=str(sig_id)
                     )
 
                     _signal_cache["current"] = signal
@@ -188,6 +198,20 @@ def get_signal_history(limit: int = 50):
                 except Exception:
                     parsed_ts = datetime.now(timezone.utc)
 
+                # Use live price from market cache for current_price
+                live_price = entry_f  # fallback
+                try:
+                    from api.routers.market import _data_cache as _mdc, _ticker_cache as _mtc
+                    lp = _mdc.get("last_price")
+                    if lp and float(lp) > 0:
+                        live_price = float(lp)
+                    else:
+                        tc = _mtc.get("XAU/USD")
+                        if tc and tc.get("data") and float(tc["data"].get("price", 0)) > 0:
+                            live_price = float(tc["data"]["price"])
+                except Exception:
+                    pass
+
                 signal = SignalResponse(
                     timestamp=parsed_ts,
                     symbol="XAU/USD",
@@ -195,12 +219,12 @@ def get_signal_history(limit: int = 50):
                     rl_confidence=0.75,
                     rl_epsilon=0.1,
                     lstm_prediction=entry_f,
-                    lstm_change_pct=0.0,
+                    lstm_change_pct=round((entry_f - live_price) / live_price * 100, 2) if live_price > 0 else 0.0,
                     xgb_direction=_XGB_DIR_MAP.get(direction, "NEUTRAL"),
                     xgb_probability=0.75,
                     consensus=consensus,
                     consensus_score=0.75,
-                    current_price=entry_f,
+                    current_price=live_price,  # live market price, not entry
                     current_rsi=float(rsi) if rsi else 50.0,
                     signal_id=str(sig_id)
                 )
@@ -212,13 +236,12 @@ def get_signal_history(limit: int = 50):
 
         # Fallback: load from trades table when scanner_signals is empty
         try:
-            db.cursor.execute("""
+            trades = db._query("""
                 SELECT id, direction, entry, rsi, timestamp, status
                 FROM trades
                 ORDER BY timestamp DESC
                 LIMIT ?
             """, (limit,))
-            trades = db.cursor.fetchall()
             if trades:
                 history = []
                 for t in trades:
@@ -285,8 +308,13 @@ def get_signal_stats():
     try:
         from src.database import NewsDB
         db = NewsDB()
-        db.cursor.execute("SELECT COUNT(*), SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END), SUM(CASE WHEN status='LOSS' THEN 1 ELSE 0 END) FROM trades")
-        row = db.cursor.fetchone()
+        # Count both WIN and PROFIT as wins (scanner uses PROFIT, API resolver uses WIN)
+        row = db._query_one(
+            "SELECT COUNT(*), "
+            "SUM(CASE WHEN status IN ('WIN','PROFIT') THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN status='LOSS' THEN 1 ELSE 0 END) "
+            "FROM trades WHERE status IN ('WIN','PROFIT','LOSS')"
+        )
         total = int(row[0] or 0) if row else 0
         wins = int(row[1] or 0) if row else 0
         losses = int(row[2] or 0) if row else 0

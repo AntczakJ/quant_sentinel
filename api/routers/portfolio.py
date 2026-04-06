@@ -10,7 +10,6 @@ Konwersje walut TYLKO w portfelu!
 
 import sys
 import os
-import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -131,11 +130,17 @@ def get_portfolio_history():
         db = NewsDB()
         history = db.get_param("portfolio_history", None)
 
+        hist_data = {"timestamps": [], "equity_values": [], "pnl_values": []}
         if history:
             import json
-            hist_data = json.loads(history)
-        else:
-            hist_data = {"timestamps": [], "equity_values": [], "pnl_values": []}
+            try:
+                # history may be a string (JSON) or a numeric value from REAL column
+                if isinstance(history, str):
+                    hist_data = json.loads(history)
+                else:
+                    logger.debug(f"portfolio_history is not JSON string: {type(history)}")
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         return PortfolioHistory(
             timestamps=hist_data.get("timestamps", []),
@@ -228,6 +233,22 @@ class TradeUpdate(BaseModel):
 def add_trade(trade: TradeUpdate):
     """Add proposed trade from analysis to database"""
     try:
+        # ── Price sanity check ──────────────────────────────────────────
+        try:
+            from api.routers.market import _persistent_cache as _mkt_pc
+            ref = float(_mkt_pc.get("ticker", {}).get("price", 0))
+            if ref > 1000 and trade.entry > 0:
+                deviation = abs(trade.entry - ref) / ref
+                if deviation > 0.25:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cena entry (${trade.entry:.0f}) odbiega o {deviation:.0%} od aktualnej (${ref:.0f}). Odrzucono."
+                    )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
         db = NewsDB()
 
         # Używaj _execute() który auto-commituje (działa z SQLite i Turso)
@@ -249,8 +270,7 @@ def add_trade(trade: TradeUpdate):
 
         # Pobierz last insert rowid w sposób kompatybilny z SQLite i Turso
         try:
-            db.cursor.execute("SELECT last_insert_rowid()")
-            row = db.cursor.fetchone()
+            row = db._query_one("SELECT last_insert_rowid()")
             trade_id = row[0] if row else 0
         except Exception:
             trade_id = 0
@@ -274,59 +294,74 @@ def add_trade(trade: TradeUpdate):
 @router.post("/quick-trade", summary="Quick-add trade from SMC analysis (no AI call)")
 def quick_add_trade():
     """
-    Szybkie dodanie transakcji na podstawie aktualnej analizy SMC.
-    NIE wywołuje OpenAI — używa tylko silnika SMC + Finance.
-    Natychmiastowy wynik (~1-3s).
+    Szybkie dodanie transakcji z kaskady multi-timeframe (4h → 1h → 15m → 5m).
+    NIE wywołuje OpenAI — używa silnika SMC + Finance.
+    Stawia trade na pierwszym TF z ważnym setupem.
+
+    Cascade: jeśli nie widzi nic na 4h, szuka na 1h, 15m, 5m.
+    Jeśli na jakimkolwiek TF znajdzie setup, stawia trade.
     """
     try:
-        from src.smc_engine import get_smc_analysis
-        from src.finance import calculate_position
+        from src.scanner import cascade_mtf_scan
 
         # Odczytaj aktualny balans portfela z bazy
         portfolio = _get_portfolio()
         balance = portfolio.get("balance", 10000.0)
         currency = portfolio.get("currency", "USD")
 
-        # Analiza SMC (bez OpenAI)
-        analysis = get_smc_analysis("15m")
-        if not analysis:
-            return {
-                "success": False,
-                "direction": "WAIT",
-                "message": "Brak danych rynkowych — sprawdź połączenie z Twelve Data API"
-            }
-
-        price = float(analysis.get('price', 2000.0))
-        trend = analysis.get('trend', 'bull')
-
-        # Oblicz pozycję (bez AI)
-        try:
-            position = calculate_position(analysis, balance, currency, "")
-        except Exception as pos_err:
-            logger.warning(f"Position calc fallback: {pos_err}")
-            position = {
-                "direction": "LONG" if trend.lower() == "bull" else "SHORT",
-                "entry": price,
-                "sl": round(price - analysis.get('atr', 5.0), 2),
-                "tp": round(price + analysis.get('atr', 5.0) * 2.5, 2),
-                "lot": 0.01,
-                "logic": "SMC Auto"
-            }
-
-        direction = position.get("direction", "CZEKAJ")
-
-        if direction in ("CZEKAJ", "WAIT", None):
-            return {
-                "success": False,
-                "direction": "WAIT",
-                "message": position.get("reason", "Rynek nie daje wyraźnego sygnału — czekaj na setup.")
-            }
-
-        entry = float(position.get("entry") or price)
-        sl = float(position.get("sl") or (price - 10))
-        tp = float(position.get("tp") or (price + 20))
-
         db = NewsDB()
+        trade = cascade_mtf_scan(db, balance=balance, currency=currency)
+
+        if not trade:
+            return {
+                "success": False,
+                "direction": "WAIT",
+                "message": "Brak ważnego setupu tradingowego na żadnym timeframe (4h→1h→15m→5m) — czekaj na setup."
+            }
+
+        direction = trade['direction']
+        entry = float(trade['entry'])
+        sl = float(trade['sl'])
+        tp = float(trade['tp'])
+        lot = float(trade.get('lot', 0.01))
+        logic = trade.get('logic', 'SMC Auto')
+        tf_label = trade.get('tf_label', '?')
+        trend = trade.get('trend', 'bull')
+        rsi = trade.get('rsi', 50.0)
+
+        # ── Price sanity check (dodatkowy — cascade_mtf_scan ma swój, ale tu chronimy zapis) ──
+        try:
+            from api.routers.market import _persistent_cache as _mkt_pc
+            ref = float(_mkt_pc.get("ticker", {}).get("price", 0))
+            if ref > 1000 and entry > 0:
+                deviation = abs(entry - ref) / ref
+                if deviation > 0.20:
+                    logger.warning(
+                        f"⚠️ Quick-trade: price sanity FAIL: entry=${entry:.2f} vs "
+                        f"ticker=${ref:.2f} (Δ{deviation:.0%})"
+                    )
+                    return {
+                        "success": False,
+                        "direction": "WAIT",
+                        "message": f"Dane rynkowe niespójne (entry: ${entry:.0f} vs ticker: ${ref:.0f}) — spróbuj ponownie"
+                    }
+        except Exception:
+            pass
+
+        # ── Deduplication — nie twórz tego samego trade'a dwa razy ─────────────
+        # Shared key format with _background_scanner and scan_market_task
+        import hashlib as _hl
+        tf = trade.get('tf', '')
+        trade_key = _hl.md5(f"mtf_{direction}_{entry:.1f}_{tf}".encode()).hexdigest()
+        if db.is_news_processed(trade_key):
+            logger.info(f"⚡ Quick-trade: dedup — {direction}@{entry:.0f} na {tf_label} już istnieje")
+            return {
+                "success": False,
+                "direction": "WAIT",
+                "message": f"Trade {direction} @ ${entry:.0f} na {tf_label} już istnieje w bazie — dedup aktywny."
+            }
+
+        # Save to trades (PROPOSED — auto-resolver monitoruje)
         db._execute(
             "INSERT INTO trades (direction, entry, sl, tp, status, timestamp, pattern) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
@@ -336,30 +371,46 @@ def quick_add_trade():
                 tp,
                 "PROPOSED",
                 datetime.now(timezone.utc).isoformat(),
-                position.get("logic", "SMC Auto")
+                f"[{tf_label}] {logic}"
             )
         )
 
         try:
-            db.cursor.execute("SELECT last_insert_rowid()")
-            row = db.cursor.fetchone()
+            row = db._query_one("SELECT last_insert_rowid()")
             trade_id = row[0] if row else 0
         except Exception:
             trade_id = 0
 
-        logger.info(f"✅ Quick-trade #{trade_id}: {direction} @ ${entry:.2f} SL:{sl:.2f} TP:{tp:.2f}")
+        # Save to scanner_signals (pojawi się w SignalHistory)
+        rsi_val = trade.get('rsi', 50.0)
+        structure = trade.get('structure', 'Stable')
+        db.save_scanner_signal(
+            direction=direction,
+            entry=entry,
+            sl=sl,
+            tp=tp,
+            rsi=rsi_val,
+            trend=trend,
+            structure=f"[{tf_label}] {structure}"
+        )
+
+        # Mark as processed to prevent duplicates from bg scanner
+        db.mark_news_as_processed(trade_key)
+
+        logger.info(f"✅ Quick-trade #{trade_id}: {direction} on {tf_label} @ ${entry:.2f} SL:{sl:.2f} TP:{tp:.2f}")
 
         return {
             "success": True,
             "trade_id": trade_id,
             "direction": direction,
-            "entry": f"${entry:.2f}",
-            "sl": f"${sl:.2f}",
-            "tp": f"${tp:.2f}",
-            "lot": position.get("lot", 0.01),
-            "message": f"Trade {direction} dodany @ ${entry:.2f}",
+            "entry": round(entry, 2),
+            "sl": round(sl, 2),
+            "tp": round(tp, 2),
+            "lot": lot,
+            "message": f"Trade {direction} na {tf_label} @ ${entry:.2f}",
             "trend": trend,
-            "rsi": analysis.get("rsi"),
+            "rsi": rsi_val,
+            "timeframe": tf_label,
         }
 
     except Exception as e:

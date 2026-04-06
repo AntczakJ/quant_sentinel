@@ -63,20 +63,21 @@ const NAV_ITEMS = [
 ] as const;
 
 export function Header() {
-  const { ticker } = useTradingStore();
+  const { ticker, apiConnected } = useTradingStore();
   const [prevPrice, setPrevPrice] = useState<number | null>(null);
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
 
-  // Poll session info every 60s
+  // Poll session info every 60s — only when API is up, staggered to avoid burst
   useEffect(() => {
+    if (!apiConnected) return;
     const fetchSession = () => {
       analysisAPI.getSession().then(setSessionInfo).catch(() => {});
     };
-    fetchSession();
+    const initTimer = setTimeout(fetchSession, 1500);
     const t = setInterval(fetchSession, 60_000);
-    return () => clearInterval(t);
-  }, []);
+    return () => { clearTimeout(initTimer); clearInterval(t); };
+  }, [apiConnected]);
 
   useEffect(() => {
     if (!ticker) { return; }

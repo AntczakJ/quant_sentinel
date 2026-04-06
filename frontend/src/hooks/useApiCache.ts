@@ -30,7 +30,7 @@ export function useApiCache() {
   const get = useCallback(<T,>(key: string, ttl: number = 30000): T | null => {
     const entry = store.current[key];
     if (!entry) {return null;}
-    if (Date.now() - entry.timestamp > ttl) {
+    if (Date.now() - entry.timestamp >= ttl) {
       delete store.current[key];
       return null;
     }

@@ -6,6 +6,7 @@ Provides analysis functions from the bot
 import sys
 import os
 import asyncio
+import re
 import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
@@ -98,10 +99,9 @@ async def quant_pro_analysis(
             _db = NewsDB()
             actual_balance = float(_db.get_param("portfolio_balance", None) or 10000)
             try:
-                _db.cursor.execute(
+                _row = _db._query_one(
                     "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
                 )
-                _row = _db.cursor.fetchone()
                 actual_currency = str(_row[0]) if _row and _row[0] else "USD"
             except Exception:
                 actual_currency = "USD"
@@ -329,21 +329,21 @@ def get_trading_stats():
         total_trades = sum(p[1] for p in patterns) if patterns else 0
         total_wins = sum(p[2] for p in patterns) if patterns else 0
         total_losses = sum(p[3] for p in patterns) if patterns else 0
-        win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+        win_rate = (total_wins / total_trades) if total_trades > 0 else 0  # 0–1 ratio
 
         return {
             "timestamp": datetime.now(timezone.utc),
             "total_trades": total_trades,
             "wins": total_wins,
             "losses": total_losses,
-            "win_rate": round(win_rate, 2),
+            "win_rate": round(win_rate, 4),
             "patterns": [
                 {
                     "pattern": p[0],
                     "count": p[1],
                     "wins": p[2],
                     "losses": p[3],
-                    "win_rate": round(p[4] * 100, 2) if len(p) > 4 and p[4] is not None else 0,
+                    "win_rate": round(p[4], 4) if len(p) > 4 and p[4] is not None else 0,
                 }
                 for p in patterns
                 if len(p) >= 4
@@ -375,9 +375,9 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
         db = NewsDB()
 
         # Query recent trades — explicit column list
-        db.cursor.execute(
+        trades = db._query(
             """
-            SELECT id, direction, entry, sl, tp, status, timestamp, profit
+            SELECT id, direction, entry, sl, tp, status, timestamp, profit, pattern
             FROM trades
             ORDER BY timestamp DESC
             LIMIT ?
@@ -385,7 +385,6 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
             (limit,)
         )
 
-        trades = db.cursor.fetchall()
 
         if not trades:
             return {
@@ -404,6 +403,22 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
                 return float(v)
             except (ValueError, TypeError):
                 return None
+
+        def _extract_tf(pattern_str: str | None) -> str | None:
+            """Extract timeframe label like 'H4', 'H1', 'M15', 'M5' from pattern."""
+            if not pattern_str:
+                return None
+            # Pattern format: "[H4] SMC Logic" or "[MTF_H4_...]"
+            m = re.search(r'\[([A-Z][A-Z0-9]+)\]', str(pattern_str))
+            if m:
+                label = m.group(1)
+                # Normalize MTF_H4 → H4
+                if label.startswith("MTF_"):
+                    label = label[4:].split("_")[0]
+                # Only return if it's a known TF label
+                if label in ("H4", "H1", "M15", "M5", "4H", "1H", "15M", "5M"):
+                    return label
+            return None
 
         # Format trades
         formatted_trades = []
@@ -424,6 +439,7 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
                 status = trade[5] if cols > 5 else None
                 trade_time = trade[6] if cols > 6 else None
                 profit = trade[7] if cols > 7 else None
+                pattern = trade[8] if cols > 8 else None
             except (IndexError, TypeError):
                 continue
 
@@ -434,6 +450,7 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
             sl_f = _safe_float(sl)
             tp_f = _safe_float(tp)
             profit_f = _safe_float(profit)
+            tf_label = _extract_tf(pattern)
 
             # Determine if trade was win or loss
             is_win = status in ("WIN", "PROFIT") if status else False
@@ -451,7 +468,9 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
                 "status": status or "PENDING",
                 "profit": f"${profit_f:.2f}" if profit_f is not None else None,
                 "timestamp": trade_time,
-                "result": "✅ WIN" if is_win else "❌ LOSS" if status == "LOSS" else "⏳ PENDING"
+                "result": "✅ WIN" if is_win else "❌ LOSS" if status == "LOSS" else "⏳ PENDING",
+                "timeframe": tf_label,  # e.g. "H4", "M15" — None if not set
+                "pattern": pattern,
             })
 
         return {
@@ -489,7 +508,17 @@ async def mtf_confluence_analysis():
         return result
     except Exception as e:
         logger.error(f"MTF confluence error: {e}")
-        return {"confluence_score": 0, "direction": "CZEKAJ", "error": str(e)}
+        return {
+            "confluence_score": 0,
+            "direction": "CZEKAJ",
+            "bull_pct": 0,
+            "bear_pct": 0,
+            "bull_tf_count": 0,
+            "bear_tf_count": 0,
+            "timeframes": {},
+            "session": {"session": "Unknown", "is_killzone": False, "volatility_expected": "low"},
+            "error": str(e),
+        }
 
 
 @router.get(
