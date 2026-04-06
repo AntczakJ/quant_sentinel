@@ -14,6 +14,22 @@ from api.schemas.models import ModelStats, AllModelsStats
 
 router = APIRouter()
 
+_MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "models")
+
+
+def _model_info(filename: str) -> dict:
+    """Read model file metadata (exists, size, last modified)."""
+    path = os.path.join(_MODEL_DIR, filename)
+    if os.path.exists(path):
+        stat = os.stat(path)
+        return {
+            "exists": True,
+            "size_kb": round(stat.st_size / 1024, 1),
+            "last_modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+        }
+    return {"exists": False, "size_kb": 0, "last_modified": None}
+
+
 @router.get(
     "/stats",
     response_model=AllModelsStats,
@@ -23,13 +39,17 @@ router = APIRouter()
 async def get_models_stats():
     """Get statistics for all ML models"""
     try:
+        rl_info = _model_info("rl_agent.keras")
+        lstm_info = _model_info("lstm.keras")
+        xgb_info = _model_info("xgb.pkl")
+
         rl_stats = ModelStats(
             model_name="RL Agent (DQN)",
             accuracy=None,
             win_rate=0.55,
             episodes=47,
             epsilon=0.3,
-            last_training=datetime.now(timezone.utc)
+            last_training=rl_info["last_modified"] or datetime.now(timezone.utc),
         )
 
         lstm_stats = ModelStats(
@@ -37,7 +57,7 @@ async def get_models_stats():
             accuracy=0.58,
             precision=0.60,
             recall=0.56,
-            last_training=datetime.now(timezone.utc)
+            last_training=lstm_info["last_modified"] or datetime.now(timezone.utc),
         )
 
         xgb_stats = ModelStats(
@@ -45,7 +65,7 @@ async def get_models_stats():
             accuracy=0.62,
             precision=0.64,
             recall=0.60,
-            last_training=datetime.now(timezone.utc)
+            last_training=xgb_info["last_modified"] or datetime.now(timezone.utc),
         )
 
         return AllModelsStats(
@@ -63,31 +83,37 @@ async def get_models_stats():
 @router.get("/rl-agent", summary="Get RL Agent stats")
 async def get_rl_stats():
     """Get RL Agent specific statistics"""
+    info = _model_info("rl_agent.keras")
     return {
         "model_name": "RL Agent (DQN)",
         "episodes": 47,
         "epsilon": 0.3,
-        "last_training": datetime.now(timezone.utc),
-        "status": "idle"
+        "last_training": info["last_modified"] or datetime.now(timezone.utc),
+        "status": "loaded" if info["exists"] else "not_found",
+        "file_size_kb": info["size_kb"],
     }
 
 @router.get("/lstm", summary="Get LSTM stats")
 async def get_lstm_stats():
     """Get LSTM specific statistics"""
+    info = _model_info("lstm.keras")
     return {
         "model_name": "LSTM",
         "accuracy": 0.58,
-        "last_training": datetime.now(timezone.utc),
-        "status": "idle"
+        "last_training": info["last_modified"] or datetime.now(timezone.utc),
+        "status": "loaded" if info["exists"] else "not_found",
+        "file_size_kb": info["size_kb"],
     }
 
 @router.get("/xgboost", summary="Get XGBoost stats")
 async def get_xgboost_stats():
     """Get XGBoost specific statistics"""
+    info = _model_info("xgb.pkl")
     return {
         "model_name": "XGBoost",
         "accuracy": 0.62,
-        "last_training": datetime.now(timezone.utc),
-        "status": "idle"
+        "last_training": info["last_modified"] or datetime.now(timezone.utc),
+        "status": "loaded" if info["exists"] else "not_found",
+        "file_size_kb": info["size_kb"],
     }
 

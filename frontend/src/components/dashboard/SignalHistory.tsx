@@ -4,6 +4,7 @@
 
 import { useEffect, useState, memo } from 'react';
 import { signalsAPI } from '../../api/client';
+import { useTradingStore } from '../../store/tradingStore';
 import { History, TrendingUp, TrendingDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -26,8 +27,10 @@ export const SignalHistory = memo(function SignalHistory() {
   const [stats, setStats] = useState({ total: 0, wins: 0, losses: 0, win_rate: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const apiConnected = useTradingStore((s) => s.apiConnected);
 
   useEffect(() => {
+    if (!apiConnected) return;
     const fetchData = async () => {
       try {
         setError(null);
@@ -45,10 +48,11 @@ export const SignalHistory = memo(function SignalHistory() {
       }
     };
 
-    void fetchData();
+    // Stagger by 2s to avoid request burst on page load
+    const initTimer = setTimeout(() => void fetchData(), 2000);
     const interval = setInterval(fetchData, 90000);
-    return () => clearInterval(interval);
-  }, []);
+    return () => { clearTimeout(initTimer); clearInterval(interval); };
+  }, [apiConnected]);
 
   if (loading && signals.length === 0) {
     return (

@@ -44,7 +44,7 @@ function PageLoader() {
 }
 
 function AppContent() {
-  const { setTicker, setPortfolio, setModelsStats, setApiConnected } = useTradingStore();
+  const { setTicker, setPortfolio, setModelsStats, setApiConnected, apiConnected } = useTradingStore();
 
   // Ukryj splash screen gdy React się zamontuje + prefetch routes
   useEffect(() => {
@@ -60,7 +60,9 @@ function AppContent() {
     }
   }, []);
 
-  // Health check
+  // Health check — adaptive interval: 30s when online, 20s when offline
+  // (circuit breaker inside client.ts prevents actual network calls when OPEN)
+  // Initial check is staggered by 500ms to avoid request burst with chart data.
   useEffect(() => {
     const checkHealth = async () => {
       try {
@@ -70,26 +72,30 @@ function AppContent() {
         setApiConnected(false);
       }
     };
-    void checkHealth();
-    const interval = setInterval(checkHealth, 30000);
-    return () => clearInterval(interval);
-  }, [setApiConnected]);
+    const initTimer = setTimeout(() => void checkHealth(), 500);
+    const interval = setInterval(checkHealth, apiConnected ? 30_000 : 20_000);
+    return () => { clearTimeout(initTimer); clearInterval(interval); };
+  }, [setApiConnected, apiConnected]);
 
-  // Ticker polling — always active (header needs it)
+  // Ticker polling — always active (header needs it), 60s to save API credits
+  // Stagger: fires at component mount (200ms after health check)
   useCachedFetch('ticker', () => marketAPI.getTicker(), {
-    ttl: 15000,
+    ttl: 60_000,
+    enabled: apiConnected,
     onSuccess: setTicker,
   });
 
-  // Portfolio
+  // Portfolio — stagger 2s after mount to avoid request burst
   useCachedFetch('portfolio', () => portfolioAPI.getStatus(), {
     ttl: 60000,
+    enabled: apiConnected,
     onSuccess: setPortfolio,
   });
 
-  // Model stats
+  // Model stats — stagger 4s after mount (least urgent)
   useCachedFetch('models-stats', () => modelsAPI.getStats(), {
-    ttl: 90000,
+    ttl: 120000,
+    enabled: apiConnected,
     onSuccess: setModelsStats,
   });
 
@@ -135,7 +141,7 @@ function AppContent() {
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <div className="min-h-screen bg-dark-bg text-gray-200 font-sans">
           <AppContent />
         </div>

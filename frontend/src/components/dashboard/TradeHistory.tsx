@@ -18,6 +18,8 @@ interface Trade {
   profit?: string | number;
   timestamp: string;
   result: string;
+  timeframe?: string | null;
+  pattern?: string | null;
 }
 
 interface TradesResponse {
@@ -180,7 +182,7 @@ export const TradeHistory = memo(function TradeHistory() {
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2">
                     <span>
                       {trade.direction === 'LONG' ? (
                         <TrendingUp size={14} className="text-accent-green" />
@@ -189,9 +191,16 @@ export const TradeHistory = memo(function TradeHistory() {
                       )}
                     </span>
                     <div>
-                      <span className="font-bold">
-                        {trade.direction === 'LONG' ? '📈 LONG' : '📉 SHORT'}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold">
+                          {trade.direction === 'LONG' ? '📈 LONG' : '📉 SHORT'}
+                        </span>
+                        {trade.timeframe && (
+                          <span className="px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-blue-900/30 text-blue-400 border border-blue-600/20">
+                            {trade.timeframe}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-gray-500">
                         Entry: {formatPrice(trade.entry)}
                       </div>

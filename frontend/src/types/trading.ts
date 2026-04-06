@@ -65,6 +65,7 @@ export interface Portfolio {
   equity: number;
   pnl: number;
   pnl_pct: number;
+  currency?: string;
   has_position: boolean;
   position_type?: 'LONG' | 'SHORT';
   position_entry?: number;

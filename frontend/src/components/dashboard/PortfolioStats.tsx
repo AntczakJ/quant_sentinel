@@ -9,7 +9,7 @@ import type { Portfolio } from '../../types/trading';
 import { Edit2, Plus, Loader2 } from 'lucide-react';
 
 export const PortfolioStats = memo(function PortfolioStats() {
-  const { setPortfolio } = useTradingStore();
+  const { portfolio: storePortfolio, setPortfolio, apiConnected } = useTradingStore();
   const [portfolio, setPortfolioState] = useState<Portfolio | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,39 +18,53 @@ export const PortfolioStats = memo(function PortfolioStats() {
   const [addingTrade, setAddingTrade] = useState(false);
   const [winRate, setWinRate] = useState<number | null>(null);
 
+  // Use Zustand store data from App.tsx polling — avoids duplicate requests
   useEffect(() => {
-    const fetchPortfolio = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const data = await portfolioAPI.getStatus();
-        setPortfolioState(data);
-        setPortfolio(data);
-        if (!showEditBalance && !newBalance) {setNewBalance(data.balance.toString());}
-      } catch (err) {
-        console.error('Error fetching portfolio:', err);
-        setError('Failed to load portfolio');
-      } finally {
-        setLoading(false);
-      }
-    };
-    void fetchPortfolio();
-    const interval = setInterval(() => { if (!showEditBalance) {void fetchPortfolio();} }, 60000);
-    return () => clearInterval(interval);
+    if (storePortfolio) {
+      setPortfolioState(storePortfolio);
+      if (!showEditBalance && !newBalance) {setNewBalance(storePortfolio.balance.toString());}
+      setLoading(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setPortfolio, showEditBalance]);
+  }, [storePortfolio]);
 
+  // Only fetch independently after balance edit to get updated data immediately
+  const refreshPortfolio = async () => {
+    try {
+      setError(null);
+      const data = await portfolioAPI.getStatus();
+      setPortfolioState(data);
+      setPortfolio(data);
+    } catch (err) {
+      console.error('Error fetching portfolio:', err);
+      setError('Failed to load portfolio');
+    }
+  };
+
+  // Fallback: if store is empty after 2s, fetch directly (first load)
   useEffect(() => {
+    if (!apiConnected) return;
+    if (storePortfolio) { setLoading(false); return; }
+    const timer = setTimeout(() => {
+      if (!storePortfolio) {void refreshPortfolio().finally(() => setLoading(false));}
+    }, 2000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiConnected]);
+
+  // Win rate — stagger by 1.5s to avoid request burst on mount
+  useEffect(() => {
+    if (!apiConnected) return;
     const fetchWinRate = async () => {
       try {
         const stats = await signalsAPI.getStats();
         if (stats.total > 0) {setWinRate(stats.win_rate * 100);}
       } catch { /* ignore */ }
     };
-    void fetchWinRate();
+    const initTimer = setTimeout(() => void fetchWinRate(), 1500);
     const interval = setInterval(fetchWinRate, 120000);
-    return () => clearInterval(interval);
-  }, []);
+    return () => { clearTimeout(initTimer); clearInterval(interval); };
+  }, [apiConnected]);
 
   const handleBalanceUpdate = async () => {
     try {
@@ -61,6 +75,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
         setPortfolioState(prev => prev ? { ...prev, balance: amount, initial_balance: amount, equity: amount, pnl: 0 } : null);
         alert(`✅ ${result.message}`);
         setShowEditBalance(false);
+        void refreshPortfolio();
       }
     } catch (err) {
       console.error('Error updating balance:', err);

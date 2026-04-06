@@ -762,35 +762,41 @@ export function CandlestickChart() {
       }
 
       // ── Volume Profile price lines (POC / VAH / VAL) ──
-      try {
-        const vp = await marketAPI.getVolumeProfile('XAU/USD', selectedInterval, 100);
-        if (!signal?.aborted && vp && candleSeriesRef.current) {
-          const cs = candleSeriesRef.current;
-          if (vp.poc) {
-            signalPriceLinesRef.current.push(cs.createPriceLine({
-              price: vp.poc, color: 'rgba(251,191,36,0.85)',
-              lineWidth: 1, lineStyle: LineStyle.LargeDashed,
-              axisLabelVisible: true, title: 'POC',
-            }));
+      // Deferred by 3s to avoid simultaneous Twelve Data API credit usage
+      // with candles (which already consumed 1 credit above).
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      void setTimeout(async () => {
+        if (signal?.aborted) return;
+        try {
+          const vp = await marketAPI.getVolumeProfile('XAU/USD', selectedInterval, 100);
+          if (!signal?.aborted && vp && candleSeriesRef.current) {
+            const cs = candleSeriesRef.current;
+            if (vp.poc) {
+              signalPriceLinesRef.current.push(cs.createPriceLine({
+                price: vp.poc, color: 'rgba(251,191,36,0.85)',
+                lineWidth: 1, lineStyle: LineStyle.LargeDashed,
+                axisLabelVisible: true, title: 'POC',
+              }));
+            }
+            if (vp.vah && vp.vah !== vp.poc) {
+              signalPriceLinesRef.current.push(cs.createPriceLine({
+                price: vp.vah, color: 'rgba(251,191,36,0.45)',
+                lineWidth: 1, lineStyle: LineStyle.Dotted,
+                axisLabelVisible: true, title: 'VAH',
+              }));
+            }
+            if (vp.val && vp.val !== vp.poc) {
+              signalPriceLinesRef.current.push(cs.createPriceLine({
+                price: vp.val, color: 'rgba(251,191,36,0.45)',
+                lineWidth: 1, lineStyle: LineStyle.Dotted,
+                axisLabelVisible: true, title: 'VAL',
+              }));
+            }
           }
-          if (vp.vah && vp.vah !== vp.poc) {
-            signalPriceLinesRef.current.push(cs.createPriceLine({
-              price: vp.vah, color: 'rgba(251,191,36,0.45)',
-              lineWidth: 1, lineStyle: LineStyle.Dotted,
-              axisLabelVisible: true, title: 'VAH',
-            }));
-          }
-          if (vp.val && vp.val !== vp.poc) {
-            signalPriceLinesRef.current.push(cs.createPriceLine({
-              price: vp.val, color: 'rgba(251,191,36,0.45)',
-              lineWidth: 1, lineStyle: LineStyle.Dotted,
-              axisLabelVisible: true, title: 'VAL',
-            }));
-          }
+        } catch {
+          // VP is optional
         }
-      } catch {
-        // VP is optional
-      }
+      }, isFirstLoad.current ? 3000 : 500);
 
       // ── Fit content on first load ──
       if (isFirstLoad.current) {
@@ -819,11 +825,11 @@ export function CandlestickChart() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedInterval, computeIndicators]);
 
-  /* ── Fetch on mount + interval change + 60s auto-refresh ───────────────── */
+  /* ── Fetch on mount + interval change + 120s auto-refresh ──────────────── */
   useEffect(() => {
     const controller = new AbortController();
     void fetchData(controller.signal);
-    const timer = setInterval(() => void fetchData(controller.signal), 60_000);
+    const timer = setInterval(() => void fetchData(controller.signal), 120_000);
     return () => {
       controller.abort();
       clearInterval(timer);

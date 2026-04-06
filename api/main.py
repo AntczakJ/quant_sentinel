@@ -78,6 +78,28 @@ async def lifespan(app: FastAPI):
             app_state["models_loaded"] = False
 
     # Start model loading + background tasks (all non-blocking)
+    # Backfill missing trade profits (one-time migration)
+    try:
+        from src.database import NewsDB
+        _db = NewsDB()
+        _backfilled = _db.backfill_trade_profits()
+        if _backfilled > 0:
+            logger.info(f"🔧 Backfilled profit for {_backfilled} trades")
+
+        # Clean up trades created with wrong/stale API prices
+        # (e.g. scanner got $2,350 from API while gold is actually >$4,000)
+        try:
+            from api.routers.market import _persistent_cache as _mkt_cache
+            ref_price = float(_mkt_cache.get("ticker", {}).get("price", 0))
+            if ref_price > 1000:  # sanity: only if we have a reasonable reference
+                _cleaned = _db.cleanup_invalid_trades(ref_price, tolerance_pct=0.25)
+                if _cleaned > 0:
+                    logger.info(f"🗑️ Cleaned {_cleaned} trades with invalid prices (ref: ${ref_price:.0f})")
+        except Exception as ce:
+            logger.debug(f"Trade cleanup skipped: {ce}")
+    except Exception as e:
+        logger.warning(f"Backfill trade profits skipped: {e}")
+
     model_task = asyncio.create_task(_load_models())
     scanner_task = asyncio.create_task(_background_scanner())
     prices_task = asyncio.create_task(_broadcast_prices_task())
@@ -98,51 +120,134 @@ async def lifespan(app: FastAPI):
 
 async def _background_scanner():
     """
-    Background scanner: runs SMC analysis every 15 minutes and saves signals to DB.
-    This ensures the signal history is always populated even without the Telegram bot.
+    Background scanner: cascading multi-timeframe SMC scan every 15 minutes.
+    Checks 4h → 1h → 15m → 5m and places a trade on the first TF with a valid setup.
+
+    Uses the same cascade logic as the Telegram bot scanner (src/scanner.py).
+    Saves to both trades and scanner_signals with deduplication.
+
+    Fixes vs old version:
+    - Multi-TF cascade (was: 15m only)
+    - Uses calculate_position() for direction (was: raw trend → LONG/SHORT always)
+    - Requires strong SMC setup (was: any trend = trade)
+    - Deduplication via processed_news hash (was: none)
+    - Saves to trades table too (was: scanner_signals only)
+    - Price sanity check (unchanged)
     """
     # Initial delay — wait for the API to fully start up
     await asyncio.sleep(45)
 
     while True:
         try:
-            from src.smc_engine import get_smc_analysis
-            from src.finance import calculate_position
             from src.database import NewsDB
+            from src.api_optimizer import get_rate_limiter as _get_rl
 
-            logger.info("📡 [BG Scanner] Running SMC scan...")
-            analysis = await asyncio.to_thread(get_smc_analysis, "15m")
+            logger.info("📡 [BG Scanner] Starting multi-TF cascade scan (4h→1h→15m→5m)...")
 
-            if analysis:
-                price = float(analysis.get('price', 2000.0))
-                trend = str(analysis.get('trend', 'bull'))
-                rsi = float(analysis.get('rsi', 50.0))
-                structure = str(analysis.get('structure', 'Stable'))
-                direction = "LONG" if trend.lower() == "bull" else "SHORT"
-                atr = float(analysis.get('atr', 5.0))
+            # Global credit pre-check — need at least 2 credits for the first TF
+            _can, _ = _get_rl().can_use_credits(2)
+            if not _can:
+                logger.info("📡 [BG Scanner] Credits low — skipping this cycle")
+                await asyncio.sleep(900)
+                continue
 
-                # Calculate SL/TP from position engine
-                try:
-                    pos = await asyncio.to_thread(calculate_position, analysis, 10000, "USD", "")
-                    sl = float(pos.get('sl') or (price - atr))
-                    tp = float(pos.get('tp') or (price + atr * 2.5))
-                except Exception:
-                    sl = round(price - atr, 2)
-                    tp = round(price + atr * 2.5, 2)
+            # Prefetch all timeframes to warm cache (reduces per-TF API calls in cascade)
+            try:
+                from src.data_sources import get_provider as _gp
+                _provider = _gp()
+                await asyncio.to_thread(_provider.prefetch_all_timeframes, 'XAU/USD')
+            except Exception as _pf_err:
+                logger.debug(f"📡 [BG Scanner] Prefetch skipped: {_pf_err}")
 
-                db = NewsDB()
-                db.save_scanner_signal(
-                    direction=direction,
-                    entry=price,
-                    sl=sl,
-                    tp=tp,
-                    rsi=rsi,
-                    trend=trend,
-                    structure=structure
+            db = NewsDB()
+
+            # Read portfolio balance for position sizing
+            portfolio_balance = 10000.0
+            portfolio_currency = "USD"
+            try:
+                bal = db.get_param("portfolio_balance")
+                if bal and float(bal) > 0:
+                    portfolio_balance = float(bal)
+                row = db._query_one(
+                    "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
                 )
-                logger.info(f"📡 [BG Scanner] Saved {direction} signal @ ${price:.2f} | RSI={rsi:.1f}")
+                if row and row[0]:
+                    portfolio_currency = str(row[0])
+            except Exception:
+                pass
+
+            # Run cascade scan in thread pool (all SMC + finance calls are blocking)
+            try:
+                from src.scanner import cascade_mtf_scan
+                trade = await asyncio.wait_for(
+                    asyncio.to_thread(cascade_mtf_scan, db, portfolio_balance, portfolio_currency),
+                    timeout=120.0,  # generous — cascade may check up to 4 TFs
+                )
+            except asyncio.TimeoutError:
+                logger.warning("📡 [BG Scanner] MTF cascade timed out (120s)")
+                await asyncio.sleep(900)
+                continue
+
+            if trade:
+                import hashlib as _hl
+                tf = trade['tf']
+                tf_label = trade['tf_label']
+                direction = trade['direction']
+                entry = trade['entry']
+                sl = trade['sl']
+                tp = trade['tp']
+                lot = trade.get('lot', 0.01)
+                logic = trade.get('logic', 'SMC Auto')
+                trend = trade.get('trend', 'bull')
+                rsi = trade.get('rsi', 50.0)
+                structure = trade.get('structure', 'Stable')
+
+                # Deduplication — don't place the same trade twice
+                # Uses same key format as Telegram scanner (src/scanner.py) so
+                # they share dedup if both run against the same database.
+                trade_key = _hl.md5(
+                    f"mtf_{direction}_{entry:.1f}_{tf}".encode()
+                ).hexdigest()
+
+                if not db.is_news_processed(trade_key):
+                    # Save to scanner_signals (signal history)
+                    db.save_scanner_signal(
+                        direction=direction,
+                        entry=entry,
+                        sl=sl,
+                        tp=tp,
+                        rsi=rsi,
+                        trend=trend,
+                        structure=f"[{tf_label}] {structure}"
+                    )
+
+                    # Save to trades (OPEN status for auto-resolver)
+                    structure_desc = f"[{tf_label}] {structure}"
+                    db.log_trade(
+                        direction=direction,
+                        price=entry,
+                        sl=sl,
+                        tp=tp,
+                        rsi=rsi,
+                        trend=trend,
+                        structure=structure_desc,
+                        pattern=f"[{tf_label}] {logic}",
+                        lot=lot,
+                    )
+
+                    db.mark_news_as_processed(trade_key)
+
+                    logger.info(
+                        f"📡 [BG Scanner] ✅ {direction} on {tf_label} @ ${entry:.2f} "
+                        f"SL:${sl:.2f} TP:${tp:.2f} | RSI={rsi:.1f} | {logic}"
+                    )
+                else:
+                    logger.info(
+                        f"📡 [BG Scanner] Trade {direction}@${entry:.1f} on {tf_label} "
+                        f"already saved — skipping duplicate"
+                    )
             else:
-                logger.warning("📡 [BG Scanner] No analysis data available")
+                logger.info("📡 [BG Scanner] No valid trade setup on any TF — waiting for next cycle")
 
         except asyncio.CancelledError:
             logger.info("📡 [BG Scanner] Task cancelled")
@@ -156,17 +261,38 @@ async def _background_scanner():
 
 async def _broadcast_prices_task():
     """
-    Broadcast live XAU/USD price via WebSocket to all connected clients every 10 seconds.
+    Broadcast live XAU/USD price via WebSocket to all connected clients every 30 seconds.
     Only fetches price when at least one client is connected to save API calls.
+    Reuses ticker cache from market router when available.
     """
     await asyncio.sleep(15)  # Wait for server to fully start
 
     while True:
         try:
             if connection_manager.get_connection_count("prices") > 0:
-                from src.data_sources import get_provider
-                provider = get_provider()
-                ticker = await asyncio.to_thread(provider.get_current_price, "XAU/USD")
+                ticker = None
+
+                # Try to reuse cached ticker from market router (0 credits)
+                try:
+                    from api.routers.market import _ticker_cache, _data_cache
+                    import time as _t
+                    cached = _ticker_cache.get("XAU/USD")
+                    if cached and (_t.time() - cached["ts"]) < 60:
+                        ticker = cached["data"]
+                except Exception:
+                    pass
+
+                # Fallback: fetch from provider (1 credit) only if credits available
+                if not ticker:
+                    from src.api_optimizer import get_rate_limiter
+                    can_use, _ = get_rate_limiter().can_use_credits(1)
+                    if not can_use:
+                        await asyncio.sleep(30)
+                        continue
+                    from src.data_sources import get_provider
+                    provider = get_provider()
+                    ticker = await asyncio.to_thread(provider.get_current_price, "XAU/USD")
+
                 if ticker:
                     await connection_manager.broadcast(
                         {
@@ -186,37 +312,58 @@ async def _broadcast_prices_task():
         except Exception as e:
             logger.debug(f"[PriceBroadcast] Error: {e}")
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(30)
 
 
 async def _auto_resolve_trades():
     """
     Auto-resolve PROPOSED/OPEN trades every 5 minutes.
     Marks trades WIN if current price hits TP, LOSS if it hits SL.
+    Skips cycle when API credits are low to prioritize user-facing requests.
     """
     await asyncio.sleep(120)  # 2 min initial delay
 
     while True:
         try:
-            from src.data_sources import get_provider
             from src.database import NewsDB
 
-            provider = get_provider()
-            ticker = await asyncio.to_thread(provider.get_current_price, "XAU/USD")
-            if not ticker:
-                await asyncio.sleep(300)
-                continue
+            # Try cached price first (0 credits)
+            current_price = 0.0
+            try:
+                from api.routers.market import _ticker_cache, _data_cache
+                import time as _t
+                cached = _ticker_cache.get("XAU/USD")
+                if cached and (_t.time() - cached["ts"]) < 120:
+                    current_price = float(cached["data"].get("price", 0))
+                elif _data_cache.get("last_price"):
+                    current_price = float(_data_cache["last_price"])
+            except Exception:
+                pass
 
-            current_price = float(ticker.get("price", 0))
+            # Fallback: fetch from provider (1 credit) only if credits available
+            if current_price <= 0:
+                from src.api_optimizer import get_rate_limiter
+                can_use, _ = get_rate_limiter().can_use_credits(1)
+                if not can_use:
+                    logger.debug("[Resolver] Skipping — credits low, waiting for refill")
+                    await asyncio.sleep(300)
+                    continue
+                from src.data_sources import get_provider
+                provider = get_provider()
+                ticker = await asyncio.to_thread(provider.get_current_price, "XAU/USD")
+                if not ticker:
+                    await asyncio.sleep(300)
+                    continue
+                current_price = float(ticker.get("price", 0))
+
             if current_price <= 0:
                 await asyncio.sleep(300)
                 continue
 
             db = NewsDB()
-            db.cursor.execute(
+            open_trades = db._query(
                 "SELECT id, direction, entry, sl, tp FROM trades WHERE status IN ('PROPOSED', 'OPEN')"
             )
-            open_trades = db.cursor.fetchall()
 
             resolved = 0
             for row in open_trades:
@@ -225,6 +372,19 @@ async def _auto_resolve_trades():
                     entry_f = float(entry or 0)
                     sl_f = float(sl or 0)
                     tp_f = float(tp or 0)
+
+                    # ── Price sanity: if entry is >25% from current price,
+                    #    the trade was created with stale/wrong data — remove it.
+                    if entry_f > 0 and current_price > 0:
+                        deviation = abs(entry_f - current_price) / current_price
+                        if deviation > 0.25:
+                            db._execute("DELETE FROM trades WHERE id=?", (trade_id,))
+                            logger.warning(
+                                f"🗑️ [Resolver] Deleted trade #{trade_id}: entry=${entry_f:.2f} "
+                                f"vs current=${current_price:.2f} (Δ{deviation:.0%})"
+                            )
+                            resolved += 1
+                            continue
 
                     hit_tp = hit_sl = False
                     if direction == "LONG":
@@ -365,10 +525,8 @@ async def websocket_prices(websocket):
     logger.info("🟢 WebSocket client connected to /ws/prices")
     try:
         while True:
-            # Block until the client sends something (ping/pong or close frame).
-            # WebSocketDisconnect is raised when the client closes the connection.
             await websocket.receive_text()
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         logger.info("🟡 WebSocket /ws/prices client disconnected")
     except Exception as e:
         logger.debug(f"WebSocket /ws/prices closed: {type(e).__name__}")
@@ -383,7 +541,7 @@ async def websocket_signals(websocket):
     try:
         while True:
             await websocket.receive_text()
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         logger.info("🟡 WebSocket /ws/signals client disconnected")
     except Exception as e:
         logger.debug(f"WebSocket /ws/signals closed: {type(e).__name__}")

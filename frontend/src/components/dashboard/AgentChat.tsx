@@ -7,6 +7,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Wrench, RefreshCw, Trash2, AlertTriangle } from 'lucide-react';
 import { agentAPI } from '../../api/client';
+import { useTradingStore } from '../../store/tradingStore';
 import { MarkdownText } from '../ui/MarkdownText';
 
 interface Message {
@@ -48,17 +49,19 @@ export function AgentChat() {
     () => localStorage.getItem(THREAD_STORAGE_KEY) ?? undefined
   );
   const [agentAvailable, setAgentAvailable] = useState<boolean | null>(null);
+  const apiConnected = useTradingStore((s) => s.apiConnected);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isAbortedRef = useRef(false);   // prevents double-message race condition
 
-  // Sprawdź czy agent jest dostępny
+  // Sprawdź czy agent jest dostępny — only when API is up
   useEffect(() => {
+    if (!apiConnected) { setAgentAvailable(false); return; }
     void agentAPI.getInfo().then((info) => {
       setAgentAvailable(info.available as boolean);
     }).catch(() => setAgentAvailable(false));
-  }, []);
+  }, [apiConnected]);
 
   // Auto-scroll do ostatniej wiadomości
   useEffect(() => {

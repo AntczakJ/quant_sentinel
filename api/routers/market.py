@@ -7,13 +7,11 @@ import os
 import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
-from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.logger import logger
 from src.data_sources import get_provider
-import pandas_ta as ta
 from api.schemas.models import CandleResponse, TickerResponse, IndicatorResponse, Candle
 
 router = APIRouter()
@@ -25,8 +23,17 @@ _data_cache = {"last_price": None, "last_update": None}
 import time as _time
 _candle_cache: dict = {}   # key: f"{symbol}_{interval}_{limit}" → {"candles": ..., "ts": float}
 _indicator_cache: dict = {}  # key: f"{symbol}_{interval}" → {"data": ..., "ts": float}
-_CANDLE_TTL = 60             # 60 seconds — one API call per minute max per symbol/interval
-_INDICATOR_TTL = 60
+_ticker_cache: dict = {}   # key: f"{symbol}" → {"data": ..., "ts": float}
+_CANDLE_TTL = 120            # 120 seconds — saves API credits (one call per 2 min per symbol/interval)
+_INDICATOR_TTL = 120
+_TICKER_TTL = 60             # 60 seconds — matches frontend polling cadence (saves credits)
+_VP_TTL = 120                # 120 seconds — volume profile reuses candle data anyway
+
+# Dedup locks — only one external API call per resource at a time
+import asyncio as _asyncio
+_candle_fetch_lock = _asyncio.Lock()
+_ticker_fetch_lock = _asyncio.Lock()
+_vp_cache: dict = {}         # key: f"{symbol}_{interval}_{limit}" → {"data": ..., "ts": float}
 
 def calculate_rsi(close_prices, period=14):
     """Calculate RSI (Relative Strength Index)"""
@@ -89,7 +96,7 @@ _persistent_cache = {
         "change_pct": 0.00,
         "high_24h": 4750.00,
         "low_24h": 4690.00,
-        "is_mock": True
+        "is_mock": False
     },
     "candles": None,
     "last_fetch_time": None
@@ -97,7 +104,9 @@ _persistent_cache = {
 
 def get_mock_ticker_data(symbol: str):
     """Return stable mock data when API is rate limited - NOT RANDOM"""
-    return _persistent_cache["ticker"].copy()
+    data = _persistent_cache["ticker"].copy()
+    data["is_mock"] = True
+    return data
 
 def _is_xau_trading_hour(dt) -> bool:
     """Return True if *dt* (UTC) falls inside XAU/USD trading hours."""
@@ -136,7 +145,7 @@ def get_mock_candles(symbol: str, interval: str, count: int):
     current_block = int(current_time / 300)
     np.random.seed(current_block % 10000)
 
-    base_price = 4720.00
+    base_price = _persistent_cache["ticker"].get("price", 4720.00)
     candles_list = []
 
     # Realistic per-interval volatility (XAU/USD)
@@ -271,16 +280,50 @@ async def get_candles(
 
     try:
         provider = get_provider()
-        try:
-            df = await asyncio.wait_for(
-                asyncio.to_thread(provider.get_candles, symbol, interval, fetch_limit),
-                timeout=12.0
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"⚠️ Provider timeout (12s) — using mock data for {symbol}")
-            df = None
+
+        # ── Credit pre-check: skip thread pool entirely when credits are exhausted ──
+        # This is the most impactful optimization — a blocked thread holds its pool
+        # slot for 5-10s; skipping it frees the slot for DB-only endpoints instantly.
+        from src.api_optimizer import get_rate_limiter as _get_rl
+        _can, _wait = _get_rl().can_use_credits(1)
+        if not _can:
+            logger.info(f"⚡ Credits low (wait {_wait:.0f}s) — using mock candles for {symbol}")
+            df = get_mock_candles(symbol, interval, limit)
+            if df is not None and not df.empty:
+                df = _filter_trading_candles(df, symbol, limit)
+                candles = [
+                    Candle(
+                        timestamp=row['timestamp'] if 'timestamp' in row else datetime.now(timezone.utc),
+                        open=float(row['open']), high=float(row['high']),
+                        low=float(row['low']), close=float(row['close']),
+                        volume=int(row['volume']) if 'volume' in row else 0,
+                    ) for _, row in df.iterrows()
+                ]
+                result = CandleResponse(symbol=symbol, interval=interval, candles=candles, limit=len(candles))
+                _candle_cache[cache_key] = {"candles": result, "ts": _time.time()}
+                return result
+
+        # Dedup lock — if N requests arrive simultaneously, only the first calls the API
+        async with _candle_fetch_lock:
+            # Re-check cache inside lock (another request may have filled it)
+            cached2 = _candle_cache.get(cache_key)
+            if cached2 and (_time.time() - cached2["ts"]) < _CANDLE_TTL:
+                logger.debug(f"✅ Serving candles from cache (dedup hit: {cache_key})")
+                return cached2["candles"]
+
+            try:
+                df = await asyncio.wait_for(
+                    asyncio.to_thread(provider.get_candles, symbol, interval, fetch_limit),
+                    timeout=8.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"⚠️ Provider timeout (8s) — using mock data for {symbol}")
+                df = None
 
         # If provider returns None, use mock data
+        # NOTE: do NOT touch _persistent_cache["ticker"]["is_mock"] here —
+        # only the /ticker endpoint should set that flag, otherwise candle fallback
+        # falsely marks the ticker as mock and confuses /market/status.
         if df is None or df.empty:
             logger.warning(f"⚠️ API rate limited or error - using mock data for {symbol}")
             df = get_mock_candles(symbol, interval, limit)
@@ -295,7 +338,7 @@ async def get_candles(
         candles = []
         for idx, row in df.iterrows():
             candles.append(Candle(
-                timestamp=row['timestamp'] if 'timestamp' in row else datetime.utcnow(),
+                timestamp=row['timestamp'] if 'timestamp' in row else datetime.now(timezone.utc),
                 open=float(row['open']),
                 high=float(row['high']),
                 low=float(row['low']),
@@ -319,7 +362,7 @@ async def get_candles(
             candles = []
             for idx, row in df.iterrows():
                 candles.append(Candle(
-                    timestamp=row['timestamp'] if 'timestamp' in row else datetime.utcnow(),
+                    timestamp=row['timestamp'] if 'timestamp' in row else datetime.now(timezone.utc),
                     open=float(row['open']),
                     high=float(row['high']),
                     low=float(row['low']),
@@ -348,23 +391,74 @@ async def get_ticker(symbol: str = Query("XAU/USD", description="Trading symbol 
     Falls back to mock data if API rate limit is hit.
     """
     try:
-        provider = get_provider()
-        try:
-            data = await asyncio.wait_for(
-                asyncio.to_thread(provider.get_current_price, symbol),
-                timeout=12.0
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"⚠️ Provider timeout (12s) — using mock ticker for {symbol}")
-            data = None
+        # Check ticker cache first
+        ticker_cached = _ticker_cache.get(symbol)
+        if ticker_cached and (_time.time() - ticker_cached["ts"]) < _TICKER_TTL:
+            logger.debug(f"✅ Serving ticker from cache ({symbol})")
+            data = ticker_cached["data"]
+        else:
+            provider = get_provider()
+            async with _ticker_fetch_lock:
+                # Re-check inside lock (dedup)
+                ticker_cached2 = _ticker_cache.get(symbol)
+                if ticker_cached2 and (_time.time() - ticker_cached2["ts"]) < _TICKER_TTL:
+                    data = ticker_cached2["data"]
+                else:
+                    # Credit pre-check — skip thread pool when credits exhausted
+                    from src.api_optimizer import get_rate_limiter as _get_rl
+                    _can, _wait = _get_rl().can_use_credits(1)
+                    if not _can:
+                        logger.info(f"⚡ Credits low — using mock ticker for {symbol}")
+                        data = get_mock_ticker_data(symbol)
+                        _persistent_cache["ticker"]["is_mock"] = True
+                    else:
+                        try:
+                            data = await asyncio.wait_for(
+                                asyncio.to_thread(provider.get_current_price, symbol),
+                                timeout=8.0
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(f"⚠️ Provider timeout (8s) — using mock ticker for {symbol}")
+                            data = None
 
-        # If provider returns None (rate limited or error), use mock data
-        if data is None:
-            logger.warning(f"⚠️ API rate limited or error - using mock data for {symbol}")
-            data = get_mock_ticker_data(symbol)
+                        # If provider returns None (rate limited or error), use mock data
+                        if data is None:
+                            logger.warning(f"⚠️ API rate limited or error - using mock data for {symbol}")
+                            data = get_mock_ticker_data(symbol)
+                            _persistent_cache["ticker"]["is_mock"] = True
+                        else:
+                            _persistent_cache["ticker"]["is_mock"] = False
+
+                    _ticker_cache[symbol] = {"data": data, "ts": _time.time()}
 
         _data_cache["last_price"] = data.get("price", 0)
         _data_cache["last_update"] = datetime.now(timezone.utc)
+
+        # Update persistent cache with real values (for mock fallback).
+        # Guard: only accept if the new price is within ±20% of the current cached price.
+        # This prevents a single stale/wrong API response from corrupting the reference.
+        if not data.get("is_mock"):
+            new_price = float(data.get("price", 0))
+            old_price = _persistent_cache["ticker"].get("price", 0)
+            price_ok = True
+            if old_price > 1000 and new_price > 0:
+                deviation = abs(new_price - old_price) / old_price
+                if deviation > 0.20:
+                    logger.warning(
+                        f"⚠️ Ticker price sanity: API=${new_price:.2f} vs cache=${old_price:.2f} "
+                        f"(Δ{deviation:.0%}) — NOT updating persistent cache"
+                    )
+                    price_ok = False
+
+            if price_ok and new_price > 0:
+                _persistent_cache["ticker"]["price"] = new_price
+            if float(data.get("change", 0)) != 0:
+                _persistent_cache["ticker"]["change"] = float(data.get("change", 0))
+                _persistent_cache["ticker"]["change_pct"] = float(data.get("change_pct", 0))
+            if data.get("high_24h") and price_ok:
+                _persistent_cache["ticker"]["high_24h"] = float(data["high_24h"])
+            if data.get("low_24h") and price_ok:
+                _persistent_cache["ticker"]["low_24h"] = float(data["low_24h"])
 
         logger.debug(f"💰 {symbol}: {data.get('price', 'N/A')}")
 
@@ -419,14 +513,22 @@ async def get_indicators(
 
     try:
         provider = get_provider()
-        try:
-            df = await asyncio.wait_for(
-                asyncio.to_thread(provider.get_candles, symbol, interval, 100),
-                timeout=12.0
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"⚠️ Provider timeout (12s) — using mock indicators for {symbol}")
-            df = None
+
+        # Credit pre-check — use mock data when credits exhausted
+        from src.api_optimizer import get_rate_limiter as _get_rl
+        _can, _ = _get_rl().can_use_credits(1)
+        if not _can:
+            logger.info(f"⚡ Credits low — using mock indicators for {symbol}")
+            df = get_mock_candles(symbol, interval, 100)
+        else:
+            try:
+                df = await asyncio.wait_for(
+                    asyncio.to_thread(provider.get_candles, symbol, interval, 100),
+                    timeout=8.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"⚠️ Provider timeout (8s) — using mock indicators for {symbol}")
+                df = None
 
         # If provider returns None, use mock data
         if df is None or df.empty:
@@ -525,15 +627,64 @@ async def get_volume_profile(
 ):
     """
     Zwraca Volume Profile: POC, VAH, VAL i histogram price-volume dla wizualizacji.
+    Reuses the candle cache when possible to avoid extra Twelve Data API credits.
+    Results are cached for 60 seconds.
     """
+    vp_key = f"{symbol}_{interval}_{limit}"
+    cached_vp = _vp_cache.get(vp_key)
+    if cached_vp and (_time.time() - cached_vp["ts"]) < _VP_TTL:
+        logger.debug(f"✅ Serving volume-profile from cache ({vp_key})")
+        return cached_vp["data"]
+
     try:
         from src.indicators import volume_profile as calc_vp
-        provider = get_provider()
-        df = await asyncio.to_thread(provider.get_candles, symbol, interval, limit)
+
+        # Try to reuse candle cache first (0 credits)
+        candle_key = f"{symbol}_{interval}_{limit}"
+        candle_cached = _candle_cache.get(candle_key)
+        # Also try overfetch key used by /candles endpoint
+        candle_key_200 = f"{symbol}_{interval}_200"
+        candle_cached_200 = _candle_cache.get(candle_key_200)
+
+        df = None
+        if candle_cached and (_time.time() - candle_cached["ts"]) < _CANDLE_TTL:
+            logger.debug(f"✅ VP reusing candle cache ({candle_key})")
+            # Reconstruct a minimal DataFrame from cached Candle objects
+            import pandas as pd
+            rows = [{"open": c.open, "high": c.high, "low": c.low, "close": c.close,
+                      "volume": c.volume, "timestamp": c.timestamp}
+                    for c in candle_cached["candles"].candles[-limit:]]
+            df = pd.DataFrame(rows) if rows else None
+        elif candle_cached_200 and (_time.time() - candle_cached_200["ts"]) < _CANDLE_TTL:
+            logger.debug(f"✅ VP reusing candle cache ({candle_key_200})")
+            import pandas as pd
+            rows = [{"open": c.open, "high": c.high, "low": c.low, "close": c.close,
+                      "volume": c.volume, "timestamp": c.timestamp}
+                    for c in candle_cached_200["candles"].candles[-limit:]]
+            df = pd.DataFrame(rows) if rows else None
+
+        # Fallback: fetch from provider (costs 1 credit) — only if credits available
+        if df is None or df.empty:
+            from src.api_optimizer import get_rate_limiter as _get_rl
+            _can, _ = _get_rl().can_use_credits(1)
+            if not _can:
+                logger.info(f"⚡ Credits low — returning empty VP for {symbol}")
+                return {"poc": 0, "vah": 0, "val": 0, "histogram": [], "is_mock": True}
+            provider = get_provider()
+            try:
+                df = await asyncio.wait_for(
+                    asyncio.to_thread(provider.get_candles, symbol, interval, limit),
+                    timeout=8.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"⚠️ VP provider timeout — returning empty")
+                return {"poc": 0, "vah": 0, "val": 0, "histogram": [], "is_mock": True}
+
         if df is None or df.empty:
             return {"poc": 0, "vah": 0, "val": 0, "histogram": [], "is_mock": True}
+
         vp = calc_vp(df)
-        return {
+        result = {
             "poc": vp.get("poc"),
             "vah": vp.get("vah"),
             "val": vp.get("val"),
@@ -542,6 +693,8 @@ async def get_volume_profile(
             "interval": interval,
             "is_mock": False,
         }
+        _vp_cache[vp_key] = {"data": result, "ts": _time.time()}
+        return result
     except Exception as e:
         logger.error(f"Volume profile error: {e}")
         return {"poc": 0, "vah": 0, "val": 0, "histogram": [], "error": str(e)}

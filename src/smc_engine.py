@@ -770,7 +770,16 @@ def get_mtf_confluence(symbol: str = "XAU/USD") -> dict:
         logger.error(f"MTF confluence error: {e}")
 
     if not results:
-        return {"confluence_score": 0, "direction": "CZEKAJ", "timeframes": {}}
+        return {
+            "confluence_score": 0,
+            "direction": "CZEKAJ",
+            "bull_pct": 0,
+            "bear_pct": 0,
+            "bull_tf_count": 0,
+            "bear_tf_count": 0,
+            "timeframes": {},
+            "session": get_active_session(),
+        }
 
     # Confluence scoring
     bull_score = 0.0

@@ -1,5 +1,8 @@
 /**
  * src/api/client.ts - API client for backend communication
+ *
+ * Includes circuit breaker to avoid request storms when the backend is down,
+ * ETag caching for 304 responses, and GET request deduplication.
  */
 
 import axios from 'axios';
@@ -8,9 +11,69 @@ import type { Candle, Ticker, Indicators, Signal, Portfolio, AllModelsStats, Tra
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000/api';
 
+/* ══════════════════════════════════════════════════════════════════════
+   Circuit Breaker — stops request flood when backend is unreachable.
+   States: CLOSED (normal) → OPEN (reject fast) → HALF_OPEN (probe once)
+   ══════════════════════════════════════════════════════════════════════ */
+type CBState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+
+const circuitBreaker = {
+  state: 'CLOSED' as CBState,
+  failures: 0,
+  lastFailure: 0,
+  /** After this many consecutive failures, open the circuit */
+  threshold: 8,
+  /** How long (ms) to wait before allowing a probe request */
+  cooldown: 20_000,
+  /** Suppress console noise: log only every Nth failure while open */
+  logEvery: 10,
+  _suppressCount: 0,
+
+  recordSuccess() {
+    this.failures = 0;
+    this.state = 'CLOSED';
+    this._suppressCount = 0;
+  },
+
+  recordFailure() {
+    this.failures++;
+    this.lastFailure = Date.now();
+    if (this.failures >= this.threshold) {
+      this.state = 'OPEN';
+    }
+  },
+
+  /** Returns true if request should be allowed through */
+  canRequest(): boolean {
+    if (this.state === 'CLOSED') return true;
+    if (this.state === 'OPEN') {
+      // Allow a probe after cooldown
+      if (Date.now() - this.lastFailure >= this.cooldown) {
+        this.state = 'HALF_OPEN';
+        return true;
+      }
+      return false;
+    }
+    // HALF_OPEN — allow the probe request through
+    return true;
+  },
+
+  /** Whether to suppress a console.error for this failure */
+  shouldSuppressLog(): boolean {
+    if (this.state !== 'OPEN') return false;
+    this._suppressCount++;
+    return this._suppressCount % this.logEvery !== 0;
+  },
+};
+
+/** Exported so components/hooks can check connectivity cheaply */
+export function isCircuitOpen(): boolean {
+  return circuitBreaker.state === 'OPEN';
+}
+
 const client = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // 30s default timeout — prevents infinite hangs
+  timeout: 15000, // 15s — fails faster; previous 30s caused long queues
   headers: {
     'Content-Type': 'application/json',
   },
@@ -23,6 +86,12 @@ const etagCache = new Map<string, { etag: string; data: unknown }>();
 const inflightRequests = new Map<string, Promise<AxiosResponse>>();
 
 client.interceptors.request.use((config) => {
+  // Circuit breaker gate — reject immediately when backend is known-down
+  if (!circuitBreaker.canRequest()) {
+    const err = new axios.Cancel('Circuit breaker OPEN — backend unreachable');
+    return Promise.reject(err);
+  }
+
   if (config.method === 'get') {
     const key = `${config.baseURL ?? ''}${config.url ?? ''}`;
     const cached = etagCache.get(key);
@@ -36,6 +105,9 @@ client.interceptors.request.use((config) => {
 
 client.interceptors.response.use(
   (response) => {
+    // Backend responded — circuit is healthy
+    circuitBreaker.recordSuccess();
+
     // Store ETag from response
     const etag = response.headers['etag'];
     if (etag && response.config.method === 'get') {
@@ -44,9 +116,10 @@ client.interceptors.response.use(
     }
     return response;
   },
-  (error: AxiosError) => {
-    // Handle 304 Not Modified — return cached data
+  async (error: AxiosError) => {
+    // Handle 304 Not Modified — return cached data (still a "success")
     if (error.response?.status === 304 && error.config) {
+      circuitBreaker.recordSuccess();
       const key = `${error.config.baseURL ?? ''}${error.config.url ?? ''}`;
       const cached = etagCache.get(key);
       if (cached) {
@@ -61,7 +134,38 @@ client.interceptors.response.use(
     const dedupPromise = (error.config as any)?.__dedupPromise;
     if (dedupPromise && axios.isCancel(error)) return dedupPromise;
 
-    console.error('API Error:', error.response?.data ?? error.message);
+    // Record network / timeout failures for circuit breaker
+    // Only count failures on /market/ endpoints (those hit external Twelve Data API).
+    // Local DB endpoints (/signals, /portfolio, /analysis, etc.) failing shouldn't
+    // trip the circuit breaker — they don't indicate backend unreachability.
+    const reqUrl = error.config?.url ?? '';
+    const isExternalEndpoint = reqUrl.includes('/market/') || reqUrl === '/health';
+    const isNetworkFailure = !error.response || error.code === 'ECONNABORTED' ||
+      error.code === 'ERR_NETWORK' || error.message?.includes('timeout');
+    if (isNetworkFailure && isExternalEndpoint) {
+      circuitBreaker.recordFailure();
+    }
+
+    // Auto-retry once for idempotent GET requests on timeout/network errors
+    // Skip /market/ endpoints — they have mock fallback, retry wastes API credits
+    // Only retry if circuit is still CLOSED and this isn't already a retry
+    if (
+      isNetworkFailure &&
+      error.config &&
+      error.config.method === 'get' &&
+      !reqUrl.includes('/market/') &&
+      !(error.config as any).__isRetry &&
+      circuitBreaker.state === 'CLOSED'
+    ) {
+      const retryConfig = { ...error.config, __isRetry: true } as any;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return client.request(retryConfig);
+    }
+
+    // Suppress console noise when circuit is open
+    if (!circuitBreaker.shouldSuppressLog()) {
+      console.error('API Error:', error.response?.data ?? error.message);
+    }
     return Promise.reject(error);
   }
 );
@@ -83,21 +187,24 @@ client.get = function dedupGet<T = any>(...args: Parameters<typeof originalGet>)
 export const marketAPI = {
   getCandles: async (symbol: string = 'XAU/USD', interval: string = '15m', limit: number = 200) => {
     const response = await client.get<{ candles: Candle[] }>('/market/candles', {
-      params: { symbol, interval, limit }
+      params: { symbol, interval, limit },
+      timeout: 20_000, // 20s — backend has 12s external API timeout + processing
     });
     return response.data.candles;
   },
 
   getTicker: async (symbol: string = 'XAU/USD') => {
     const response = await client.get<Ticker>('/market/ticker', {
-      params: { symbol }
+      params: { symbol },
+      timeout: 20_000,
     });
     return response.data;
   },
 
   getIndicators: async (symbol: string = 'XAU/USD', interval: string = '15m') => {
     const response = await client.get<Indicators>('/market/indicators', {
-      params: { symbol, interval }
+      params: { symbol, interval },
+      timeout: 20_000,
     });
     return response.data;
   },
@@ -115,7 +222,8 @@ export const marketAPI = {
       val: number;
       histogram: Array<{ price: number; volume: number; pct: number }>;
     }>('/market/volume-profile', {
-      params: { symbol, interval, limit }
+      params: { symbol, interval, limit },
+      timeout: 20_000,
     });
     return response.data;
   },
@@ -182,9 +290,10 @@ export const portfolioAPI = {
     return response.data;
   },
 
-  updateBalance: async (balance: number) => {
+  updateBalance: async (balance: number, currency: string = 'PLN') => {
     const response = await client.post('/portfolio/update-balance', {
-      balance
+      balance,
+      currency,
     });
     return response.data;
   },
