@@ -288,5 +288,6 @@ else:
 
 print("="*80)
 
-sys.exit(0 if total_passed >= total_tests * 0.8 else 1)
+if __name__ == "__main__":
+    sys.exit(0 if total_passed >= total_tests * 0.8 else 1)
 

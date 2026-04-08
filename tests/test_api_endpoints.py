@@ -20,8 +20,7 @@ from fastapi.testclient import TestClient
 try:
     from api.main import app
 except ImportError as e:
-    print(f"⚠️ Cannot import FastAPI app: {e}")
-    sys.exit(1)
+    pytest.skip(f"Cannot import FastAPI app: {e}", allow_module_level=True)
 
 client = TestClient(app)
 

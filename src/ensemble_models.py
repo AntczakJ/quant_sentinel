@@ -7,6 +7,7 @@ Odpowiada za:
   - Fuzję predykcji z wagami
   - Caching modeli w pamięci
   - Obsługę błędów (fallback do wartości domyślnych)
+  - GPU-accelerated feature computation via compute module
 """
 
 import os
@@ -14,6 +15,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Optional, Tuple
 from src.logger import logger
+from src.compute import compute_features, FEATURE_COLS
 
 # ============================================================================
 # LAZY LOADING - modele ładują się tylko przy pierwszym użyciu
@@ -34,64 +36,125 @@ _models_loaded = {
 
 
 def _load_lstm():
-    """Lazy load LSTM model."""
+    """Lazy load LSTM model. Prefers ONNX+DirectML GPU if available."""
     if _models_loaded["lstm"]:
         return _models_cache["lstm"]
 
+    keras_path = "models/lstm.keras"
+    onnx_path = "models/lstm.onnx"
+
+    # Try ONNX Runtime (GPU via DirectML) first
+    try:
+        from src.compute import detect_gpu, convert_keras_to_onnx, get_onnx_session
+        gpu_info = detect_gpu()
+        if gpu_info["onnx_directml"] and os.path.exists(keras_path):
+            converted = convert_keras_to_onnx(keras_path, onnx_path)
+            if converted:
+                session = get_onnx_session(converted)
+                if session:
+                    _models_cache["lstm"] = ("onnx", session)
+                    _models_loaded["lstm"] = True
+                    logger.info("LSTM loaded via ONNX Runtime DirectML (GPU)")
+                    return _models_cache["lstm"]
+    except Exception as e:
+        logger.debug(f"ONNX LSTM load skipped: {e}")
+
+    # Fallback: TensorFlow (CPU or TF-GPU if available)
     try:
         from tensorflow.keras.models import load_model
-        model_path = "models/lstm.keras"
-        if os.path.exists(model_path):
-            model = load_model(model_path)
-            _models_cache["lstm"] = model
+        if os.path.exists(keras_path):
+            model = load_model(keras_path)
+            _models_cache["lstm"] = ("keras", model)
             _models_loaded["lstm"] = True
-            logger.info("✅ LSTM model loaded")
-            return model
+            logger.info("LSTM model loaded (Keras/TensorFlow)")
+            return _models_cache["lstm"]
     except Exception as e:
-        logger.warning(f"⚠️ Failed to load LSTM: {e}")
+        logger.warning(f"Failed to load LSTM: {e}")
 
     return None
 
 
 def _load_xgb():
-    """Lazy load XGBoost model."""
+    """Lazy load XGBoost model. Prefers ONNX+DirectML GPU if available."""
     if _models_loaded["xgb"]:
         return _models_cache["xgb"]
 
+    pkl_path = "models/xgb.pkl"
+    onnx_path = "models/xgb.onnx"
+
+    # Try ONNX Runtime (GPU via DirectML) first
+    try:
+        from src.compute import detect_gpu, convert_xgboost_to_onnx, get_onnx_session
+        gpu_info = detect_gpu()
+        if gpu_info["onnx_directml"] and os.path.exists(pkl_path):
+            # Load pkl to convert, or use existing onnx
+            import pickle
+            with open(pkl_path, 'rb') as f:
+                xgb_model = pickle.load(f)
+            n_features = xgb_model.n_features_in_ if hasattr(xgb_model, 'n_features_in_') else len(FEATURE_COLS)
+            converted = convert_xgboost_to_onnx(xgb_model, n_features, onnx_path)
+            if converted:
+                session = get_onnx_session(converted)
+                if session:
+                    _models_cache["xgb"] = ("onnx", session)
+                    _models_loaded["xgb"] = True
+                    logger.info("XGBoost loaded via ONNX Runtime DirectML (GPU)")
+                    return _models_cache["xgb"]
+    except Exception as e:
+        logger.debug(f"ONNX XGBoost load skipped: {e}")
+
+    # Fallback: native XGBoost (CPU)
     try:
         import pickle
-        model_path = "models/xgb.pkl"
-        if os.path.exists(model_path):
-            with open(model_path, 'rb') as f:
+        if os.path.exists(pkl_path):
+            with open(pkl_path, 'rb') as f:
                 model = pickle.load(f)
-            _models_cache["xgb"] = model
+            _models_cache["xgb"] = ("sklearn", model)
             _models_loaded["xgb"] = True
-            logger.info("✅ XGBoost model loaded")
-            return model
+            logger.info("XGBoost model loaded (CPU)")
+            return _models_cache["xgb"]
     except Exception as e:
-        logger.warning(f"⚠️ Failed to load XGBoost: {e}")
+        logger.warning(f"Failed to load XGBoost: {e}")
 
     return None
 
 
 def _load_dqn(state_size=22, action_size=3):
-    """Lazy load DQN Agent."""
+    """Lazy load DQN Agent. Prefers ONNX+DirectML GPU if available."""
     if _models_loaded["dqn"]:
         return _models_cache["dqn"]
 
+    keras_path = "models/rl_agent.keras"
+    onnx_path = "models/rl_agent.onnx"
+
+    # Try ONNX Runtime (GPU via DirectML) first
+    try:
+        from src.compute import detect_gpu, convert_keras_to_onnx, get_onnx_session
+        gpu_info = detect_gpu()
+        if gpu_info["onnx_directml"] and os.path.exists(keras_path):
+            converted = convert_keras_to_onnx(keras_path, onnx_path)
+            if converted:
+                session = get_onnx_session(converted)
+                if session:
+                    _models_cache["dqn"] = ("onnx", session)
+                    _models_loaded["dqn"] = True
+                    logger.info("DQN loaded via ONNX Runtime DirectML (GPU)")
+                    return _models_cache["dqn"]
+    except Exception as e:
+        logger.debug(f"ONNX DQN load skipped: {e}")
+
+    # Fallback: Keras/TF
     try:
         from src.rl_agent import DQNAgent
         agent = DQNAgent(state_size=state_size, action_size=action_size)
-        model_path = "models/rl_agent.keras"
-
-        if os.path.exists(model_path):
-            agent.load(model_path)
-            _models_cache["dqn"] = agent
+        if os.path.exists(keras_path):
+            agent.load(keras_path)
+            _models_cache["dqn"] = ("keras", agent)
             _models_loaded["dqn"] = True
-            logger.info("✅ DQN Agent loaded")
-            return agent
+            logger.info("DQN Agent loaded (Keras/TensorFlow)")
+            return _models_cache["dqn"]
     except Exception as e:
-        logger.warning(f"⚠️ Failed to load DQN: {e}")
+        logger.warning(f"Failed to load DQN: {e}")
 
     return None
 
@@ -142,90 +205,13 @@ def _fallback_ensemble_result() -> Dict:
 
 
 # ============================================================================
-# SHARED FEATURE COMPUTATION (used by both LSTM and XGBoost)
+# SHARED FEATURE COMPUTATION (delegates to centralized compute module)
 # ============================================================================
 
-_ensemble_feature_cache = {"id": None, "result": None}
-
-
 def _compute_ensemble_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute all prediction features ONCE — shared by LSTM and XGBoost.
-    Cached: repeated calls on the same df return instantly."""
-    cache_key = (id(df), len(df))
-    if _ensemble_feature_cache["id"] == cache_key and _ensemble_feature_cache["result"] is not None:
-        return _ensemble_feature_cache["result"]
-
-    import pandas_ta as ta
-    from src.ml_models import FEATURE_COLS
-
-    df_copy = df.copy()
-    df_copy['rsi'] = ta.rsi(df_copy['close'], 14)
-    df_copy['macd'] = ta.macd(df_copy['close'])['MACD_12_26_9']
-    df_copy['atr'] = ta.atr(df_copy['high'], df_copy['low'], df_copy['close'], 14)
-    df_copy['volatility'] = df_copy['close'].pct_change().rolling(20).std()
-    df_copy['ret_1'] = df_copy['close'].pct_change()
-    df_copy['ret_5'] = df_copy['close'].pct_change(5)
-    df_copy['ret_10'] = df_copy['close'].pct_change(10)
-    df_copy['is_green'] = (df_copy['close'] > df_copy['open']).astype(int)
-    ema20 = ta.ema(df_copy['close'], 20)
-    df_copy['above_ema20'] = (df_copy['close'] > ema20).astype(int)
-    df_copy['ema_distance'] = (df_copy['close'] - ema20) / ema20
-
-    high_14 = df_copy['high'].rolling(14).max()
-    low_14 = df_copy['low'].rolling(14).min()
-    df_copy['williams_r'] = -100 * (high_14 - df_copy['close']) / (high_14 - low_14 + 1e-10)
-
-    typical_price = (df_copy['high'] + df_copy['low'] + df_copy['close']) / 3
-    sma_tp = typical_price.rolling(20).mean()
-    mad_tp = typical_price.rolling(20).std() * 0.7979  # vectorized MAD approximation
-    df_copy['cci'] = (typical_price - sma_tp) / (0.015 * mad_tp + 1e-10)
-
-    try:
-        tenkan = (df_copy['high'].rolling(9).max() + df_copy['low'].rolling(9).min()) / 2
-        kijun = (df_copy['high'].rolling(26).max() + df_copy['low'].rolling(26).min()) / 2
-        span_a = ((tenkan + kijun) / 2).shift(26)
-        span_b = ((df_copy['high'].rolling(52).max() + df_copy['low'].rolling(52).min()) / 2).shift(26)
-        cloud_top = pd.concat([span_a, span_b], axis=1).max(axis=1)
-        df_copy['ichimoku_signal'] = (df_copy['close'] > cloud_top).astype(int)
-    except Exception:
-        df_copy['ichimoku_signal'] = 0
-
-    body = abs(df_copy['close'] - df_copy['open'])
-    high_low = df_copy['high'] - df_copy['low'] + 1e-10
-    df_copy['body_ratio'] = body / high_low
-    df_copy['upper_shadow_ratio'] = (df_copy['high'] - df_copy[['close', 'open']].max(axis=1)) / high_low
-    df_copy['lower_shadow_ratio'] = (df_copy[['close', 'open']].min(axis=1) - df_copy['low']) / high_low
-    df_copy['engulfing_score'] = 0
-    df_copy['pin_bar_score'] = 0
-
-    # Price action patterns (spójne z ml_models._features)
-    lookback = 5
-    df_copy['higher_high'] = (df_copy['high'].rolling(lookback).max().shift(1) < df_copy['high']).astype(int)
-    df_copy['lower_low'] = (df_copy['low'].rolling(lookback).min().shift(1) > df_copy['low']).astype(int)
-
-    rolling_high = df_copy['high'].rolling(lookback)
-    high_mean = rolling_high.mean()
-    high_std = rolling_high.std()
-    above_thresh = (df_copy['high'] > high_mean + high_std * 0.5).astype(int)
-    df_copy['double_top'] = (above_thresh.rolling(lookback).sum().shift(1) >= 2).astype(int)
-
-    rolling_low = df_copy['low'].rolling(lookback)
-    low_mean = rolling_low.mean()
-    low_std = rolling_low.std()
-    below_thresh = (df_copy['low'] < low_mean - low_std * 0.5).astype(int)
-    df_copy['double_bottom'] = (below_thresh.rolling(lookback).sum().shift(1) >= 2).astype(int)
-
-    df_copy['atr_ratio'] = df_copy['atr'] / (df_copy['close'] + 1e-10)
-
-    df_copy = df_copy.dropna()
-
-    for c in FEATURE_COLS:
-        if c not in df_copy.columns:
-            df_copy[c] = 0
-
-    _ensemble_feature_cache["id"] = cache_key
-    _ensemble_feature_cache["result"] = df_copy
-    return df_copy
+    """Compute all prediction features ONCE — delegates to compute.compute_features().
+    Single source of truth for feature computation across all models."""
+    return compute_features(df)
 
 
 # ============================================================================
@@ -235,14 +221,24 @@ def _compute_ensemble_features(df: pd.DataFrame) -> pd.DataFrame:
 def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[float]:
     """
     Predykcja LSTM: prawdopodobieństwo wzrostu (0-1).
-    Używa rozszerzonego zestawu cech z FEATURE_COLS.
+    Uses ONNX Runtime DirectML (GPU) if available, otherwise Keras/TF.
+    Auto-detects seq_len from model if ONNX.
     """
     try:
-        from src.ml_models import FEATURE_COLS
-
-        lstm_model = _load_lstm()
-        if lstm_model is None:
+        lstm_loaded = _load_lstm()
+        if lstm_loaded is None:
             return None
+
+        # Auto-detect seq_len from ONNX model input shape
+        model_type, model = lstm_loaded
+        if model_type == "onnx":
+            inp_shape = model.get_inputs()[0].shape  # e.g. [1, 30, 23]
+            if len(inp_shape) >= 2 and isinstance(inp_shape[1], int):
+                seq_len = inp_shape[1]
+        elif model_type == "keras":
+            inp_shape = model.input_shape  # e.g. (None, 60, 23)
+            if len(inp_shape) >= 2 and inp_shape[1] is not None:
+                seq_len = inp_shape[1]
 
         if len(df) < seq_len + 30:
             logger.debug(f"Za mało danych dla LSTM: {len(df)} < {seq_len+30}")
@@ -262,13 +258,21 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
             if is_fitted:
                 data = scaler.transform(data)
             else:
-                logger.debug("⚠️ LSTM scaler nie z treningu — używam fit_transform (mniej stabilne)")
+                logger.debug("LSTM scaler nie z treningu — fit_transform (mniej stabilne)")
                 data = scaler.fit_transform(data)
 
         X = data.reshape(1, seq_len, -1)
 
-        pred = lstm_model.predict(X, verbose=0)
+        # Dispatch: ONNX GPU or Keras CPU
+        model_type, model = lstm_loaded
+        if model_type == "onnx":
+            from src.compute import onnx_predict
+            pred = onnx_predict(model, X.astype(np.float32))
+        else:
+            pred = model.predict(X, verbose=0)
 
+        if pred is None:
+            return None
         if isinstance(pred, np.ndarray):
             if pred.ndim == 2:
                 return float(pred[0, 0])
@@ -285,13 +289,11 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
 def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
     """
     Predykcja XGBoost: prawdopodobieństwo wzrostu (0-1).
-    Używa rozszerzonego zestawu cech z FEATURE_COLS.
+    Uses ONNX Runtime DirectML (GPU) if available, otherwise native XGBoost.
     """
     try:
-        from src.ml_models import FEATURE_COLS
-
-        xgb_model = _load_xgb()
-        if xgb_model is None:
+        xgb_loaded = _load_xgb()
+        if xgb_loaded is None:
             return None
 
         if len(df) < 100:
@@ -308,11 +310,29 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
         if X.empty:
             return None
 
+        model_type, model = xgb_loaded
+
         try:
-            pred = xgb_model.predict_proba(X)
-            return float(pred[0, 1])
+            if model_type == "onnx":
+                import onnxruntime as ort
+                input_name = model.get_inputs()[0].name
+                # ONNX XGBoost returns [label, probabilities] — we need probabilities
+                results = model.run(None, {input_name: X.values.astype(np.float32)})
+                if len(results) >= 2:
+                    # results[1] = probabilities dict or array [{0: p0, 1: p1}]
+                    probs = results[1]
+                    if isinstance(probs, list) and len(probs) > 0:
+                        if isinstance(probs[0], dict):
+                            return float(probs[0].get(1, 0.5))
+                        return float(probs[0][1]) if len(probs[0]) > 1 else 0.5
+                    elif isinstance(probs, np.ndarray) and probs.shape[-1] >= 2:
+                        return float(probs[0, 1])
+                return 0.5
+            else:
+                pred = model.predict_proba(X)
+                return float(pred[0, 1])
         except Exception as e:
-            logger.debug(f"XGBoost predict_proba error: {e}")
+            logger.debug(f"XGBoost predict error: {e}")
             return None
 
     except Exception as e:
@@ -323,6 +343,7 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
 def predict_dqn_action(close_prices: np.ndarray, balance: float = 1.0, position: int = 0) -> Optional[int]:
     """
     Predykcja DQN: akcja (0=hold, 1=buy, 2=sell).
+    Uses ONNX Runtime DirectML (GPU) if available.
 
     Args:
         close_prices: Ostatnie ~20 cen zamknięcia
@@ -333,16 +354,28 @@ def predict_dqn_action(close_prices: np.ndarray, balance: float = 1.0, position:
         int: Akcja (0, 1, lub 2), lub None jeśli błąd
     """
     try:
-        dqn_agent = _load_dqn()
-        if dqn_agent is None:
+        dqn_loaded = _load_dqn()
+        if dqn_loaded is None:
             return None
 
-        # Buduj state
-        state = dqn_agent.build_state(close_prices, balance, position)
+        model_type, model = dqn_loaded
 
-        # Predykcja
-        action = dqn_agent.act(state)
-        return int(action)
+        if model_type == "onnx":
+            # Build state manually (same logic as DQNAgent.build_state)
+            from src.rl_agent import DQNAgent
+            temp = DQNAgent.__new__(DQNAgent)
+            state = DQNAgent.build_state(temp, close_prices, balance, position)
+            # ONNX inference on GPU
+            from src.compute import onnx_predict
+            q_values = onnx_predict(model, state.reshape(1, -1).astype(np.float32))
+            if q_values is not None:
+                return int(np.argmax(q_values[0]))
+            return None
+        else:
+            # Keras agent
+            state = model.build_state(close_prices, balance, position)
+            action = model.act(state)
+            return int(action)
 
     except Exception as e:
         logger.debug(f"DQN prediction error: {e}")
@@ -354,12 +387,14 @@ def predict_dqn_action(close_prices: np.ndarray, balance: float = 1.0, position:
 # ============================================================================
 
 def _load_dynamic_weights() -> Dict[str, float]:
-    """Ładuj wagi ensemble z bazy danych. Fallback na domyślne."""
+    """Ładuj wagi ensemble z bazy danych. Fallback na domyślne.
+    Inicjalizuje brakujące wagi w bazie przy pierwszym uruchomieniu."""
     default_weights = {
-        "smc": 0.35,
-        "lstm": 0.25,
+        "smc": 0.30,
+        "attention": 0.20,
+        "lstm": 0.15,
         "xgb": 0.20,
-        "dqn": 0.20
+        "dqn": 0.15,
     }
     try:
         from src.database import NewsDB
@@ -367,7 +402,11 @@ def _load_dynamic_weights() -> Dict[str, float]:
         loaded = {}
         for model_name, default_val in default_weights.items():
             val = db.get_param(f"ensemble_weight_{model_name}", None)
-            loaded[model_name] = val if val is not None else default_val
+            if val is None:
+                # Initialize missing weight in DB with default value
+                db.set_param(f"ensemble_weight_{model_name}", default_val)
+                val = default_val
+            loaded[model_name] = val
         # Normalizuj wagi do sumy = 1
         total = sum(loaded.values())
         if total > 0:
@@ -505,7 +544,29 @@ def get_ensemble_prediction(
         "confidence": 0.8  # SMC jest zawsze pewny
     }
 
-    # --- 2. LSTM Prediction ---
+    # --- 2. Attention (TFT-lite) Prediction ---
+    try:
+        from src.attention_model import predict_attention
+        attn_pred = predict_attention(df)
+        if attn_pred is not None:
+            results["predictions"]["attention"] = {
+                "value": attn_pred,
+                "direction": "LONG" if attn_pred > 0.5 else "SHORT",
+                "confidence": abs(attn_pred - 0.5) * 2
+            }
+        else:
+            results["predictions"]["attention"] = {
+                "value": 0.5, "direction": "NEUTRAL",
+                "confidence": 0.0, "status": "unavailable"
+            }
+    except Exception as e:
+        logger.debug(f"Attention model skipped: {e}")
+        results["predictions"]["attention"] = {
+            "value": 0.5, "direction": "NEUTRAL",
+            "confidence": 0.0, "status": "unavailable"
+        }
+
+    # --- 3. LSTM Prediction ---
     lstm_pred = predict_lstm_direction(df)
     if lstm_pred is not None:
         results["predictions"]["lstm"] = {
@@ -571,16 +632,38 @@ def get_ensemble_prediction(
             "status": "unavailable"
         }
 
+    # ========== REGIME-DEPENDENT WEIGHTS ==========
+    # Adjust model weights based on volatility regime
+    try:
+        vol_pctile = df['close'].pct_change().rolling(20).std().rank(pct=True).iloc[-1]
+    except Exception:
+        vol_pctile = 0.5
+
+    regime_weights = dict(weights)  # copy
+    if vol_pctile < 0.25:
+        # Low volatility — XGB (mean reversion) stronger, LSTM/DQN weaker
+        regime_weights['xgb'] = regime_weights.get('xgb', 0.2) * 1.5
+        regime_weights['lstm'] = regime_weights.get('lstm', 0.25) * 0.7
+    elif vol_pctile > 0.75:
+        # High volatility — LSTM/DQN (trend) stronger, XGB weaker
+        regime_weights['lstm'] = regime_weights.get('lstm', 0.25) * 1.4
+        regime_weights['dqn'] = regime_weights.get('dqn', 0.2) * 1.3
+        regime_weights['xgb'] = regime_weights.get('xgb', 0.2) * 0.7
+    # Normalize
+    rw_total = sum(regime_weights.values())
+    if rw_total > 0:
+        regime_weights = {k: v / rw_total for k, v in regime_weights.items()}
+
     # ========== FUZJA PREDYKCJI ==========
     total_weight = 0
     weighted_sum = 0
     confidence_sum = 0
     available_models = 0
 
-    for model_name, weight in weights.items():
+    for model_name, weight in regime_weights.items():
         if model_name in results["predictions"]:
             pred = results["predictions"][model_name]
-            if "status" not in pred:  # Model dostępny
+            if "status" not in pred:  # Model dostepny
                 weighted_sum += pred["value"] * weight
                 confidence_sum += pred.get("confidence", 0.5) * weight
                 total_weight += weight
@@ -594,31 +677,57 @@ def get_ensemble_prediction(
         results["final_score"] = 0.5
         results["confidence"] = 0.0
 
-    # ========== OSTATECZNY SYGNAŁ ==========
+    # ========== OSTATECZNY SYGNAL (adjusted thresholds) ==========
+    # Progi: 0.58/0.42 zamiast 0.65/0.35 — mniej agresywne, wiecej sygnalow
+    # Confidence: 0.20 zamiast 0.40 — pozwala na exploratory signals
     if available_models == 0:
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "NEUTRAL"
-    elif results["confidence"] < 0.4:
-        # Niska pewność
+    elif results["confidence"] < 0.20:
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "UNCERTAIN"
-    elif results["final_score"] > 0.65:
+    elif results["final_score"] > 0.58:
         results["ensemble_signal"] = "LONG"
         results["final_direction"] = "LONG"
-    elif results["final_score"] < 0.35:
+    elif results["final_score"] < 0.42:
         results["ensemble_signal"] = "SHORT"
         results["final_direction"] = "SHORT"
     else:
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "NEUTRAL"
 
+    # ========== SIGNAL CONFIRMATION (post-filter) ==========
+    if results["ensemble_signal"] in ("LONG", "SHORT"):
+        try:
+            from src.signal_confirmation import confirm_signal
+            confirmation = confirm_signal(
+                df=df,
+                signal_direction=results["ensemble_signal"],
+                ensemble_score=results["final_score"],
+                ensemble_confidence=results["confidence"],
+                symbol=symbol,
+                use_mtf=False,  # MTF costs API credits — use only in scanner
+            )
+            results["confirmation"] = confirmation
+            if not confirmation["confirmed"]:
+                results["ensemble_signal"] = "CZEKAJ"
+                results["final_direction"] = "FILTERED"
+            else:
+                # Boost confidence with confirmation
+                results["confidence"] = confirmation["final_confidence"]
+        except Exception as e:
+            logger.debug(f"Signal confirmation skipped: {e}")
+
     results["models_available"] = available_models
+    results["regime_weights"] = regime_weights
+    results["volatility_percentile"] = round(vol_pctile, 3)
 
     logger.info(
-        f"🤖 Ensemble: {available_models} modele | "
+        f"Ensemble: {available_models} modele | "
         f"Score: {results['final_score']:.3f} | "
         f"Confidence: {results['confidence']:.1%} | "
-        f"Signal: {results['ensemble_signal']}"
+        f"Signal: {results['ensemble_signal']} | "
+        f"Vol regime: {vol_pctile:.0%}"
     )
 
     # Persist prediction for post-hoc analysis

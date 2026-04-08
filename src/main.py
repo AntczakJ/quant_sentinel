@@ -790,8 +790,24 @@ def run_bot():
     app.add_handler(CommandHandler("portfolio", portfolio_command))
     app.add_handler(CommandHandler("agent", agent_command))
     app.add_handler(CallbackQueryHandler(handle_buttons))
-    logger.info("🤖 Bot startuje w trybie POLLING...")
-    app.run_polling()
+
+    # Error handler — catches network errors, Telegram API errors, etc.
+    async def error_handler(update, context):
+        import telegram.error
+        err = context.error
+        if isinstance(err, telegram.error.NetworkError):
+            logger.warning(f"Telegram network error (will retry): {err}")
+        elif isinstance(err, telegram.error.TimedOut):
+            logger.warning("Telegram request timed out (will retry)")
+        elif isinstance(err, telegram.error.RetryAfter):
+            logger.warning(f"Telegram rate limit, retry after {err.retry_after}s")
+        else:
+            logger.error(f"Telegram bot error: {err}", exc_info=context.error)
+
+    app.add_error_handler(error_handler)
+
+    logger.info("Bot startuje w trybie POLLING...")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     run_bot()

@@ -5,82 +5,28 @@ Ulepszenia:
 - Rozszerzony zestaw cech (Williams %R, CCI, Ichimoku, candlestick patterns)
 - Walk-forward validation zamiast prostego train_test_split
 - Persystencja metryk do bazy danych
+- GPU/CPU acceleration via centralized compute module
 """
 
 import pandas as pd
 import numpy as np
 import os
 import pickle
-import pandas_ta as ta
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
 from src.logger import logger
+from src.compute import (
+    detect_gpu, get_xgb_params, get_tf_batch_size,
+    compute_features, compute_target, FEATURE_COLS,
+)
 
-# ── GPU / TF configuration ────────────────────────────────────────────
-def _setup_tf_gpu():
-    """Enable GPU memory growth + mixed precision on GPU; return True if GPU present."""
-    try:
-        import tensorflow as tf
-        gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            # Mixed precision: float16 compute with float32 accumulation — ~2x faster on modern GPUs
-            try:
-                tf.keras.mixed_precision.set_global_policy('mixed_float16')
-                logger.info(f"TensorFlow GPU: {[g.name for g in gpus]} (mixed_float16 enabled)")
-            except Exception as mp_err:
-                logger.debug(f"Mixed precision skipped: {mp_err}")
-                logger.info(f"TensorFlow GPU: {[g.name for g in gpus]}")
-            return True
-        return False
-    except Exception as e:
-        logger.debug(f"TF GPU setup skipped: {e}")
-        return False
-
-_TF_GPU = _setup_tf_gpu()
-
-# ── XGBoost GPU detection ─────────────────────────────────────────────
-def _detect_xgb_params():
-    """Return XGBoost params with GPU if available, else fast CPU histogram."""
-    base = {'tree_method': 'hist', 'n_jobs': -1}
-    try:
-        import xgboost as xgb
-        _t = XGBClassifier(device='cuda', tree_method='hist',
-                           n_estimators=1, verbosity=0)
-        _t.fit([[1]*5]*4, [0, 1, 0, 1])
-        logger.info("XGBoost GPU (CUDA) acceleration enabled")
-        return {**base, 'device': 'cuda'}
-    except Exception:
-        pass
-    try:
-        _t = XGBClassifier(tree_method='gpu_hist', n_estimators=1, verbosity=0)
-        _t.fit([[1]*5]*4, [0, 1, 0, 1])
-        logger.info("XGBoost GPU (gpu_hist) acceleration enabled")
-        return {**base, 'tree_method': 'gpu_hist'}
-    except Exception:
-        pass
-    logger.info("XGBoost CPU (hist) mode — no GPU found")
-    return base
-
-_XGB_PARAMS = _detect_xgb_params()
-
-# Rozszerzony zestaw kolumn cech (musi być spójny między train i predict)
-FEATURE_COLS = [
-    'rsi', 'macd', 'atr', 'volatility', 'ret_1', 'ret_5',
-    'is_green', 'above_ema20',
-    # Momentum
-    'williams_r', 'cci', 'ema_distance',
-    'ichimoku_signal', 'engulfing_score', 'pin_bar_score',
-    'ret_10', 'body_ratio', 'upper_shadow_ratio', 'lower_shadow_ratio',
-    # Nowe: price action patterns + volume
-    'higher_high', 'lower_low', 'double_top', 'double_bottom',
-    'atr_ratio',  # ATR relative to price — normalizacja zmienności
-]
+# ── GPU / TF / XGBoost configuration (centralized) ───────────────────
+_GPU_INFO = detect_gpu()
+_TF_GPU = _GPU_INFO["tf_gpu"]
+_XGB_PARAMS = get_xgb_params()
 
 class MLPredictor:
     def __init__(self, model_dir='models'):
@@ -93,110 +39,9 @@ class MLPredictor:
         self._feature_cache = None      # cached result
 
     def _features(self, df):
-        """Rozszerzony zestaw cech technicznych + price action.
-        Cached: powtórne wywołanie na tym samym df zwraca wynik natychmiast."""
-        cache_key = (id(df), len(df))
-        if self._feature_cache_id == cache_key and self._feature_cache is not None:
-            return self._feature_cache.copy()
-
-        df = df.copy()
-
-        # --- Podstawowe wskaźniki ---
-        df['rsi'] = ta.rsi(df['close'], 14)
-        macd = ta.macd(df['close'])
-        df['macd'] = macd['MACD_12_26_9']
-        df['atr'] = ta.atr(df['high'], df['low'], df['close'], 14)
-        df['volatility'] = df['close'].pct_change().rolling(20).std()
-        df['ret_1'] = df['close'].pct_change()
-        df['ret_5'] = df['close'].pct_change(5)
-        df['ret_10'] = df['close'].pct_change(10)
-        df['is_green'] = (df['close'] > df['open']).astype(int)
-        ema20 = ta.ema(df['close'], 20)
-        df['above_ema20'] = (df['close'] > ema20).astype(int)
-        df['ema_distance'] = (df['close'] - ema20) / ema20
-
-        # --- Nowe wskaźniki momentum ---
-        # Williams %R
-        high_14 = df['high'].rolling(14).max()
-        low_14 = df['low'].rolling(14).min()
-        df['williams_r'] = -100 * (high_14 - df['close']) / (high_14 - low_14 + 1e-10)
-
-        # CCI — vectorized MAD (avoids slow .apply(lambda))
-        typical_price = (df['high'] + df['low'] + df['close']) / 3
-        sma_tp = typical_price.rolling(20).mean()
-        # Vectorized MAD: mean(|x - mean(x)|) ≈ 0.8 * std for normal-ish data
-        # But for exact CCI we compute via rolling std * sqrt(2/pi) ≈ 0.7979
-        mad_tp = typical_price.rolling(20).std() * 0.7979
-        df['cci'] = (typical_price - sma_tp) / (0.015 * mad_tp + 1e-10)
-
-        # --- Ichimoku signal (powyżej/poniżej chmury) ---
-        try:
-            tenkan = (df['high'].rolling(9).max() + df['low'].rolling(9).min()) / 2
-            kijun = (df['high'].rolling(26).max() + df['low'].rolling(26).min()) / 2
-            span_a = ((tenkan + kijun) / 2).shift(26)
-            span_b = ((df['high'].rolling(52).max() + df['low'].rolling(52).min()) / 2).shift(26)
-            cloud_top = pd.concat([span_a, span_b], axis=1).max(axis=1)
-            df['ichimoku_signal'] = (df['close'] > cloud_top).astype(int)
-        except:
-            df['ichimoku_signal'] = 0
-
-        # --- Candlestick pattern features ---
-        body = abs(df['close'] - df['open'])
-        high_low = df['high'] - df['low'] + 1e-10
-        df['body_ratio'] = body / high_low
-        df['upper_shadow_ratio'] = (df['high'] - df[['close', 'open']].max(axis=1)) / high_low
-        df['lower_shadow_ratio'] = (df[['close', 'open']].min(axis=1) - df['low']) / high_low
-
-        # Engulfing: vectorized (+1 bullish, -1 bearish, 0 none)
-        prev_o = df['open'].shift(1)
-        prev_c = df['close'].shift(1)
-        bullish_eng = (
-            (prev_c < prev_o) & (df['close'] > df['open']) &
-            (df['open'] < prev_c) & (df['close'] > prev_o)
-        )
-        bearish_eng = (
-            (prev_c > prev_o) & (df['close'] < df['open']) &
-            (df['open'] > prev_c) & (df['close'] < prev_o)
-        )
-        df['engulfing_score'] = bullish_eng.astype(int) - bearish_eng.astype(int)
-
-        # Pin bar: vectorized (+1 bullish, -1 bearish, 0 none)
-        lower_s = df[['close', 'open']].min(axis=1) - df['low']
-        upper_s = df['high'] - df[['close', 'open']].max(axis=1)
-        small_body = (body / high_low) <= 0.3
-        bullish_pin = small_body & (lower_s > 2 * upper_s) & (lower_s > body)
-        bearish_pin = small_body & (upper_s > 2 * lower_s) & (upper_s > body)
-        df['pin_bar_score'] = bullish_pin.astype(int) - bearish_pin.astype(int)
-
-        # --- Price action patterns (z feature_engineering.py) ---
-        lookback = 5
-        df['higher_high'] = (df['high'].rolling(lookback).max().shift(1) < df['high']).astype(int)
-        df['lower_low'] = (df['low'].rolling(lookback).min().shift(1) > df['low']).astype(int)
-
-        # Double Top/Bottom
-        rolling_high = df['high'].rolling(lookback)
-        high_mean = rolling_high.mean()
-        high_std = rolling_high.std()
-        high_threshold = high_mean + high_std * 0.5
-        above_thresh = (df['high'] > high_threshold).astype(int)
-        df['double_top'] = (above_thresh.rolling(lookback).sum().shift(1) >= 2).astype(int)
-
-        rolling_low = df['low'].rolling(lookback)
-        low_mean = rolling_low.mean()
-        low_std = rolling_low.std()
-        low_threshold = low_mean - low_std * 0.5
-        below_thresh = (df['low'] < low_threshold).astype(int)
-        df['double_bottom'] = (below_thresh.rolling(lookback).sum().shift(1) >= 2).astype(int)
-
-        # ATR ratio — normalizacja zmienności względem ceny
-        df['atr_ratio'] = df['atr'] / (df['close'] + 1e-10)
-
-        df.dropna(inplace=True)
-
-        # Cache the result
-        self._feature_cache_id = cache_key
-        self._feature_cache = df
-        return df.copy()
+        """Compute ML features. Delegates to centralized compute_features().
+        Cached: repeated calls on same df return instantly."""
+        return compute_features(df)
 
     def train_xgb(self, df, precomputed_features=None):
         """Trenowanie XGBoost z walk-forward validation.
@@ -208,18 +53,7 @@ class MLPredictor:
         features = precomputed_features if precomputed_features is not None else self._features(df)
 
         # --- ULEPSZONY TARGET: istotny ruch zamiast next-candle noise ---
-        # Sprawdzamy czy cena wzrasta o >0.5 ATR w ciągu następnych 5 świec
-        lookahead = 5
-        atr_threshold = 0.5
-        future_max = features['close'].rolling(lookahead).max().shift(-lookahead)
-        future_min = features['close'].rolling(lookahead).min().shift(-lookahead)
-        atr_val = features['atr'].replace(0, np.nan).ffill().fillna(1.0)
-
-        # LONG target: cena wzrosła o > 0.5*ATR i nie spadła o > 0.5*ATR (czysty ruch w górę)
-        up_move = (future_max - features['close']) / atr_val > atr_threshold
-        down_move = (features['close'] - future_min) / atr_val > atr_threshold
-        # 1 = wyraźny ruch w górę, 0 = wyraźny ruch w dół lub brak ruchu
-        features['direction'] = (up_move & ~down_move).astype(int)
+        features['direction'] = compute_target(features)
 
         features.dropna(inplace=True)
         if len(features) < 50:
@@ -313,22 +147,15 @@ class MLPredictor:
 
         Target: istotny ruch cenowy (>0.5 ATR w 5 świecach) zamiast next-candle noise.
         """
-        batch_size = 128 if _TF_GPU else 32  # larger batches saturate GPU better
+        batch_size = get_tf_batch_size()  # 128 GPU / 32 CPU
         if len(df) < seq_len + 2:
             logger.warning(f"Za mało danych do LSTM: potrzeba {seq_len+2}, mam {len(df)}")
             return None
         features = precomputed_features if precomputed_features is not None else self._features(df)
         features = features.copy()
 
-        # --- ULEPSZONY TARGET: identyczny jak XGBoost ---
-        lookahead = 5
-        atr_threshold = 0.5
-        future_max = features['close'].rolling(lookahead).max().shift(-lookahead)
-        future_min = features['close'].rolling(lookahead).min().shift(-lookahead)
-        atr_val = features['atr'].replace(0, np.nan).ffill().fillna(1.0)
-        up_move = (future_max - features['close']) / atr_val > atr_threshold
-        down_move = (features['close'] - future_min) / atr_val > atr_threshold
-        features['direction'] = (up_move & ~down_move).astype(int)
+        # --- ULEPSZONY TARGET: identyczny jak XGBoost (shared computation) ---
+        features['direction'] = compute_target(features)
 
         features.dropna(inplace=True)
         if len(features) < seq_len + 1:
@@ -435,7 +262,8 @@ class MLPredictor:
         return model
 
     def predict_lstm(self, df, seq_len=60):
-        # Jeśli model nie jest w pamięci, spróbuj załadować z dysku
+        """Predict using LSTM. Tries ONNX DirectML (GPU) first, falls back to Keras."""
+        # Załaduj model z dysku jeśli nie ma w pamięci
         if self.lstm is None:
             try:
                 self.lstm = load_model(os.path.join(self.model_dir, 'lstm.keras'))
@@ -443,13 +271,15 @@ class MLPredictor:
                 logger.error(f"Nie udało się załadować modelu LSTM: {e}")
                 return 0.5
 
+        # Try ONNX GPU inference (DirectML)
+        onnx_session = self._get_onnx_lstm_session()
+
         if len(df) < seq_len + 1:
             logger.warning(f"Za mało danych dla LSTM: potrzeba {seq_len+1}, mam {len(df)}")
             return 0.5
 
-        # Przygotuj dane
         try:
-            features = self._features(df.tail(seq_len + 30))  # extra rows for indicator warmup
+            features = self._features(df.tail(seq_len + 30))
         except Exception as e:
             logger.error(f"Błąd w _features: {e}")
             return 0.5
@@ -473,35 +303,46 @@ class MLPredictor:
         X = scaled.reshape(1, seq_len, -1)
 
         try:
-            pred = self.lstm.predict(X, verbose=0)
-            logger.debug(f"LSTM prediction raw: {pred}, type: {type(pred)}")
+            # ONNX GPU inference (DirectML) — faster on AMD/Intel GPUs
+            if onnx_session is not None:
+                from src.compute import onnx_predict
+                pred = onnx_predict(onnx_session, X.astype(np.float32))
+            else:
+                pred = self.lstm.predict(X, verbose=0)
+
             if pred is None:
-                logger.error("LSTM predict zwrócił None")
                 return 0.5
-            # Jeśli to lista/tuple, weź pierwszy element
             if isinstance(pred, (list, tuple)):
                 if len(pred) == 0:
-                    logger.error("LSTM predict zwrócił pustą listę")
                     return 0.5
                 pred = pred[0]
-            # Teraz pred powinien być numpy array
             if isinstance(pred, np.ndarray):
                 if pred.size == 0:
-                    logger.error("LSTM predict zwrócił pustą tablicę")
                     return 0.5
-                # Jeśli to tablica 2D, weź pierwszy wiersz, pierwszą kolumnę
                 if pred.ndim == 2:
                     return float(pred[0, 0])
                 elif pred.ndim == 1:
                     return float(pred[0])
-                else:
-                    logger.error(f"Nieoczekiwany wymiar tablicy: {pred.shape}")
-                    return 0.5
-            else:
-                logger.error(f"Niespodziewany typ wyniku predykcji: {type(pred)}")
-                return 0.5
+            return 0.5
         except Exception as e:
             logger.error(f"Błąd predykcji LSTM: {e}", exc_info=True)
             return 0.5
+
+    def _get_onnx_lstm_session(self):
+        """Get ONNX session for LSTM (GPU via DirectML). Cached."""
+        if not hasattr(self, '_onnx_lstm'):
+            self._onnx_lstm = None
+            try:
+                from src.compute import detect_gpu, convert_keras_to_onnx, get_onnx_session
+                gpu_info = detect_gpu()
+                if gpu_info["onnx_directml"]:
+                    keras_path = os.path.join(self.model_dir, 'lstm.keras')
+                    if os.path.exists(keras_path):
+                        onnx_path = convert_keras_to_onnx(keras_path)
+                        if onnx_path:
+                            self._onnx_lstm = get_onnx_session(onnx_path)
+            except Exception as e:
+                logger.debug(f"ONNX LSTM session skipped: {e}")
+        return self._onnx_lstm
 
 ml = MLPredictor()

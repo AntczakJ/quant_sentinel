@@ -177,51 +177,80 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
             "ensemble_data": ensemble_result
         }
 
-    # --- 2. SL i TP ---
-    # SL oparty na ATR zamiast stałego 2.0$ — zapobiega wyrzucaniu przez szum rynkowy
-    # Parametry z bazy: sl_atr_mult (def 1.5), sl_min_distance (def 4.0)
-    sl_distance = max(atr * sl_atr_mult, sl_min_distance) * sl_multiplier
+    # --- 2. SL i TP (STRUCTURAL PLACEMENT) ---
+    # Zasada: SL oparte na strukturze rynku (swing levels), nie na ATR od entry.
+    # Minimalne R:R = 2.0:1 — nie otwieraj trade jesli R:R za niskie.
+    # ATR sluzy jako bufor/walidacja, NIE jako baza SL.
+    sl_min = max(sl_min_distance, 5.0)  # absolutne minimum $5
+    sl_max = max(atr * 4.0, 30.0)      # absolutne maximum $30 (lub 4x ATR)
 
     if direction == "LONG":
-        if grab and grab_dir == "bullish" and swing_low:
-            # Grab setup: SL pod swing low z buforem
-            sl = round(swing_low - max(atr * 0.3, 1.0), 2)
-            # Upewnij się że SL nie jest za ciasny nawet przy grab
-            if entry - sl < sl_distance * 0.7:
-                sl = round(entry - sl_distance, 2)
+        # SL: ponizej swing low (strukturalny poziom) + bufor ATR
+        if swing_low and swing_low < entry:
+            sl = round(swing_low - atr * 0.3 * sl_multiplier, 2)
+        elif ob_price and ob_price < entry:
+            sl = round(ob_price - atr * 0.3 * sl_multiplier, 2)
         else:
-            sl = round(entry - sl_distance, 2)
+            sl = round(entry - atr * sl_atr_mult * sl_multiplier, 2)
 
-        # TP: cel bazowany na strukturze rynkowej
-        tp_distance = sl_distance * tp_to_sl_ratio
-        if fvg_type == "bullish" and fvg_upper and fvg_upper > entry + sl_distance:
-            tp = round(fvg_upper, 2)
-        elif swing_high and swing_high > entry + sl_distance:
+        # Clamp SL distance to min/max range
+        sl_dist = entry - sl
+        if sl_dist < sl_min:
+            sl = round(entry - sl_min, 2)
+            sl_dist = sl_min
+        elif sl_dist > sl_max:
+            sl = round(entry - sl_max, 2)
+            sl_dist = sl_max
+
+        # TP: strukturalny target z wymuszonym minimum R:R
+        min_rr = max(tp_to_sl_ratio, 2.0)
+        tp_min_target = entry + sl_dist * min_rr
+
+        if swing_high and swing_high > tp_min_target:
             tp = round(swing_high, 2)
+        elif fvg_type == "bullish" and fvg_upper and fvg_upper > tp_min_target:
+            tp = round(fvg_upper, 2)
         else:
-            tp = round(entry + tp_distance, 2)
+            tp = round(tp_min_target, 2)
 
-        if tp <= entry + sl_distance:
-            tp = round(entry + tp_distance, 2)
+        # Validate R:R >= 2.0
+        actual_rr = (tp - entry) / (entry - sl) if (entry - sl) > 0 else 0
+        if actual_rr < 2.0:
+            tp = round(entry + sl_dist * 2.0, 2)
 
     else:  # SHORT
-        if grab and grab_dir == "bearish" and swing_high:
-            sl = round(swing_high + max(atr * 0.3, 1.0), 2)
-            if sl - entry < sl_distance * 0.7:
-                sl = round(entry + sl_distance, 2)
+        # SL: powyzej swing high (strukturalny poziom) + bufor ATR
+        if swing_high and swing_high > entry:
+            sl = round(swing_high + atr * 0.3 * sl_multiplier, 2)
+        elif ob_price and ob_price > entry:
+            sl = round(ob_price + atr * 0.3 * sl_multiplier, 2)
         else:
-            sl = round(entry + sl_distance, 2)
+            sl = round(entry + atr * sl_atr_mult * sl_multiplier, 2)
 
-        tp_distance = sl_distance * 2.5
-        if fvg_type == "bearish" and fvg_lower and fvg_lower < entry - sl_distance:
-            tp = round(fvg_lower, 2)
-        elif swing_low and swing_low < entry - sl_distance:
+        # Clamp SL distance
+        sl_dist = sl - entry
+        if sl_dist < sl_min:
+            sl = round(entry + sl_min, 2)
+            sl_dist = sl_min
+        elif sl_dist > sl_max:
+            sl = round(entry + sl_max, 2)
+            sl_dist = sl_max
+
+        # TP: strukturalny target z minimum R:R
+        min_rr = max(tp_to_sl_ratio, 2.0)
+        tp_min_target = entry - sl_dist * min_rr
+
+        if swing_low and swing_low < tp_min_target:
             tp = round(swing_low, 2)
+        elif fvg_type == "bearish" and fvg_lower and fvg_lower < tp_min_target:
+            tp = round(fvg_lower, 2)
         else:
-            tp = round(entry - tp_distance, 2)
+            tp = round(tp_min_target, 2)
 
-        if tp >= entry - sl_distance:
-            tp = round(entry - tp_distance, 2)
+        # Validate R:R >= 2.0
+        actual_rr = (entry - tp) / (sl - entry) if (sl - entry) > 0 else 0
+        if actual_rr < 2.0:
+            tp = round(entry - sl_dist * 2.0, 2)
 
     # --- 3. Waluta i kapitał ---
     balance_in_usd = balance
