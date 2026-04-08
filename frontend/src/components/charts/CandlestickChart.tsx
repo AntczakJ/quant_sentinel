@@ -825,11 +825,11 @@ export function CandlestickChart() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedInterval, computeIndicators]);
 
-  /* ── Fetch on mount + interval change + 120s auto-refresh ──────────────── */
+  /* ── Fetch on mount + interval change + 30s auto-refresh ───────────────── */
   useEffect(() => {
     const controller = new AbortController();
     void fetchData(controller.signal);
-    const timer = setInterval(() => void fetchData(controller.signal), 120_000);
+    const timer = setInterval(() => void fetchData(controller.signal), 30_000);
     return () => {
       controller.abort();
       clearInterval(timer);

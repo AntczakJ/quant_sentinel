@@ -48,7 +48,7 @@ export const RiskMetrics = memo(function RiskMetrics() {
   const { data, isLoading } = usePollingQuery<RiskData>(
     'risk-metrics',
     () => analysisAPI.getRiskMetrics(),
-    120_000, // 2 minutes
+    60_000, // 1 minute
   );
 
   if (isLoading && !data) {

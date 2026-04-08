@@ -168,11 +168,9 @@ async def _background_scanner():
                 bal = db.get_param("portfolio_balance")
                 if bal and float(bal) > 0:
                     portfolio_balance = float(bal)
-                row = db._query_one(
-                    "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
-                )
-                if row and row[0]:
-                    portfolio_currency = str(row[0])
+                curr = db.get_param("portfolio_currency_text")
+                if curr:
+                    portfolio_currency = str(curr)
             except Exception:
                 pass
 
@@ -223,6 +221,7 @@ async def _background_scanner():
 
                     # Save to trades (OPEN status for auto-resolver)
                     structure_desc = f"[{tf_label}] {structure}"
+                    factors = trade.get('factors')
                     db.log_trade(
                         direction=direction,
                         price=entry,
@@ -233,6 +232,7 @@ async def _background_scanner():
                         structure=structure_desc,
                         pattern=f"[{tf_label}] {logic}",
                         lot=lot,
+                        factors=factors,
                     )
 
                     db.mark_news_as_processed(trade_key)
@@ -394,22 +394,49 @@ async def _auto_resolve_trades():
                         hit_tp = tp_f > 0 and current_price <= tp_f
                         hit_sl = sl_f > 0 and current_price >= sl_f
 
-                    if hit_tp:
-                        profit = round(abs(tp_f - entry_f), 2) if entry_f > 0 else 0
+                    if hit_tp or hit_sl:
+                        status = "WIN" if hit_tp else "LOSS"
+                        pnl = round(abs(tp_f - entry_f), 2) if hit_tp else round(-abs(entry_f - sl_f), 2)
+                        if entry_f <= 0:
+                            pnl = 0
                         db._execute(
-                            "UPDATE trades SET status='WIN', profit=? WHERE id=?",
-                            (profit, trade_id),
+                            "UPDATE trades SET status=?, profit=? WHERE id=?",
+                            (status, pnl, trade_id),
                         )
+
+                        # Fill failure_reason + condition for LOSS trades
+                        if hit_sl:
+                            reason = (
+                                f"Cena dotknela SL (${sl_f:.2f}). "
+                                f"Wejscie: ${entry_f:.2f}, kierunek: {direction}."
+                            )
+                            db._execute(
+                                "UPDATE trades SET failure_reason=?, condition_at_loss=? WHERE id=?",
+                                (reason, f"Cena: ${current_price:.2f}", trade_id),
+                            )
+
                         resolved += 1
-                        logger.info(f"✅ [Resolver] Trade #{trade_id} WIN @ ${current_price:.2f} (TP:{tp_f})")
-                    elif hit_sl:
-                        loss = round(-abs(entry_f - sl_f), 2) if entry_f > 0 else 0
-                        db._execute(
-                            "UPDATE trades SET status='LOSS', profit=? WHERE id=?",
-                            (loss, trade_id),
-                        )
-                        resolved += 1
-                        logger.info(f"❌ [Resolver] Trade #{trade_id} LOSS @ ${current_price:.2f} (SL:{sl_f})")
+
+                        # Update pattern/session stats (same as scanner resolver)
+                        try:
+                            trow = db._query_one("SELECT pattern, session FROM trades WHERE id=?", (trade_id,))
+                            if trow and trow[0]:
+                                db.update_pattern_stats(trow[0], status)
+                                if trow[1]:
+                                    db.update_session_stats(trow[0], trow[1], status)
+                        except Exception:
+                            pass
+
+                        # Update factor weights for self-learning
+                        try:
+                            from src.self_learning import update_factor_weights
+                            update_factor_weights(trade_id, status)
+                        except Exception:
+                            pass
+
+                        icon = "✅" if hit_tp else "❌"
+                        target = f"TP:{tp_f}" if hit_tp else f"SL:{sl_f}"
+                        logger.info(f"{icon} [Resolver] Trade #{trade_id} {status} @ ${current_price:.2f} ({target})")
                 except Exception as e:
                     logger.debug(f"[Resolver] Trade #{trade_id} error: {e}")
 
@@ -568,15 +595,16 @@ async def health_check_detailed():
     """
     uptime_seconds = _time.monotonic() - _start_time
 
-    # DB check
+    # DB check (compatible with both SQLite and Turso/libsql)
     db_ok = False
     db_tables = 0
     try:
         from src.database import NewsDB
         db = NewsDB()
-        row = db._query_one("SELECT COUNT(*) FROM sqlite_master WHERE type='table'")
+        # Use a known table instead of sqlite_master (Turso-safe)
+        row = db._query_one("SELECT COUNT(*) FROM trades")
+        db_ok = row is not None
         db_tables = row[0] if row else 0
-        db_ok = db_tables > 0
     except Exception:
         pass
 

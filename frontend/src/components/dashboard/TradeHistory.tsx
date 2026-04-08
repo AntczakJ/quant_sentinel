@@ -64,7 +64,7 @@ export const TradeHistory = memo(function TradeHistory() {
   const { data, isLoading } = usePollingQuery<TradesResponse>(
     'trade-history',
     () => analysisAPI.getRecentTrades(30),
-    60_000,
+    30_000,
   );
 
   const trades = data?.trades ?? [];

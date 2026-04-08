@@ -68,6 +68,19 @@ class NewsDB:
                     logger.error(f"Database error: {e}\nSQL: {sql}\nParams: {params}")
                 raise
 
+    def _insert_returning_id(self, sql: str, params: tuple = ()) -> int:
+        """INSERT and return last_insert_rowid atomically (under the same lock)."""
+        with _db_lock:
+            try:
+                self.cursor.execute(sql, params)
+                self.conn.commit()
+                self.cursor.execute("SELECT last_insert_rowid()")
+                row = self.cursor.fetchone()
+                return row[0] if row else 0
+            except Exception as e:
+                logger.error(f"Database error: {e}\nSQL: {sql}\nParams: {params}")
+                raise
+
     def _query(self, sql: str, params: tuple = ()):
         """Execute a SELECT query thread-safely and return all rows."""
         with _db_lock:
@@ -81,8 +94,11 @@ class NewsDB:
             return self.cursor.fetchone()
 
     def get_portfolio_params(self) -> dict:
-        rows = self._query("SELECT param_name, param_value FROM dynamic_params WHERE param_name LIKE 'portfolio_%'")
-        return {name: value for name, value in rows}
+        rows = self._query("SELECT param_name, param_value, param_text FROM dynamic_params WHERE param_name LIKE 'portfolio_%'")
+        result = {}
+        for name, num_val, text_val in rows:
+            result[name] = text_val if text_val is not None else num_val
+        return result
 
     def create_tables(self):
         self._execute("CREATE TABLE IF NOT EXISTS processed_news (title_hash TEXT PRIMARY KEY)")
@@ -101,7 +117,8 @@ class NewsDB:
             pattern TEXT PRIMARY KEY, count INTEGER DEFAULT 0, wins INTEGER DEFAULT 0,
             losses INTEGER DEFAULT 0, win_rate REAL DEFAULT 0, last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         self._execute("""CREATE TABLE IF NOT EXISTS dynamic_params (
-            param_name TEXT PRIMARY KEY, param_value REAL, last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            param_name TEXT PRIMARY KEY, param_value REAL, param_text TEXT,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         self._execute("""CREATE TABLE IF NOT EXISTS session_stats (
             pattern TEXT, session TEXT, count INTEGER DEFAULT 0, wins INTEGER DEFAULT 0,
             losses INTEGER DEFAULT 0, win_rate REAL DEFAULT 0, last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -135,6 +152,38 @@ class NewsDB:
                 err_msg = str(e).lower()
                 if "duplicate" not in err_msg and "already exists" not in err_msg:
                     logger.debug(f"Migration skip trades.{col}: {e}")
+
+        # Add param_text column to dynamic_params for text/JSON values
+        try:
+            with _db_lock:
+                self.cursor.execute("ALTER TABLE dynamic_params ADD COLUMN param_text TEXT")
+                self.conn.commit()
+            logger.info("Migration: added column dynamic_params.param_text")
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "duplicate" not in err_msg and "already exists" not in err_msg:
+                logger.debug(f"Migration skip dynamic_params.param_text: {e}")
+
+        # Migrate text values from param_value to param_text
+        try:
+            self._execute("""
+                UPDATE dynamic_params SET param_text = param_value, param_value = NULL
+                WHERE param_name LIKE '%_text' OR param_name = 'portfolio_history'
+            """, _silent=True)
+        except Exception:
+            pass
+
+        # Normalize legacy "PROFIT" status to "WIN" for consistency
+        try:
+            migrated = self._query_one("SELECT COUNT(*) FROM trades WHERE status = 'PROFIT'")
+            if migrated and migrated[0] > 0:
+                self._execute("UPDATE trades SET status = 'WIN' WHERE status = 'PROFIT'")
+                self._execute("UPDATE scanner_signals SET status = 'WIN' WHERE status = 'PROFIT'", _silent=True)
+                # Rebuild stats since status values changed
+                self.rebuild_all_stats()
+                logger.info(f"Migration: normalized {migrated[0]} PROFIT→WIN, rebuilt stats")
+        except Exception:
+            pass
         try:
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
@@ -145,6 +194,10 @@ class NewsDB:
             self._execute("CREATE INDEX IF NOT EXISTS idx_scanner_status_ts ON scanner_signals(status, timestamp DESC)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_pattern_stats_win_rate ON pattern_stats(win_rate)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_dynamic_params_name ON dynamic_params(param_name)")
+            # Additional indexes for frequently queried columns
+            self._execute("CREATE INDEX IF NOT EXISTS idx_trades_direction ON trades(direction)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_trades_profit ON trades(profit)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_scanner_direction ON scanner_signals(direction)")
         except Exception as e:
             logger.warning(f"Index creation: {e}")
 
@@ -166,19 +219,21 @@ class NewsDB:
         else: return "NewYork"
 
     def update_pattern_stats(self, pattern: str, outcome: str):
-        row = self._query_one("SELECT count, wins, losses FROM pattern_stats WHERE pattern = ?", (pattern,))
-        if row:
-            count, wins, losses = row
-            count += 1
-            if outcome == "PROFIT": wins += 1
-            else: losses += 1
-            wr = wins / count if count > 0 else 0
-            self._execute("UPDATE pattern_stats SET count=?, wins=?, losses=?, win_rate=?, last_updated=CURRENT_TIMESTAMP WHERE pattern=?", (count, wins, losses, wr, pattern))
-        else:
-            wins = 1 if outcome == "PROFIT" else 0
-            losses = 1 if outcome == "LOSS" else 0
-            wr = wins / (wins + losses) if wins + losses > 0 else 0
-            self._execute("INSERT INTO pattern_stats (pattern, count, wins, losses, win_rate) VALUES (?, ?, ?, ?, ?)", (pattern, 1, wins, losses, wr))
+        """Atomowa aktualizacja statystyk wzorca (bez race condition)."""
+        is_win = 1 if outcome in ("WIN", "PROFIT") else 0
+        is_loss = 1 if outcome not in ("WIN", "PROFIT") else 0
+        # Atomic upsert — żadna inna operacja nie może wtrącić się między SELECT i UPDATE
+        self._execute("""
+            INSERT INTO pattern_stats (pattern, count, wins, losses, win_rate)
+            VALUES (?, 1, ?, ?, ?)
+            ON CONFLICT(pattern) DO UPDATE SET
+                count = count + 1,
+                wins = wins + ?,
+                losses = losses + ?,
+                win_rate = CAST(wins + ? AS REAL) / (count + 1),
+                last_updated = CURRENT_TIMESTAMP
+        """, (pattern, is_win, is_loss, float(is_win),
+              is_win, is_loss, is_win))
 
     def get_pattern_stats(self, pattern: str) -> dict:
         row = self._query_one("SELECT count, wins, losses, win_rate FROM pattern_stats WHERE pattern = ?", (pattern,))
@@ -189,26 +244,48 @@ class NewsDB:
         return self._query("SELECT pattern, count, wins, losses, win_rate FROM pattern_stats ORDER BY win_rate DESC")
 
     def set_param(self, name: str, value):
-        self._execute("INSERT INTO dynamic_params (param_name, param_value) VALUES (?, ?) ON CONFLICT(param_name) DO UPDATE SET param_value=excluded.param_value, last_updated=CURRENT_TIMESTAMP", (name, value))
+        if isinstance(value, str) and not self._is_numeric_string(value):
+            self._execute(
+                "INSERT INTO dynamic_params (param_name, param_text) VALUES (?, ?) "
+                "ON CONFLICT(param_name) DO UPDATE SET param_text=excluded.param_text, param_value=NULL, last_updated=CURRENT_TIMESTAMP",
+                (name, value))
+        else:
+            self._execute(
+                "INSERT INTO dynamic_params (param_name, param_value) VALUES (?, ?) "
+                "ON CONFLICT(param_name) DO UPDATE SET param_value=excluded.param_value, param_text=NULL, last_updated=CURRENT_TIMESTAMP",
+                (name, value))
 
     def get_param(self, name: str, default=None):
-        row = self._query_one("SELECT param_value FROM dynamic_params WHERE param_name = ?", (name,))
-        return row[0] if row else default
+        row = self._query_one("SELECT param_value, param_text FROM dynamic_params WHERE param_name = ?", (name,))
+        if not row:
+            return default
+        # Return text if available, otherwise numeric
+        if row[1] is not None:
+            return row[1]
+        return row[0] if row[0] is not None else default
+
+    @staticmethod
+    def _is_numeric_string(s: str) -> bool:
+        try:
+            float(s)
+            return True
+        except (ValueError, TypeError):
+            return False
 
     def update_session_stats(self, pattern: str, session: str, outcome: str):
-        row = self._query_one("SELECT count, wins, losses FROM session_stats WHERE pattern = ? AND session = ?", (pattern, session))
-        if row:
-            count, wins, losses = row
-            count += 1
-            if outcome == "PROFIT": wins += 1
-            else: losses += 1
-            wr = wins / count if count > 0 else 0
-            self._execute("UPDATE session_stats SET count=?, wins=?, losses=?, win_rate=?, last_updated=CURRENT_TIMESTAMP WHERE pattern=? AND session=?", (count, wins, losses, wr, pattern, session))
-        else:
-            wins = 1 if outcome == "PROFIT" else 0
-            losses = 1 if outcome == "LOSS" else 0
-            wr = wins / (wins + losses) if wins + losses > 0 else 0
-            self._execute("INSERT INTO session_stats (pattern, session, count, wins, losses, win_rate) VALUES (?, ?, ?, ?, ?, ?)", (pattern, session, 1, wins, losses, wr))
+        is_win = 1 if outcome in ("WIN", "PROFIT") else 0
+        is_loss = 1 if outcome not in ("WIN", "PROFIT") else 0
+        self._execute("""
+            INSERT INTO session_stats (pattern, session, count, wins, losses, win_rate)
+            VALUES (?, ?, 1, ?, ?, ?)
+            ON CONFLICT(pattern, session) DO UPDATE SET
+                count = count + 1,
+                wins = wins + ?,
+                losses = losses + ?,
+                win_rate = CAST(wins + ? AS REAL) / (count + 1),
+                last_updated = CURRENT_TIMESTAMP
+        """, (pattern, session, is_win, is_loss, float(is_win),
+              is_win, is_loss, is_win))
 
     def get_session_stats(self, pattern: str = None) -> list:
         if pattern:
@@ -219,7 +296,11 @@ class NewsDB:
         fw = {'weight_ob_main': 2.0, 'weight_ob_m5': 1.5, 'weight_ob_h1': 1.5, 'weight_fvg': 1.5, 'weight_grab_mss': 2.0, 'weight_dbr_rbd': 1.5, 'weight_news': 1.0, 'weight_macro': 1.5, 'weight_rsi_opt': 1.0, 'weight_m5_confluence': 1.0, 'weight_bos': 1.5, 'weight_choch': 1.5, 'weight_ob_count': 0.8, 'weight_ob_confluence': 0.8, 'weight_choch_h1': 1.2, 'weight_supply_demand': 1.5, 'weight_rsi_divergence': 1.5, 'weight_ichimoku_bull': 1.2, 'weight_near_poc': 1.0, 'weight_engulfing_bull': 1.3, 'weight_engulfing_bear': 1.3, 'weight_pin_bar_bull': 1.2, 'weight_pin_bar_bear': 1.2, 'weight_inside_bar': 0.8, 'weight_ml_bull': 1.5, 'weight_ml_bear': 1.5, 'weight_rl_buy': 1.5, 'weight_rl_sell': 1.5}
         for name, val in fw.items():
             if self.get_param(name) is None: self.set_param(name, val)
-        for name, val in {'min_score': 5.0, 'risk_percent': 1.0, 'min_tp_distance_mult': 1.0, 'target_rr': 2.5}.items():
+        for name, val in {
+            'min_score': 5.0, 'risk_percent': 1.0, 'min_tp_distance_mult': 1.0,
+            'target_rr': 2.5, 'sl_atr_multiplier': 1.5, 'sl_min_distance': 4.0,
+            'tp_to_sl_ratio': 2.5,
+        }.items():
             if self.get_param(name) is None: self.set_param(name, val)
 
     def get_trade_factors(self, trade_id: int) -> dict:
@@ -296,7 +377,7 @@ class NewsDB:
         self._execute("INSERT INTO scanner_signals (direction, entry, sl, tp, rsi, trend, structure, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')", (direction, entry, sl, tp, rsi, trend, structure))
 
     def get_latest_scanner_signal(self):
-        return self._query_one("SELECT id, direction, entry, sl, tp, rsi, trend, structure FROM scanner_signals ORDER BY timestamp DESC LIMIT 1")
+        return self._query_one("SELECT id, direction, entry, sl, tp, rsi, trend, structure, status, timestamp FROM scanner_signals ORDER BY timestamp DESC LIMIT 1")
 
     def get_all_scanner_signals(self, limit=50):
         return self._query("SELECT id, direction, entry, sl, tp, rsi, trend, structure, status, timestamp FROM scanner_signals ORDER BY timestamp DESC LIMIT ?", (limit,)) or []
@@ -330,17 +411,19 @@ class NewsDB:
         self._execute("INSERT OR IGNORE INTO processed_news (title_hash) VALUES (?)", (title_hash,))
 
     def update_regime_stats(self, regime: str, session: str, direction: str, outcome: str):
-        row = self._query_one("SELECT count, wins, losses FROM regime_stats WHERE regime = ? AND session = ? AND direction = ?", (regime, session, direction))
-        if row:
-            c, w, l = row; c += 1
-            if outcome == "PROFIT": w += 1
-            else: l += 1
-            wr = w / c if c > 0 else 0
-            self._execute("UPDATE regime_stats SET count=?, wins=?, losses=?, win_rate=?, last_updated=CURRENT_TIMESTAMP WHERE regime=? AND session=? AND direction=?", (c, w, l, wr, regime, session, direction))
-        else:
-            w = 1 if outcome == "PROFIT" else 0; l = 1 if outcome == "LOSS" else 0
-            wr = w / (w + l) if w + l > 0 else 0
-            self._execute("INSERT INTO regime_stats (regime, session, direction, count, wins, losses, win_rate) VALUES (?, ?, ?, 1, ?, ?, ?)", (regime, session, direction, w, l, wr))
+        is_win = 1 if outcome in ("WIN", "PROFIT") else 0
+        is_loss = 1 if outcome not in ("WIN", "PROFIT") else 0
+        self._execute("""
+            INSERT INTO regime_stats (regime, session, direction, count, wins, losses, win_rate)
+            VALUES (?, ?, ?, 1, ?, ?, ?)
+            ON CONFLICT(regime, session, direction) DO UPDATE SET
+                count = count + 1,
+                wins = wins + ?,
+                losses = losses + ?,
+                win_rate = CAST(wins + ? AS REAL) / (count + 1),
+                last_updated = CURRENT_TIMESTAMP
+        """, (regime, session, direction, is_win, is_loss, float(is_win),
+              is_win, is_loss, is_win))
 
     def get_regime_stats(self, regime: str = None, session: str = None) -> list:
         if regime and session:
@@ -348,6 +431,22 @@ class NewsDB:
         elif regime:
             return self._query("SELECT regime, session, direction, count, wins, losses, win_rate FROM regime_stats WHERE regime = ? ORDER BY win_rate DESC", (regime,))
         return self._query("SELECT regime, session, direction, count, wins, losses, win_rate FROM regime_stats ORDER BY regime, session, win_rate DESC")
+
+    def rebuild_all_stats(self):
+        """Przelicz pattern_stats i session_stats od nowa na podstawie trades."""
+        # Clear stale stats
+        self._execute("DELETE FROM pattern_stats")
+        self._execute("DELETE FROM session_stats")
+
+        rows = self._query("""
+            SELECT id, pattern, session, status FROM trades
+            WHERE status IN ('WIN', 'LOSS') AND pattern IS NOT NULL
+        """)
+        for _, pattern, session, status in rows:
+            self.update_pattern_stats(pattern, status)
+            if session:
+                self.update_session_stats(pattern, session, status)
+        logger.info(f"Rebuilt stats from {len(rows)} resolved trades")
 
     def save_news_sentiment(self, headline: str, sentiment: str, score: float = 0.0, source: str = "rss"):
         self._execute("INSERT INTO news_sentiment (headline, sentiment, score, source) VALUES (?, ?, ?, ?)", (headline, sentiment, score, source))

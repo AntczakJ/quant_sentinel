@@ -50,18 +50,31 @@ def optimize_parameters():
     """
     Pełny backtest parametrów (risk_percent, min_tp_distance_mult, target_rr)
     na historycznych transakcjach.
+
+    Zoptymalizowano: dane ładowane raz do numpy, potem iteracja per-combo
+    z pre-obliczonymi wektorami dist/tp_distance/is_profit.
     """
+    import numpy as np
+
     db = NewsDB()
-    # Pobieramy wszystkie zakończone transakcje w porządku chronologicznym
-    db.cursor.execute("""
+    trades = db._query("""
         SELECT timestamp, direction, entry, sl, tp, status
         FROM trades
-        WHERE status IN ('PROFIT', 'LOSS')
+        WHERE status IN ('WIN', 'PROFIT', 'LOSS')
         ORDER BY timestamp ASC
     """)
-    trades = db.cursor.fetchall()
     if len(trades) < 50:
-        return  # za mało danych
+        return
+
+    # ── Pre-compute trade vectors (done once) ──
+    entries    = np.array([t[2] for t in trades], dtype=np.float64)
+    sls        = np.array([t[3] for t in trades], dtype=np.float64)
+    tps        = np.array([t[4] for t in trades], dtype=np.float64)
+    is_profit  = np.array([t[5] in ("WIN", "PROFIT") for t in trades], dtype=bool)
+
+    dists       = np.abs(entries - sls)
+    tp_dists    = np.abs(entries - tps)
+    valid_dist  = dists > 0  # filter zero-dist trades once
 
     # Parametry do testowania
     risk_values = [0.5, 1.0, 1.5, 2.0]
@@ -71,34 +84,29 @@ def optimize_parameters():
     best_score = -float('inf')
     best_params = {}
 
-    # Dla każdej kombinacji
     for risk in risk_values:
         for mult in min_tp_dist_mult_values:
             for rr in target_rr_values:
-                equity = 10000.0  # kapitał początkowy
+                # Vectorized: compute min_tp_dist for all trades at once
+                min_tp = np.maximum(np.maximum(dists * rr, dists * mult), 5.0)
+                # Mask: valid distance AND TP far enough
+                accepted = valid_dist & (tp_dists >= min_tp)
+
+                if not accepted.any():
+                    continue
+
+                # Sequential equity simulation (order matters — lot depends on equity)
+                equity = 10000.0
                 total_trades = 0
-                # Symulacja sekwencyjna
-                for trade in trades:
-                    timestamp, direction, entry, sl, tp, status = trade
-                    # Przelicz dystans SL (ryzyko)
-                    dist = abs(entry - sl)
-                    if dist <= 0:
-                        continue
-                    # Oblicz lot na podstawie aktualnego equity
+                acc_dists = dists[accepted]
+                acc_tp_dists = tp_dists[accepted]
+                acc_profit = is_profit[accepted]
+
+                for i in range(len(acc_dists)):
                     risk_usd = equity * (risk / 100)
-                    lot = risk_usd / (dist * 100)
-                    if lot < 0.01:
-                        lot = 0.01
-                    # Sprawdź czy TP jest wystarczająco daleko (symulacja filtra)
-                    tp_distance = abs(entry - tp)
-                    # Uwzględnij zarówno min_tp_distance_mult jak i target_rr
-                    min_tp_dist = max(dist * rr, dist * mult, 5.0)
-                    if tp_distance < min_tp_dist:
-                        continue  # transakcja zostałaby odrzucona
-                    # Wyznacz potencjalny zysk/stratę
-                    if status == "PROFIT":
-                        profit = tp_distance * lot * 100
-                        equity += profit
+                    lot = max(risk_usd / (acc_dists[i] * 100), 0.01)
+                    if acc_profit[i]:
+                        equity += acc_tp_dists[i] * lot * 100
                     else:
                         equity -= risk_usd
                     total_trades += 1
@@ -106,11 +114,9 @@ def optimize_parameters():
                 if total_trades == 0:
                     continue
 
-                # Metryka: średni zysk na transakcję / max drawdown (uproszczenie)
                 avg_profit = (equity - 10000.0) / total_trades
-                score = avg_profit  # można rozszerzyć o Sharpe, drawdown
-                if score > best_score:
-                    best_score = score
+                if avg_profit > best_score:
+                    best_score = avg_profit
                     best_params = {
                         "risk_percent": risk,
                         "min_tp_distance_mult": mult,
@@ -147,74 +153,77 @@ def run_learning_cycle():
         from src.database import NewsDB
         import numpy as np
 
-        def objective(params):
-            risk = params.get('risk_percent', 1.0)
-            min_tp_mult = params.get('min_tp_distance_mult', 1.0)
-            target_rr = params.get('target_rr', 2.5)
-            min_score = params.get('min_score', 5.0)
+        # Load trades ONCE (not per-iteration — was causing N*20 DB queries)
+        _bayes_db = NewsDB()
+        _bayes_trades = _bayes_db._query("""
+            SELECT direction, entry, sl, tp, status
+            FROM trades
+            WHERE status IN ('WIN', 'PROFIT', 'LOSS')
+            ORDER BY timestamp ASC
+        """)
 
+        if len(_bayes_trades) >= 5:
+            # Pre-compute vectors
+            _b_entries   = np.array([t[1] for t in _bayes_trades], dtype=np.float64)
+            _b_sls       = np.array([t[2] for t in _bayes_trades], dtype=np.float64)
+            _b_tps       = np.array([t[3] for t in _bayes_trades], dtype=np.float64)
+            _b_is_profit = np.array([t[4] in ("WIN", "PROFIT") for t in _bayes_trades], dtype=bool)
+            _b_dists     = np.abs(_b_entries - _b_sls)
+            _b_tp_dists  = np.abs(_b_entries - _b_tps)
+            _b_valid     = _b_dists > 0
+
+            def objective(params):
+                risk = params.get('risk_percent', 1.0)
+                min_tp_mult = params.get('min_tp_distance_mult', 1.0)
+                target_rr = params.get('target_rr', 2.5)
+
+                # Vectorized filter
+                min_tp = np.maximum(np.maximum(_b_dists * target_rr, _b_dists * min_tp_mult), 5.0)
+                accepted = _b_valid & (_b_tp_dists >= min_tp * 0.8)
+
+                if not accepted.any():
+                    return 0.0
+
+                # Sequential simulation (equity depends on previous steps)
+                acc_dists = _b_dists[accepted]
+                acc_tp_dists = _b_tp_dists[accepted]
+                acc_profit = _b_is_profit[accepted]
+
+                equity = 10000.0
+                peak = equity
+                max_drawdown = 0.0
+
+                for i in range(len(acc_dists)):
+                    risk_usd = equity * (risk / 100)
+                    lot = max(risk_usd / (acc_dists[i] * 100), 0.01)
+                    if acc_profit[i]:
+                        equity += acc_tp_dists[i] * lot * 100
+                    else:
+                        equity -= risk_usd
+                    peak = max(peak, equity)
+                    dd = (peak - equity) / peak if peak > 0 else 0
+                    max_drawdown = max(max_drawdown, dd)
+
+                dd_penalty = max(0, 1 - max_drawdown * 2)
+                return equity * dd_penalty
+
+            bounds = {
+                'risk_percent': (0.5, 2.0),
+                'min_tp_distance_mult': (0.5, 2.0),
+                'target_rr': (1.5, 3.5),
+                'min_score': (3.0, 7.0),
+                'sl_atr_multiplier': (1.0, 2.5),
+                'sl_min_distance': (3.0, 8.0),
+                'tp_to_sl_ratio': (2.0, 4.0),
+            }
+            opt = BayesianOptimizer(bounds, objective, n_init=5, n_iter=15)
+            best_params, best_score = opt.optimize()
             db = NewsDB()
-            db.cursor.execute("""
-                SELECT direction, entry, sl, tp, status
-                FROM trades
-                WHERE status IN ('PROFIT', 'LOSS')
-                ORDER BY timestamp ASC
-            """)
-            trades = db.cursor.fetchall()
-            if len(trades) < 5:
-                return 0.0
-
-            equity = 10000.0
-            peak = equity
-            max_drawdown = 0
-            total_trades = 0
-
-            for direction, entry, sl, tp, status in trades:
-                dist = abs(entry - sl)
-                if dist <= 0:
-                    continue
-
-                # Filtr minimalnego TP
-                tp_dist = abs(entry - tp)
-                min_tp = max(dist * target_rr, dist * min_tp_mult, 5.0)
-                if tp_dist < min_tp * 0.8:
-                    continue  # odrzucony przez filtr
-
-                risk_usd = equity * (risk / 100)
-                lot = risk_usd / (dist * 100)
-                if lot < 0.01:
-                    lot = 0.01
-                if status == "PROFIT":
-                    profit = tp_dist * lot * 100
-                    equity += profit
-                else:
-                    equity -= risk_usd
-
-                peak = max(peak, equity)
-                dd = (peak - equity) / peak if peak > 0 else 0
-                max_drawdown = max(max_drawdown, dd)
-                total_trades += 1
-
-            if total_trades == 0:
-                return 0.0
-
-            # Metryka: equity z penalizacją za drawdown
-            dd_penalty = max(0, 1 - max_drawdown * 2)  # 50% DD = 0 penalty
-            return equity * dd_penalty
-
-        # Rozszerzony zakres parametrów
-        bounds = {
-            'risk_percent': (0.5, 2.0),
-            'min_tp_distance_mult': (0.5, 2.0),
-            'target_rr': (1.5, 3.5),
-            'min_score': (3.0, 7.0),
-        }
-        opt = BayesianOptimizer(bounds, objective, n_init=5, n_iter=15)
-        best_params, best_score = opt.optimize()
-        db = NewsDB()
-        for name, val in best_params.items():
-            db.set_param(name, val)
-        logger.info(f"Bayesian optimization finished: {best_params} -> {best_score:.2f}")
+            for name, val in best_params.items():
+                db.set_param(name, val)
+            logger.info(f"Bayesian optimization finished: {best_params} -> {best_score:.2f}")
+        else:
+            logger.info("Bayesian optimization skipped: < 5 trades")
 
 
 async def auto_analyze_and_learn(context):
@@ -508,7 +517,7 @@ def update_factor_weights(trade_id, outcome):
             new_weight = current_weight + delta
         else:
             # Wykorzystanie: gradient
-            if outcome == "PROFIT":
+            if outcome in ("WIN", "PROFIT"):
                 new_weight = current_weight + learning_rate
             else:
                 new_weight = current_weight - learning_rate

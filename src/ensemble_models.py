@@ -142,6 +142,93 @@ def _fallback_ensemble_result() -> Dict:
 
 
 # ============================================================================
+# SHARED FEATURE COMPUTATION (used by both LSTM and XGBoost)
+# ============================================================================
+
+_ensemble_feature_cache = {"id": None, "result": None}
+
+
+def _compute_ensemble_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute all prediction features ONCE — shared by LSTM and XGBoost.
+    Cached: repeated calls on the same df return instantly."""
+    cache_key = (id(df), len(df))
+    if _ensemble_feature_cache["id"] == cache_key and _ensemble_feature_cache["result"] is not None:
+        return _ensemble_feature_cache["result"]
+
+    import pandas_ta as ta
+    from src.ml_models import FEATURE_COLS
+
+    df_copy = df.copy()
+    df_copy['rsi'] = ta.rsi(df_copy['close'], 14)
+    df_copy['macd'] = ta.macd(df_copy['close'])['MACD_12_26_9']
+    df_copy['atr'] = ta.atr(df_copy['high'], df_copy['low'], df_copy['close'], 14)
+    df_copy['volatility'] = df_copy['close'].pct_change().rolling(20).std()
+    df_copy['ret_1'] = df_copy['close'].pct_change()
+    df_copy['ret_5'] = df_copy['close'].pct_change(5)
+    df_copy['ret_10'] = df_copy['close'].pct_change(10)
+    df_copy['is_green'] = (df_copy['close'] > df_copy['open']).astype(int)
+    ema20 = ta.ema(df_copy['close'], 20)
+    df_copy['above_ema20'] = (df_copy['close'] > ema20).astype(int)
+    df_copy['ema_distance'] = (df_copy['close'] - ema20) / ema20
+
+    high_14 = df_copy['high'].rolling(14).max()
+    low_14 = df_copy['low'].rolling(14).min()
+    df_copy['williams_r'] = -100 * (high_14 - df_copy['close']) / (high_14 - low_14 + 1e-10)
+
+    typical_price = (df_copy['high'] + df_copy['low'] + df_copy['close']) / 3
+    sma_tp = typical_price.rolling(20).mean()
+    mad_tp = typical_price.rolling(20).std() * 0.7979  # vectorized MAD approximation
+    df_copy['cci'] = (typical_price - sma_tp) / (0.015 * mad_tp + 1e-10)
+
+    try:
+        tenkan = (df_copy['high'].rolling(9).max() + df_copy['low'].rolling(9).min()) / 2
+        kijun = (df_copy['high'].rolling(26).max() + df_copy['low'].rolling(26).min()) / 2
+        span_a = ((tenkan + kijun) / 2).shift(26)
+        span_b = ((df_copy['high'].rolling(52).max() + df_copy['low'].rolling(52).min()) / 2).shift(26)
+        cloud_top = pd.concat([span_a, span_b], axis=1).max(axis=1)
+        df_copy['ichimoku_signal'] = (df_copy['close'] > cloud_top).astype(int)
+    except Exception:
+        df_copy['ichimoku_signal'] = 0
+
+    body = abs(df_copy['close'] - df_copy['open'])
+    high_low = df_copy['high'] - df_copy['low'] + 1e-10
+    df_copy['body_ratio'] = body / high_low
+    df_copy['upper_shadow_ratio'] = (df_copy['high'] - df_copy[['close', 'open']].max(axis=1)) / high_low
+    df_copy['lower_shadow_ratio'] = (df_copy[['close', 'open']].min(axis=1) - df_copy['low']) / high_low
+    df_copy['engulfing_score'] = 0
+    df_copy['pin_bar_score'] = 0
+
+    # Price action patterns (spójne z ml_models._features)
+    lookback = 5
+    df_copy['higher_high'] = (df_copy['high'].rolling(lookback).max().shift(1) < df_copy['high']).astype(int)
+    df_copy['lower_low'] = (df_copy['low'].rolling(lookback).min().shift(1) > df_copy['low']).astype(int)
+
+    rolling_high = df_copy['high'].rolling(lookback)
+    high_mean = rolling_high.mean()
+    high_std = rolling_high.std()
+    above_thresh = (df_copy['high'] > high_mean + high_std * 0.5).astype(int)
+    df_copy['double_top'] = (above_thresh.rolling(lookback).sum().shift(1) >= 2).astype(int)
+
+    rolling_low = df_copy['low'].rolling(lookback)
+    low_mean = rolling_low.mean()
+    low_std = rolling_low.std()
+    below_thresh = (df_copy['low'] < low_mean - low_std * 0.5).astype(int)
+    df_copy['double_bottom'] = (below_thresh.rolling(lookback).sum().shift(1) >= 2).astype(int)
+
+    df_copy['atr_ratio'] = df_copy['atr'] / (df_copy['close'] + 1e-10)
+
+    df_copy = df_copy.dropna()
+
+    for c in FEATURE_COLS:
+        if c not in df_copy.columns:
+            df_copy[c] = 0
+
+    _ensemble_feature_cache["id"] = cache_key
+    _ensemble_feature_cache["result"] = df_copy
+    return df_copy
+
+
+# ============================================================================
 # PREDYKCJE Z POSZCZEGÓLNYCH MODELI
 # ============================================================================
 
@@ -151,7 +238,6 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
     Używa rozszerzonego zestawu cech z FEATURE_COLS.
     """
     try:
-        import pandas_ta as ta
         from src.ml_models import FEATURE_COLS
 
         lstm_model = _load_lstm()
@@ -162,65 +248,12 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
             logger.debug(f"Za mało danych dla LSTM: {len(df)} < {seq_len+30}")
             return None
 
-        # Przygotuj cechy (rozszerzony zestaw)
-        df_copy = df.copy()
-        df_copy['rsi'] = ta.rsi(df_copy['close'], 14)
-        df_copy['macd'] = ta.macd(df_copy['close'])['MACD_12_26_9']
-        df_copy['atr'] = ta.atr(df_copy['high'], df_copy['low'], df_copy['close'], 14)
-        df_copy['volatility'] = df_copy['close'].pct_change().rolling(20).std()
-        df_copy['ret_1'] = df_copy['close'].pct_change()
-        df_copy['ret_5'] = df_copy['close'].pct_change(5)
-        df_copy['ret_10'] = df_copy['close'].pct_change(10)
-        df_copy['is_green'] = (df_copy['close'] > df_copy['open']).astype(int)
-        ema20 = ta.ema(df_copy['close'], 20)
-        df_copy['above_ema20'] = (df_copy['close'] > ema20).astype(int)
-        df_copy['ema_distance'] = (df_copy['close'] - ema20) / ema20
-
-        # Williams %R
-        high_14 = df_copy['high'].rolling(14).max()
-        low_14 = df_copy['low'].rolling(14).min()
-        df_copy['williams_r'] = -100 * (high_14 - df_copy['close']) / (high_14 - low_14 + 1e-10)
-
-        # CCI
-        typical_price = (df_copy['high'] + df_copy['low'] + df_copy['close']) / 3
-        sma_tp = typical_price.rolling(20).mean()
-        mad_tp = typical_price.rolling(20).apply(lambda x: np.abs(x - x.mean()).mean())
-        df_copy['cci'] = (typical_price - sma_tp) / (0.015 * mad_tp + 1e-10)
-
-        # Ichimoku signal
-        try:
-            tenkan = (df_copy['high'].rolling(9).max() + df_copy['low'].rolling(9).min()) / 2
-            kijun = (df_copy['high'].rolling(26).max() + df_copy['low'].rolling(26).min()) / 2
-            import pandas as pd_mod
-            span_a = ((tenkan + kijun) / 2).shift(26)
-            span_b = ((df_copy['high'].rolling(52).max() + df_copy['low'].rolling(52).min()) / 2).shift(26)
-            cloud_top = pd.concat([span_a, span_b], axis=1).max(axis=1)
-            df_copy['ichimoku_signal'] = (df_copy['close'] > cloud_top).astype(int)
-        except:
-            df_copy['ichimoku_signal'] = 0
-
-        # Candlestick features
-        body = abs(df_copy['close'] - df_copy['open'])
-        high_low = df_copy['high'] - df_copy['low'] + 1e-10
-        df_copy['body_ratio'] = body / high_low
-        df_copy['upper_shadow_ratio'] = (df_copy['high'] - df_copy[['close', 'open']].max(axis=1)) / high_low
-        df_copy['lower_shadow_ratio'] = (df_copy[['close', 'open']].min(axis=1) - df_copy['low']) / high_low
-        df_copy['engulfing_score'] = 0
-        df_copy['pin_bar_score'] = 0
-
-        df_copy = df_copy.dropna()
+        df_copy = _compute_ensemble_features(df)
 
         if len(df_copy) < seq_len:
             logger.debug("Za mało danych po przygotowaniu cech")
             return None
 
-        # Użyj tylko kolumn z FEATURE_COLS
-        available_cols = [c for c in FEATURE_COLS if c in df_copy.columns]
-        if len(available_cols) < len(FEATURE_COLS):
-            # Dodaj brakujące kolumny jako 0
-            for c in FEATURE_COLS:
-                if c not in df_copy.columns:
-                    df_copy[c] = 0
         data = df_copy[FEATURE_COLS].values[-seq_len:]
 
         # Normalizuj
@@ -229,13 +262,11 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
             if is_fitted:
                 data = scaler.transform(data)
             else:
-                # Fallback: scaler nie z treningu — fit_transform na dostępnych danych
                 logger.debug("⚠️ LSTM scaler nie z treningu — używam fit_transform (mniej stabilne)")
                 data = scaler.fit_transform(data)
 
         X = data.reshape(1, seq_len, -1)
 
-        # Predykcja
         pred = lstm_model.predict(X, verbose=0)
 
         if isinstance(pred, np.ndarray):
@@ -257,7 +288,6 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
     Używa rozszerzonego zestawu cech z FEATURE_COLS.
     """
     try:
-        import pandas_ta as ta
         from src.ml_models import FEATURE_COLS
 
         xgb_model = _load_xgb()
@@ -268,67 +298,16 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
             logger.debug(f"Za mało danych dla XGBoost: {len(df)} < 100")
             return None
 
-        # Przygotuj cechy (rozszerzony zestaw)
-        df_copy = df.copy()
-        df_copy['rsi'] = ta.rsi(df_copy['close'], 14)
-        df_copy['macd'] = ta.macd(df_copy['close'])['MACD_12_26_9']
-        df_copy['atr'] = ta.atr(df_copy['high'], df_copy['low'], df_copy['close'], 14)
-        df_copy['volatility'] = df_copy['close'].pct_change().rolling(20).std()
-        df_copy['ret_1'] = df_copy['close'].pct_change()
-        df_copy['ret_5'] = df_copy['close'].pct_change(5)
-        df_copy['ret_10'] = df_copy['close'].pct_change(10)
-        df_copy['is_green'] = (df_copy['close'] > df_copy['open']).astype(int)
-        ema20 = ta.ema(df_copy['close'], 20)
-        df_copy['above_ema20'] = (df_copy['close'] > ema20).astype(int)
-        df_copy['ema_distance'] = (df_copy['close'] - ema20) / ema20
-
-        # Williams %R
-        high_14 = df_copy['high'].rolling(14).max()
-        low_14 = df_copy['low'].rolling(14).min()
-        df_copy['williams_r'] = -100 * (high_14 - df_copy['close']) / (high_14 - low_14 + 1e-10)
-
-        # CCI
-        typical_price = (df_copy['high'] + df_copy['low'] + df_copy['close']) / 3
-        sma_tp = typical_price.rolling(20).mean()
-        mad_tp = typical_price.rolling(20).apply(lambda x: np.abs(x - x.mean()).mean())
-        df_copy['cci'] = (typical_price - sma_tp) / (0.015 * mad_tp + 1e-10)
-
-        # Ichimoku
-        try:
-            tenkan = (df_copy['high'].rolling(9).max() + df_copy['low'].rolling(9).min()) / 2
-            kijun = (df_copy['high'].rolling(26).max() + df_copy['low'].rolling(26).min()) / 2
-            span_a = ((tenkan + kijun) / 2).shift(26)
-            span_b = ((df_copy['high'].rolling(52).max() + df_copy['low'].rolling(52).min()) / 2).shift(26)
-            cloud_top = pd.concat([span_a, span_b], axis=1).max(axis=1)
-            df_copy['ichimoku_signal'] = (df_copy['close'] > cloud_top).astype(int)
-        except:
-            df_copy['ichimoku_signal'] = 0
-
-        # Candlestick features
-        body = abs(df_copy['close'] - df_copy['open'])
-        high_low = df_copy['high'] - df_copy['low'] + 1e-10
-        df_copy['body_ratio'] = body / high_low
-        df_copy['upper_shadow_ratio'] = (df_copy['high'] - df_copy[['close', 'open']].max(axis=1)) / high_low
-        df_copy['lower_shadow_ratio'] = (df_copy[['close', 'open']].min(axis=1) - df_copy['low']) / high_low
-        df_copy['engulfing_score'] = 0
-        df_copy['pin_bar_score'] = 0
-
-        df_copy = df_copy.dropna()
+        df_copy = _compute_ensemble_features(df)
 
         if df_copy.empty:
             return None
-
-        # Dodaj brakujące kolumny
-        for c in FEATURE_COLS:
-            if c not in df_copy.columns:
-                df_copy[c] = 0
 
         X = df_copy[FEATURE_COLS].tail(1)
 
         if X.empty:
             return None
 
-        # Predykcja
         try:
             pred = xgb_model.predict_proba(X)
             return float(pred[0, 1])

@@ -55,6 +55,49 @@ import pandas as pd
 
 
 # =====================================================================
+# 0. GPU DETECTION
+# =====================================================================
+
+def _print_gpu_info():
+    """Wydrukuj informacje o dostępności GPU."""
+    try:
+        import tensorflow as tf
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            print(f"🎮 GPU: {len(gpus)} GPU(s) — {[g.name for g in gpus]}")
+            print(f"   TensorFlow (LSTM/DQN) będzie używać GPU")
+            policy = tf.keras.mixed_precision.global_policy()
+            if 'float16' in policy.name:
+                print(f"   Mixed precision: {policy.name} (faster training)")
+        else:
+            print("💻 GPU nie wykryte — TensorFlow używa CPU")
+
+        try:
+            from src.ml_models import _XGB_PARAMS
+            if 'cuda' in str(_XGB_PARAMS.get('device', '')) or 'gpu' in str(_XGB_PARAMS.get('tree_method', '')):
+                print(f"🎮 XGBoost: GPU acceleration aktywna ({_XGB_PARAMS})")
+            else:
+                print(f"💻 XGBoost: CPU histogram mode (tree_method=hist, n_jobs=-1)")
+        except Exception:
+            pass
+
+        try:
+            import torch
+            if torch.cuda.is_available():
+                print(f"🎮 PyTorch: CUDA ({torch.cuda.get_device_name(0)})")
+            else:
+                try:
+                    import torch_directml
+                    print(f"🎮 PyTorch: DirectML")
+                except Exception:
+                    print("💻 PyTorch: CPU mode")
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"⚠️ GPU detection: {e}")
+
+
+# =====================================================================
 # 1. POBIERANIE DANYCH
 # =====================================================================
 
@@ -63,6 +106,10 @@ def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
     Pobiera jak najwięcej danych historycznych.
     Strategia: próbuj 15m (max ~60 dni), potem 1h (max ~2 lata), potem 1d.
     Łączy dane z różnych interwałów jeśli trzeba.
+
+    UWAGA: GC=F (Gold Futures) jest bliskim proxy dla XAU/USD (Spot Gold),
+    ale nie identycznym instrumentem. Futures mają contango/backwardation.
+    Dla najlepszych wyników trenuj na danych najbliższych instrumentowi live.
     """
     import yfinance as yf
 
@@ -71,7 +118,7 @@ def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
     all_dfs = []
     ticker = yf.Ticker(symbol)
 
-    # Strategia 1: 15m data (ostatnie 60 dni)
+    # Strategia 1: 15m data (ostatnie 60 dni) — najlepsza rozdzielczość
     try:
         df_15m = ticker.history(period="60d", interval="15m")
         if df_15m is not None and len(df_15m) > 100:
@@ -81,7 +128,7 @@ def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
     except Exception as e:
         print(f"   ⚠️ 15m failed: {e}")
 
-    # Strategia 2: 1h data (ostatnie 2 lata)
+    # Strategia 2: 1h data (ostatnie 2 lata) — dobry balans
     try:
         df_1h = ticker.history(period="2y", interval="1h")
         if df_1h is not None and len(df_1h) > 100:
@@ -104,11 +151,20 @@ def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
     if not all_dfs:
         raise ValueError(f"Nie udało się pobrać żadnych danych dla {symbol}")
 
-    # Wybierz najlepszy dataset (dużo danych + niski interwał)
-    # Priorytet: 1h (dobry balans), potem 15m (wysoka rozdzielczość), potem 1d
+    # Wybierz najlepszy dataset: preferuj 1h (dużo danych + przyzwoita rozdzielczość)
     priority = {"1h": 1, "15m": 2, "1d": 3}
     all_dfs.sort(key=lambda x: (priority.get(x[0], 99), -len(x[1])))
     best_tf, best_df = all_dfs[0]
+
+    # Walidacja danych OHLC — usuń uszkodzone świece
+    before = len(best_df)
+    best_df = best_df[
+        (best_df['high'] >= best_df['low']) &
+        (best_df[['open', 'high', 'low', 'close']] > 0).all(axis=1)
+    ].reset_index(drop=True)
+    after = len(best_df)
+    if before != after:
+        print(f"   ⚠️ Usunięto {before - after} uszkodzonych świec")
 
     print(f"\n📊 Używam danych {best_tf}: {len(best_df)} świec")
     return best_df
@@ -149,7 +205,7 @@ def split_data(df: pd.DataFrame, train_pct=0.70, val_pct=0.15):
 # 2. TRENING XGBOOST
 # =====================================================================
 
-def train_xgboost(train_df: pd.DataFrame) -> dict:
+def train_xgboost(train_df: pd.DataFrame, precomputed_features=None) -> dict:
     """Trenuj XGBoost z walk-forward validation."""
     print("\n" + "=" * 60)
     print("🌳 TRENING XGBOOST")
@@ -158,7 +214,7 @@ def train_xgboost(train_df: pd.DataFrame) -> dict:
     from src.ml_models import ml
 
     t0 = time.time()
-    acc = ml.train_xgb(train_df)
+    acc = ml.train_xgb(train_df, precomputed_features=precomputed_features)
     elapsed = time.time() - t0
 
     if acc is not None:
@@ -183,7 +239,7 @@ def train_xgboost(train_df: pd.DataFrame) -> dict:
 # 3. TRENING LSTM
 # =====================================================================
 
-def train_lstm(train_df: pd.DataFrame, epochs: int = 50) -> dict:
+def train_lstm(train_df: pd.DataFrame, epochs: int = 50, precomputed_features=None) -> dict:
     """Trenuj LSTM z persystentnm scalerem."""
     print("\n" + "=" * 60)
     print("🧠 TRENING LSTM")
@@ -192,7 +248,7 @@ def train_lstm(train_df: pd.DataFrame, epochs: int = 50) -> dict:
     from src.ml_models import ml
 
     t0 = time.time()
-    model = ml.train_lstm(train_df)
+    model = ml.train_lstm(train_df, precomputed_features=precomputed_features)
     elapsed = time.time() - t0
 
     if model is not None:
@@ -219,7 +275,13 @@ def train_lstm(train_df: pd.DataFrame, epochs: int = 50) -> dict:
 # =====================================================================
 
 def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
-    """Trenuj agenta DQN z ulepszonym reward shaping."""
+    """Trenuj agenta DQN z ulepszonym reward shaping.
+
+    Ulepszenia:
+    - Cosine LR annealing (lepszza konwergencja w późnych epizodach)
+    - Soft target updates (Polyak averaging)
+    - Early stopping: zatrzymaj jeśli brak poprawy przez patience epizodów
+    """
     print("\n" + "=" * 60)
     print("🤖 TRENING DQN (Double DQN)")
     print("=" * 60)
@@ -238,10 +300,15 @@ def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
     print(f"   State size: {state_size}")
     print(f"   Episodes: {episodes}")
     print(f"   Memory: {agent.memory.maxlen}")
+    print(f"   LR schedule: cosine {agent.lr_start} → {agent.lr_min}")
+    print(f"   Target update: soft (tau={agent.tau})")
 
     t0 = time.time()
     scores = []
     best_reward = -float('inf')
+    best_avg = -float('inf')
+    patience = 80               # early-stop patience (episodes without improvement)
+    no_improve_count = 0
     info = {}
 
     for episode in range(episodes):
@@ -249,6 +316,9 @@ def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
         total_reward = 0
         done = False
         step = 0
+
+        # Update LR (cosine annealing)
+        agent.update_lr(episode, episodes)
 
         while not done:
             action = agent.act(state)
@@ -264,18 +334,40 @@ def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
         if total_reward > best_reward:
             best_reward = total_reward
 
+        # Early stopping check (rolling avg over last 20 episodes)
+        if len(scores) >= 20:
+            current_avg = np.mean(scores[-20:])
+            if current_avg > best_avg + 1e-4:
+                best_avg = current_avg
+                no_improve_count = 0
+                # Save best model weights
+                best_weights = agent.model.get_weights()
+            else:
+                no_improve_count += 1
+        else:
+            no_improve_count = 0
+
         if (episode + 1) % 50 == 0:
             avg = np.mean(scores[-20:])
             wr = info.get('win_rate', 0) * 100
+            lr_now = float(agent.model.optimizer.learning_rate)
             print(f"   Ep {episode+1}/{episodes}: avg_reward={avg:.4f}, "
-                  f"win_rate={wr:.0f}%, ε={agent.epsilon:.3f}")
+                  f"win_rate={wr:.0f}%, ε={agent.epsilon:.3f}, lr={lr_now:.5f}")
+
+        # Early stop: no improvement for `patience` episodes
+        if no_improve_count >= patience and episode >= 100:
+            print(f"   ⚡ Early stop at episode {episode+1} (no improvement for {patience} eps)")
+            # Restore best weights
+            if 'best_weights' in dir():
+                agent.model.set_weights(best_weights)
+            break
 
     elapsed = time.time() - t0
 
     # Zapisz model
     os.makedirs("models", exist_ok=True)
     agent.save("models/rl_agent.keras")
-    print(f"\n   ✅ Model zapisany")
+    print(f"\n   ✅ Model zapisany (ep {len(scores)}/{episodes})")
     print(f"   📈 Najlepsza nagroda: {best_reward:.4f}")
     print(f"   ⏱️  Czas: {elapsed:.1f}s")
 
@@ -423,6 +515,8 @@ def main():
     print(f"Skip backtest: {args.skip_backtest}")
     print(f"Skip Bayes: {args.skip_bayes}")
     print()
+    _print_gpu_info()
+    print()
 
     results = {}
 
@@ -430,11 +524,18 @@ def main():
     df = fetch_training_data(args.symbol)
     train_df, val_df, holdout_df = split_data(df)
 
+    # ---- 1b. Pre-compute features ONCE (reused by XGBoost + LSTM) ----
+    print("\n⚙️  Pre-computing features...")
+    from src.ml_models import ml
+    t_feat = time.time()
+    precomputed = ml._features(train_df)
+    print(f"   ✅ {len(precomputed)} rows, {len(precomputed.columns)} features ({time.time()-t_feat:.1f}s)")
+
     # ---- 2. XGBoost ----
-    results['xgb'] = train_xgboost(train_df)
+    results['xgb'] = train_xgboost(train_df, precomputed_features=precomputed)
 
     # ---- 3. LSTM ----
-    results['lstm'] = train_lstm(train_df, epochs=args.epochs)
+    results['lstm'] = train_lstm(train_df, epochs=args.epochs, precomputed_features=precomputed)
 
     # ---- 4. DQN ----
     if not args.skip_rl:

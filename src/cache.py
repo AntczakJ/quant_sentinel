@@ -12,6 +12,21 @@ T = TypeVar('T')
 
 # Global cache storage
 _cache: Dict[str, Dict[str, Any]] = {}
+_MAX_CACHE_SIZE = 500  # evict expired entries when cache exceeds this size
+_last_eviction_ts: float = 0.0
+
+
+def _evict_expired():
+    """Remove expired entries from cache. Called periodically to prevent memory bloat."""
+    global _last_eviction_ts
+    now = datetime.datetime.now().timestamp()
+    # Run at most once per 60 seconds
+    if now - _last_eviction_ts < 60:
+        return
+    _last_eviction_ts = now
+    expired = [k for k, v in _cache.items() if now - v['ts'] > 600]  # 10 min max
+    for k in expired:
+        del _cache[k]
 
 
 def cached(key: str, ttl: int = 180) -> Callable:
@@ -33,6 +48,8 @@ def cached(key: str, ttl: int = 180) -> Callable:
                 return _cache[key]['val']
             result = func(*args, **kwargs)
             _cache[key] = {'val': result, 'ts': now}
+            if len(_cache) > _MAX_CACHE_SIZE:
+                _evict_expired()
             return result
         return wrapper
     return decorator
@@ -69,6 +86,8 @@ def cached_with_key(key_func: Callable[..., str], ttl: int = 180) -> Callable:
                 return _cache[key]['val']
             result = func(*args, **kwargs)
             _cache[key] = {'val': result, 'ts': now}
+            if len(_cache) > _MAX_CACHE_SIZE:
+                _evict_expired()
             return result
         return wrapper
     return decorator

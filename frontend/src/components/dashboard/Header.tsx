@@ -15,25 +15,28 @@ interface SessionInfo {
   session: string;
   is_killzone: boolean;
   utc_hour: number;
+  cet_hour?: number;
+  weekday?: number;
+  market_open?: boolean;
   volatility_expected: string;
 }
 
 const SESSION_COLORS: Record<string, string> = {
   london:    'text-blue-400 border-blue-500/40 bg-blue-500/10',
-  london_pre:'text-blue-400/60 border-blue-500/20 bg-blue-500/5',
+  overlap:   'text-purple-400 border-purple-500/40 bg-purple-500/10',
   new_york:  'text-green-400 border-green-500/40 bg-green-500/10',
-  new_york_late: 'text-green-400/60 border-green-500/20 bg-green-500/5',
   asian:     'text-amber-400 border-amber-500/40 bg-amber-500/10',
   off_hours: 'text-gray-500 border-gray-600/40 bg-gray-700/10',
+  weekend:   'text-red-400/60 border-red-500/20 bg-red-500/5',
 };
 
 const SESSION_LABELS: Record<string, string> = {
   london:    'London',
-  london_pre:'London Pre',
+  overlap:   'London+NY',
   new_york:  'New York',
-  new_york_late: 'NY Late',
   asian:     'Asian',
   off_hours: 'Off-Hours',
+  weekend:   'Weekend',
 };
 
 const SessionBadge = memo(function SessionBadge({ session }: { session: SessionInfo }) {
@@ -75,7 +78,7 @@ export function Header() {
       analysisAPI.getSession().then(setSessionInfo).catch(() => {});
     };
     const initTimer = setTimeout(fetchSession, 1500);
-    const t = setInterval(fetchSession, 60_000);
+    const t = setInterval(fetchSession, 30_000);
     return () => { clearTimeout(initTimer); clearInterval(t); };
   }, [apiConnected]);
 

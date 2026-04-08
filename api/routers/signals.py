@@ -89,6 +89,7 @@ def get_current_signal():
 
             if latest_db_signal:
                 # Safe unpack — handle varying column counts
+                # Query: id, direction, entry, sl, tp, rsi, trend, structure, status, timestamp
                 cols = len(latest_db_signal)
                 signal_id = latest_db_signal[0] if cols > 0 else None
                 direction = latest_db_signal[1] if cols > 1 else None
@@ -98,6 +99,8 @@ def get_current_signal():
                 rsi = latest_db_signal[5] if cols > 5 else None
                 trend = latest_db_signal[6] if cols > 6 else None
                 structure = latest_db_signal[7] if cols > 7 else None
+                status = latest_db_signal[8] if cols > 8 else "PENDING"
+                timestamp = latest_db_signal[9] if cols > 9 else None
 
                 if signal_id and direction and entry_price:
                     # Map database signal to SignalResponse
@@ -107,6 +110,11 @@ def get_current_signal():
                         entry_f = float(entry_price)
                     except (ValueError, TypeError):
                         entry_f = current_price
+
+                    try:
+                        parsed_ts = datetime.fromisoformat(timestamp) if isinstance(timestamp, str) else datetime.now(timezone.utc)
+                    except Exception:
+                        parsed_ts = datetime.now(timezone.utc)
 
                     signal = SignalResponse(
                         timestamp=parsed_ts,
@@ -122,7 +130,7 @@ def get_current_signal():
                         consensus_score=0.75,
                         current_price=current_price,  # live price, not entry
                         current_rsi=float(rsi) if rsi else 50.0,
-                        signal_id=str(sig_id)
+                        signal_id=str(signal_id)
                     )
 
                     _signal_cache["current"] = signal

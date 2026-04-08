@@ -7,34 +7,34 @@ python-telegram-bot>=22.7
 # --- DATA & ANALYSIS ---
 pandas>=3.0.0
 pandas_ta>=0.4.0
-numpy>=2.4.0
-numba>=0.65.0
+numpy>=2.2.0,<2.5
+numba>=0.61.0
 
 # --- AI & SENTIMENT ---
-transformers>=5.5.0
+transformers>=5.4.0
 torch>=2.11.0
 scipy>=1.17.0
 openai>=2.30.0
 
 # --- VISUALIZATION ---
 matplotlib>=3.10.0
-Pillow>=12.2.0
+Pillow>=12.1.0
 
 # --- UTILITIES ---
 requests>=2.33.0
 python-dotenv>=1.2.0
 feedparser>=6.0.10
 flask>=3.1.0
-tensorflow>=2.21.0
+tensorflow>=2.20.0
 scikit-learn>=1.8.0
-xgboost>=3.2.0
+xgboost>=3.0.0
 yfinance>=1.2.0
 
 # --- REAL-TIME DATA ---
 websocket-client>=1.9.0
 
 # --- SIGNAL PROCESSING ---
-PyWavelets>=1.9.0
+PyWavelets>=1.8.0
 
 # --- DATABASE ---
 # sqlite3 is built-in Python module
@@ -59,4 +59,13 @@ tqdm>=4.67.0
 libsql-client>=0.3.0
 
 # --- SYSTEM ---
-psutil>=7.2.0
+psutil>=6.0.0
+
+# --- GPU ACCELERATION (Optional) ---
+# Uncomment for GPU support on Windows (native, without WSL2):
+# torch-directml>=0.2.5          # PyTorch GPU via DirectML (AMD/Intel/NVIDIA)
+# tensorflow-directml-plugin     # TensorFlow GPU via DirectML
+#
+# For CUDA GPU (NVIDIA only, or via WSL2):
+# Install torch with CUDA from https://pytorch.org/get-started/locally/
+# TensorFlow auto-detects CUDA GPU in WSL2 (no extra package needed)

@@ -25,9 +25,9 @@ const AgentPage    = lazy(() => import('./pages/AgentPage'));
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 60000,
-      gcTime: 120000,
-      refetchInterval: 120000,
+      staleTime: 30000,
+      gcTime: 60000,
+      refetchInterval: 60000,
       refetchOnWindowFocus: false,
       retry: 1,
     },
@@ -80,21 +80,21 @@ function AppContent() {
   // Ticker polling — always active (header needs it), 60s to save API credits
   // Stagger: fires at component mount (200ms after health check)
   useCachedFetch('ticker', () => marketAPI.getTicker(), {
-    ttl: 60_000,
+    ttl: 20_000,
     enabled: apiConnected,
     onSuccess: setTicker,
   });
 
   // Portfolio — stagger 2s after mount to avoid request burst
   useCachedFetch('portfolio', () => portfolioAPI.getStatus(), {
-    ttl: 60000,
+    ttl: 30000,
     enabled: apiConnected,
     onSuccess: setPortfolio,
   });
 
   // Model stats — stagger 4s after mount (least urgent)
   useCachedFetch('models-stats', () => modelsAPI.getStats(), {
-    ttl: 120000,
+    ttl: 60000,
     enabled: apiConnected,
     onSuccess: setModelsStats,
   });

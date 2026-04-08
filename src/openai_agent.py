@@ -638,12 +638,9 @@ class QuantSentinelAgent:
                     if stored is not None:
                         actual_balance = float(stored)
                     try:
-                        _db.cursor.execute(
-                            "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
-                        )
-                        row = _db.cursor.fetchone()
-                        if row and row[0]:
-                            actual_currency = str(row[0])
+                        _currency = _db.get_param("portfolio_currency_text", None)
+                        if _currency:
+                            actual_currency = str(_currency)
                     except Exception:
                         pass
                 except Exception:

@@ -26,6 +26,25 @@ from src.cache import cached
 from src.logger import logger
 
 
+def _detect_torch_device():
+    """Detect best available PyTorch device: CUDA > DirectML > CPU."""
+    if torch.cuda.is_available():
+        dev = torch.device("cuda")
+        logger.info(f"PyTorch GPU: CUDA ({torch.cuda.get_device_name(0)})")
+        return dev
+    try:
+        import torch_directml
+        dev = torch_directml.device()
+        logger.info("PyTorch GPU: DirectML")
+        return dev
+    except Exception:
+        pass
+    logger.info("PyTorch: CPU mode")
+    return torch.device("cpu")
+
+_TORCH_DEVICE = _detect_torch_device()
+
+
 class AISystem:
     """
     System dwuetapowej analizy sentymentu:
@@ -40,11 +59,13 @@ class AISystem:
         # Model jest zapisywany w cache lokalnie po pierwszym pobraniu
         self.tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
         self.model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")
+        self.device = _TORCH_DEVICE
+        self.model.to(self.device)
 
         # Klucz OpenAI pobierany z .env przez zmienne środowiskowe
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-        logger.info("✅ FinBERT załadowany.")
+        logger.info(f"✅ FinBERT załadowany na {self.device}.")
 
     def get_fast_sentiment(self, text: str) -> str:
         """
@@ -62,11 +83,12 @@ class AISystem:
         inputs = self.tokenizer(
             text, padding=True, truncation=True, return_tensors="pt"
         )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
         with torch.no_grad():  # Wyłączamy gradienty — nie trenujemy, tylko inferujemy
             outputs = self.model(**inputs)
 
         # Konwertujemy logity na prawdopodobieństwa przez softmax
-        scores = softmax(outputs.logits.numpy().squeeze())
+        scores = softmax(outputs.logits.cpu().numpy().squeeze())
 
         # Mapowanie indeksów FinBERT na etykiety (kolejność: positive, negative, neutral)
         label_map = {0: "Bullish", 1: "Bearish", 2: "Neutral"}
