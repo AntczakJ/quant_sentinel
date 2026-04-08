@@ -252,14 +252,19 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         bool(has_engulfing),
     ])
 
-    # Wymóg: Grab+MSS (premium setup), albo DBR/RBD, albo minimum 2 sygnały konfluencji
+    # Wymog: Grab+MSS (premium) albo DBR/RBD albo minimum 3 sygnaly konfluencji
+    # UWAGA: "Stable" structure = konsolidacja = 0% win rate historycznie — blokuj
+    structure = analysis.get('structure', 'Stable')
+    is_stable = 'Stable' in str(structure)
+
     strong_setup = (
-        has_grab_mss
-        or has_dbr_rbd
-        or confluence_count >= 2
+        (has_grab_mss and confluence_count >= 2)   # premium: grab+mss + potwierdzenie
+        or (has_dbr_rbd and confluence_count >= 2)  # DBR/RBD + potwierdzenie
+        or confluence_count >= 3                     # silna konfluencja (podwyzszony prog z 2 na 3)
     )
-    if not strong_setup:
-        logger.debug(f"🔍 [MTF] {tf}: brak silnego setupu SMC (confluence={confluence_count}) — pomijam")
+    if not strong_setup or is_stable:
+        reason = "structure=Stable (chop)" if is_stable else f"confluence={confluence_count}<3"
+        logger.debug(f"[MTF] {tf}: brak silnego setupu ({reason}) -- pomijam")
         return None
 
     # --- 3b. FILTR KIERUNKU vs FVG ---

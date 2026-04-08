@@ -61,11 +61,21 @@ libsql-client>=0.3.0
 # --- SYSTEM ---
 psutil>=6.0.0
 
-# --- GPU ACCELERATION (Optional) ---
-# Uncomment for GPU support on Windows (native, without WSL2):
-# torch-directml>=0.2.5          # PyTorch GPU via DirectML (AMD/Intel/NVIDIA)
-# tensorflow-directml-plugin     # TensorFlow GPU via DirectML
+# --- GPU ACCELERATION (DirectML — AMD/Intel/NVIDIA on Windows) ---
+onnxruntime-directml>=1.24.0
+tf2onnx>=1.17.0
+onnx>=1.21.0
+skl2onnx>=1.20.0
+onnxmltools>=1.16.0
+
+# --- GPU ACCELERATION (Optional — NVIDIA CUDA) ---
+# CuPy — GPU-accelerated NumPy (auto-detected by src/compute.py):
+# pip install cupy-cuda12x        # For CUDA 12.x (NVIDIA)
+# pip install cupy-cuda11x        # For CUDA 11.x (NVIDIA)
 #
-# For CUDA GPU (NVIDIA only, or via WSL2):
+# CUDA GPU (NVIDIA only, or via WSL2):
 # Install torch with CUDA from https://pytorch.org/get-started/locally/
 # TensorFlow auto-detects CUDA GPU in WSL2 (no extra package needed)
+#
+# Numba (already in deps) provides JIT compilation for CPU hot loops.
+# With NVIDIA GPU, Numba also supports CUDA kernels (auto-detected).

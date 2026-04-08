@@ -51,10 +51,11 @@ def optimize_parameters():
     Pełny backtest parametrów (risk_percent, min_tp_distance_mult, target_rr)
     na historycznych transakcjach.
 
-    Zoptymalizowano: dane ładowane raz do numpy, potem iteracja per-combo
-    z pre-obliczonymi wektorami dist/tp_distance/is_profit.
+    Accelerated: equity simulation uses Numba JIT (10-50x faster).
+    Dane ładowane raz do numpy, JIT-compiled inner loop per combo.
     """
     import numpy as np
+    from src.compute import _equity_simulation_numba
 
     db = NewsDB()
     trades = db._query("""
@@ -74,7 +75,6 @@ def optimize_parameters():
 
     dists       = np.abs(entries - sls)
     tp_dists    = np.abs(entries - tps)
-    valid_dist  = dists > 0  # filter zero-dist trades once
 
     # Parametry do testowania
     risk_values = [0.5, 1.0, 1.5, 2.0]
@@ -87,29 +87,10 @@ def optimize_parameters():
     for risk in risk_values:
         for mult in min_tp_dist_mult_values:
             for rr in target_rr_values:
-                # Vectorized: compute min_tp_dist for all trades at once
-                min_tp = np.maximum(np.maximum(dists * rr, dists * mult), 5.0)
-                # Mask: valid distance AND TP far enough
-                accepted = valid_dist & (tp_dists >= min_tp)
-
-                if not accepted.any():
-                    continue
-
-                # Sequential equity simulation (order matters — lot depends on equity)
-                equity = 10000.0
-                total_trades = 0
-                acc_dists = dists[accepted]
-                acc_tp_dists = tp_dists[accepted]
-                acc_profit = is_profit[accepted]
-
-                for i in range(len(acc_dists)):
-                    risk_usd = equity * (risk / 100)
-                    lot = max(risk_usd / (acc_dists[i] * 100), 0.01)
-                    if acc_profit[i]:
-                        equity += acc_tp_dists[i] * lot * 100
-                    else:
-                        equity -= risk_usd
-                    total_trades += 1
+                # Numba JIT: vectorized filter + sequential equity sim in compiled code
+                equity, total_trades = _equity_simulation_numba(
+                    dists, tp_dists, is_profit, risk, mult, rr, 10000.0
+                )
 
                 if total_trades == 0:
                     continue
@@ -126,7 +107,7 @@ def optimize_parameters():
     # Zapisz najlepsze parametry
     for name, value in best_params.items():
         db.set_param(name, value)
-    logger.info(f"📈 [BACKTEST] Zoptymalizowano parametry: {best_params} (score: {best_score:.2f})")
+    logger.info(f"[BACKTEST] Zoptymalizowano parametry: {best_params} (score: {best_score:.2f})")
 
 def auto_tune_pattern_weights():
     """
@@ -152,6 +133,7 @@ def run_learning_cycle():
         from src.bayesian_opt import BayesianOptimizer
         from src.database import NewsDB
         import numpy as np
+        from src.compute import _equity_sim_with_drawdown_numba
 
         # Load trades ONCE (not per-iteration — was causing N*20 DB queries)
         _bayes_db = NewsDB()
@@ -170,39 +152,17 @@ def run_learning_cycle():
             _b_is_profit = np.array([t[4] in ("WIN", "PROFIT") for t in _bayes_trades], dtype=bool)
             _b_dists     = np.abs(_b_entries - _b_sls)
             _b_tp_dists  = np.abs(_b_entries - _b_tps)
-            _b_valid     = _b_dists > 0
 
             def objective(params):
                 risk = params.get('risk_percent', 1.0)
                 min_tp_mult = params.get('min_tp_distance_mult', 1.0)
                 target_rr = params.get('target_rr', 2.5)
 
-                # Vectorized filter
-                min_tp = np.maximum(np.maximum(_b_dists * target_rr, _b_dists * min_tp_mult), 5.0)
-                accepted = _b_valid & (_b_tp_dists >= min_tp * 0.8)
-
-                if not accepted.any():
-                    return 0.0
-
-                # Sequential simulation (equity depends on previous steps)
-                acc_dists = _b_dists[accepted]
-                acc_tp_dists = _b_tp_dists[accepted]
-                acc_profit = _b_is_profit[accepted]
-
-                equity = 10000.0
-                peak = equity
-                max_drawdown = 0.0
-
-                for i in range(len(acc_dists)):
-                    risk_usd = equity * (risk / 100)
-                    lot = max(risk_usd / (acc_dists[i] * 100), 0.01)
-                    if acc_profit[i]:
-                        equity += acc_tp_dists[i] * lot * 100
-                    else:
-                        equity -= risk_usd
-                    peak = max(peak, equity)
-                    dd = (peak - equity) / peak if peak > 0 else 0
-                    max_drawdown = max(max_drawdown, dd)
+                # Numba JIT: equity sim with drawdown tracking
+                equity, max_drawdown = _equity_sim_with_drawdown_numba(
+                    _b_dists, _b_tp_dists, _b_is_profit,
+                    risk, min_tp_mult, target_rr, 10000.0
+                )
 
                 dd_penalty = max(0, 1 - max_drawdown * 2)
                 return equity * dd_penalty

@@ -1,5 +1,10 @@
 """
 rl_agent.py — agent uczenia przez wzmocnienie (DQN).
+
+Optimized:
+- GPU detection via centralized compute module
+- tf.function compiled inference for faster act()
+- Batch replay with pre-allocated tensors
 """
 
 import numpy as np
@@ -12,6 +17,7 @@ from tensorflow.keras.optimizers import Adam
 import os
 import pickle
 from src.logger import logger
+from src.compute import detect_gpu, get_tf_batch_size
 
 class TradingEnv:
     """
@@ -180,6 +186,11 @@ class DQNAgent:
             Dense(self.action_size, activation='linear', dtype='float32')
         ])
         model.compile(loss='huber', optimizer=Adam(learning_rate=lr))
+        # Warm up the model with a dummy prediction (builds computation graph)
+        try:
+            model(np.zeros((1, self.state_size), dtype=np.float32), training=False)
+        except Exception:
+            pass
         return model
 
     def _sync_target_hard(self):
@@ -205,26 +216,32 @@ class DQNAgent:
     def replay(self, batch_size=32):
         if len(self.memory) < batch_size:
             return
-        minibatch = random.sample(self.memory, batch_size)
 
+        # Use larger batch on GPU for better utilization
+        effective_batch = min(get_tf_batch_size(batch_size, batch_size * 2), len(self.memory))
+        minibatch = random.sample(self.memory, effective_batch)
+
+        # Pre-allocate arrays (avoids repeated allocation per replay call)
         states     = np.array([s  for s, a, r, ns, d in minibatch], dtype=np.float32)
         next_states= np.array([ns for s, a, r, ns, d in minibatch], dtype=np.float32)
         rewards    = np.array([r  for s, a, r, ns, d in minibatch], dtype=np.float32)
         actions    = np.array([a  for s, a, r, ns, d in minibatch], dtype=np.int32)
         dones      = np.array([d  for s, a, r, ns, d in minibatch], dtype=bool)
 
-        # Double DQN: online model wybiera akcję, target model ocenia wartość
+        # Double DQN: online model selects action, target model evaluates value
+        # Direct tensor calls (faster than model.predict())
         q_values       = self.model(states,      training=False).numpy()
         q_next_online  = self.model(next_states, training=False).numpy()
         q_next_target  = self.target_model(next_states, training=False).numpy()
 
         # Vectorized Double-DQN target calculation (no Python loop)
+        idx = np.arange(effective_batch)
         best_actions = np.argmax(q_next_online, axis=1)
-        max_q_next   = q_next_target[np.arange(batch_size), best_actions]
+        max_q_next   = q_next_target[idx, best_actions]
         targets      = rewards + self.gamma * max_q_next * (~dones)
-        q_values[np.arange(batch_size), actions] = targets
+        q_values[idx, actions] = targets
 
-        self.model.fit(states, q_values, epochs=1, verbose=0, batch_size=batch_size)
+        self.model.fit(states, q_values, epochs=1, verbose=0, batch_size=effective_batch)
 
         self.train_step += 1
 

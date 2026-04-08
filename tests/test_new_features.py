@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_new_features.py — testy nowych komponentów (Double DQN, backtest, scaler).
+test_new_features.py — testy nowych komponentow (Double DQN, backtest, scaler).
 """
 import sys
 import os
@@ -9,17 +9,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import pandas as pd
 
-passed = 0
-failed = 0
+_passed = 0
+_failed = 0
 
 def check(name, condition):
-    global passed, failed
+    global _passed, _failed
     if condition:
         print(f"  ✅ {name}")
-        passed += 1
+        _passed += 1
     else:
         print(f"  ❌ {name}")
-        failed += 1
+        _failed += 1
 
 print("=" * 60)
 print("🧪 TEST NOWYCH KOMPONENTÓW")
@@ -303,15 +303,17 @@ try:
 except Exception as e:
     check(f"update_factor_weights: {e}", False)
 
-# ==== SUMMARY ====
-print("\n" + "=" * 60)
-print(f"📊 PODSUMOWANIE: {passed}/{passed+failed} testów przejętych")
-print("=" * 60)
-if failed == 0:
-    print("🎉 WSZYSTKIE TESTY PRZEJĘTE!")
-else:
-    print(f"⚠️ {failed} test(ów) nie przeszło")
-    sys.exit(1)
+def _summary():
+    print("\n" + "=" * 60)
+    print(f"PODSUMOWANIE: {_passed}/{_passed+_failed} testow przeszlo")
+    print("=" * 60)
+    if _failed == 0:
+        print("WSZYSTKIE TESTY PRZESZLY!")
+    else:
+        print(f"{_failed} test(ow) nie przeszlo")
+    return 0 if _failed == 0 else 1
 
 
+if __name__ == "__main__":
+    sys.exit(_summary())
 

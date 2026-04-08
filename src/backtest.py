@@ -6,30 +6,37 @@ Funkcje:
 - Porównanie predykcji z rzeczywistym ruchem ceny
 - Metryki: accuracy, precision, recall, F1, Sharpe, max drawdown
 - Ocena poszczególnych modeli + ensemble
+
+Optimized: vectorized metric computation via NumPy, GPU-accelerated where available.
 """
 
 import numpy as np
 import pandas as pd
 from typing import Dict, Optional, Tuple
 from src.logger import logger
+from src.compute import get_array_module, to_numpy
 
 
 def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> Dict:
     """
-    Oblicz metryki klasyfikacji binarnej.
+    Oblicz metryki klasyfikacji binarnej (fully vectorized).
     y_true, y_pred: 0 = spadek, 1 = wzrost
+    Uses CuPy if GPU available for large arrays.
     """
+    xp = get_array_module()
     n = len(y_true)
     if n == 0:
         return {"accuracy": 0, "precision": 0, "recall": 0, "f1": 0}
 
-    correct = (y_true == y_pred).sum()
+    yt = xp.asarray(y_true)
+    yp = xp.asarray(y_pred)
+
+    correct = int((yt == yp).sum())
     accuracy = correct / n
 
-    # True Positives, False Positives, False Negatives
-    tp = ((y_pred == 1) & (y_true == 1)).sum()
-    fp = ((y_pred == 1) & (y_true == 0)).sum()
-    fn = ((y_pred == 0) & (y_true == 1)).sum()
+    tp = int(((yp == 1) & (yt == 1)).sum())
+    fp = int(((yp == 1) & (yt == 0)).sum())
+    fn = int(((yp == 0) & (yt == 1)).sum())
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0
@@ -41,36 +48,40 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> Dict:
         "recall": round(recall, 4),
         "f1": round(f1, 4),
         "total": n,
-        "correct": int(correct),
+        "correct": correct,
     }
 
 
 def compute_equity_metrics(returns: np.ndarray) -> Dict:
     """
     Oblicz metryki equity curve: Sharpe ratio, max drawdown, total return.
+    Fully vectorized — uses CuPy if GPU available for large arrays.
     """
+    xp = get_array_module()
     if len(returns) == 0:
         return {"sharpe": 0, "max_drawdown": 0, "total_return": 0}
 
-    # Equity curve
-    equity = np.cumprod(1 + returns)
-    total_return = equity[-1] - 1
+    ret = xp.asarray(returns)
 
-    # Max drawdown
-    peak = np.maximum.accumulate(equity)
-    drawdown = (peak - equity) / peak
-    max_drawdown = drawdown.max()
+    # Equity curve (vectorized cumulative product)
+    equity = xp.cumprod(1 + ret)
+    total_return = float(equity[-1] - 1)
 
-    # Sharpe ratio (roczny, zakładając 252 dni tradingowych)
-    mean_ret = np.mean(returns)
-    std_ret = np.std(returns)
+    # Max drawdown (vectorized)
+    peak = xp.maximum.accumulate(equity)
+    drawdown = (peak - equity) / (peak + 1e-10)
+    max_drawdown = float(drawdown.max())
+
+    # Sharpe ratio
+    mean_ret = float(xp.mean(ret))
+    std_ret = float(xp.std(ret))
     sharpe = (mean_ret / std_ret * np.sqrt(252)) if std_ret > 0 else 0
 
     return {
         "sharpe": round(sharpe, 4),
         "max_drawdown": round(max_drawdown, 4),
         "total_return": round(total_return, 4),
-        "final_equity": round(equity[-1], 4),
+        "final_equity": round(float(equity[-1]), 4),
     }
 
 
