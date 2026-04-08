@@ -146,6 +146,20 @@ def send_telegram_alert(text: str):
 # MULTI-TIMEFRAME TRADE EVALUATOR
 # =============================================================================
 
+def _log_rejection(db, tf, direction, price, reason, filter_name,
+                   confluence_count=0, rsi=0, trend="", pattern="", atr=0):
+    """Helper do zapisu odrzuconego setupu do bazy (fire-and-forget)."""
+    try:
+        db.log_rejected_setup(
+            timeframe=tf, direction=direction, price=price,
+            rejection_reason=reason, filter_name=filter_name,
+            confluence_count=confluence_count, rsi=rsi,
+            trend=trend, pattern=pattern, atr=atr
+        )
+    except Exception:
+        pass  # nie blokuj scannera błędami logowania
+
+
 def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = "USD") -> dict | None:
     """
     Ocenia dany timeframe pod kątem ważnego setupu tradingowego.
@@ -198,20 +212,30 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     current_atr = analysis.get('atr', 0)
     if current_atr < 2.0:
         logger.info(f"🔍 [MTF] {tf}: ATR={current_atr:.2f} za niski (min 2.0) — zbyt mała zmienność")
+        _log_rejection(db, tf, "LONG" if current_trend == "bull" else "SHORT",
+                       current_price, f"ATR={current_atr:.2f}<2.0", "atr_filter",
+                       rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
 
     # --- 0c. FILTR RSI EXTREME — nie wchodź w pozycję przeciw momentum ---
     if current_trend == "bull" and current_rsi > 78:
         logger.info(f"🔍 [MTF] {tf}: RSI={current_rsi:.0f} > 78 (wykupiony) — nie LONG na szczycie")
+        _log_rejection(db, tf, "LONG", current_price, f"RSI={current_rsi:.0f}>78", "rsi_extreme",
+                       rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
     if current_trend == "bear" and current_rsi < 22:
         logger.info(f"🔍 [MTF] {tf}: RSI={current_rsi:.0f} < 22 (wyprzedany) — nie SHORT na dnie")
+        _log_rejection(db, tf, "SHORT", current_price, f"RSI={current_rsi:.0f}<22", "rsi_extreme",
+                       rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
 
     # --- 1. FILTR FAIL RATE ---
     fail_rate = db.get_fail_rate_for_pattern(current_rsi, current_structure)
     if fail_rate > 75:
         logger.info(f"🔍 [MTF] {tf}: fail rate {fail_rate}% za wysoki — pomijam")
+        _log_rejection(db, tf, "LONG" if current_trend == "bull" else "SHORT",
+                       current_price, f"fail_rate={fail_rate}%>75%", "fail_rate",
+                       rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
 
     # --- 2. FILTR WAGI WZORCA (self-learning) ---
@@ -220,6 +244,9 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     weight = get_pattern_adjustment({"pattern": pattern})
     if weight < 0.5:
         logger.info(f"🔍 [MTF] {tf}: waga wzorca {pattern} = {weight:.2f} za niska — pomijam")
+        _log_rejection(db, tf, direction_str, current_price,
+                       f"pattern_weight={weight:.2f}<0.5", "pattern_weight",
+                       rsi=current_rsi, trend=current_trend, pattern=pattern, atr=current_atr)
         return None
 
     # --- 3. SPRAWDZENIE SETUPU SMC: wymagamy silnej konfluencji ---
@@ -265,6 +292,9 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     if not strong_setup or is_stable:
         reason = "structure=Stable (chop)" if is_stable else f"confluence={confluence_count}<3"
         logger.debug(f"[MTF] {tf}: brak silnego setupu ({reason}) -- pomijam")
+        _log_rejection(db, tf, direction_str, current_price, reason, "confluence",
+                       confluence_count=confluence_count, rsi=current_rsi,
+                       trend=current_trend, pattern=pattern, atr=current_atr)
         return None
 
     # --- 3b. FILTR KIERUNKU vs FVG ---
@@ -300,6 +330,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
 
     # --- 5. ML ENSEMBLE VALIDATION (BLOKUJĄCE jeśli ML silnie się nie zgadza) ---
     ml_info = ""
+    ensemble_result = None  # zachowaj ensemble result do zapisu w bazie
     try:
         from src.data_sources import get_provider
         from src.ensemble_models import get_ensemble_prediction
@@ -316,6 +347,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                 initial_balance=10000,
                 position=0
             )
+            ensemble_result = ensemble  # ZACHOWAJ do użycia później
             ml_signal = ensemble.get('ensemble_signal', 'CZEKAJ')
             ml_conf = ensemble.get('confidence', 0)
 
@@ -328,6 +360,10 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                     f"🚫 [MTF] {tf}: ML ({ml_signal}, {ml_conf:.0%}) "
                     f"KONFLIKT z SMC ({direction_str}) — BLOKUJĘ trade"
                 )
+                _log_rejection(db, tf, direction_str, current_price,
+                               f"ML={ml_signal}({ml_conf:.0%}) vs SMC={direction_str}", "ml_conflict",
+                               confluence_count=confluence_count, rsi=current_rsi,
+                               trend=current_trend, pattern=pattern, atr=current_atr)
                 return None
             elif ml_conf < 0.3:
                 logger.info(f"⚠️ [MTF] {tf}: ML niska pewność {ml_conf:.0%} — trade dozwolony ale ryzykowny")
@@ -379,7 +415,49 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         logger.info(f"🔍 [MTF] {tf}: SHORT w strefie DISCOUNT — złe R:R, pomijam")
         return None
 
-    # --- 6e. HTF TREND CONFIRMATION (nie handluj M5/M15 przeciw H1/H4) ---
+    # --- 6e. LOSS PATTERN CHECK (nowe!) ---
+    try:
+        from src.self_learning import check_loss_pattern_match
+        loss_match = check_loss_pattern_match(analysis, direction_str)
+        if loss_match and loss_match['count'] >= 5:
+            logger.warning(
+                f"⚠️ [MTF] {tf}: Wykryto wzorzec strat: {loss_match['pattern_type']} "
+                f"({loss_match['count']}x) — {loss_match['desc']}"
+            )
+            _log_rejection(db, tf, direction_str, current_price,
+                           f"loss_pattern:{loss_match['pattern_type']}({loss_match['count']}x)",
+                           "loss_pattern", confluence_count=confluence_count,
+                           rsi=current_rsi, trend=current_trend, pattern=pattern, atr=current_atr)
+            return None
+        elif loss_match:
+            logger.info(
+                f"📝 [MTF] {tf}: Ostrzeżenie — wzorzec strat: {loss_match['pattern_type']} "
+                f"({loss_match['count']}x) — kontynuuję ale z ostrzeżeniem"
+            )
+    except Exception as e:
+        logger.debug(f"Loss pattern check skipped: {e}")
+
+    # --- 6f. HOURLY STATS CHECK (nowe!) ---
+    try:
+        from datetime import datetime
+        current_hour = datetime.now().hour
+        bad_hours = db.get_bad_hours(min_trades=8, max_winrate=0.30)
+        for bh in bad_hours:
+            hour, bh_dir, bh_wr, bh_count = bh
+            if hour == current_hour and bh_dir == direction_str:
+                logger.warning(
+                    f"⏰ [MTF] {tf}: Godzina {current_hour}:00 ma winrate {bh_wr:.0%} "
+                    f"dla {direction_str} ({bh_count} tradów) — pomijam"
+                )
+                _log_rejection(db, tf, direction_str, current_price,
+                               f"bad_hour={current_hour}:00 WR={bh_wr:.0%}({bh_count}trades)",
+                               "hourly_stats", confluence_count=confluence_count,
+                               rsi=current_rsi, trend=current_trend, pattern=pattern, atr=current_atr)
+                return None
+    except Exception as e:
+        logger.debug(f"Hourly stats check skipped: {e}")
+
+    # --- 6g. HTF TREND CONFIRMATION (nie handluj M5/M15 przeciw H1/H4) ---
     if tf in ("5m", "15m"):
         try:
             htf_analysis = get_smc_analysis("1h")
@@ -399,9 +477,36 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         except Exception as e:
             logger.debug(f"[MTF] HTF confirmation skipped: {e}")
 
-    # --- 7. SETUP WAŻNY — zwróć parametry trade'a ---
+    # --- 7. SETUP QUALITY SCORING (nowe!) ---
+    setup_quality = None
+    try:
+        from src.smc_engine import score_setup_quality
+        setup_quality = score_setup_quality(analysis, direction)
+        grade = setup_quality['grade']
+
+        if grade == "C":
+            logger.info(
+                f"🔍 [MTF] {tf}: Setup grade=C ({setup_quality['score']}/100) — "
+                f"zbyt niska jakość, pomijam"
+            )
+            _log_rejection(db, tf, direction, current_price,
+                           f"setup_grade=C({setup_quality['score']}/100)", "setup_quality",
+                           confluence_count=confluence_count, rsi=current_rsi,
+                           trend=current_trend, pattern=pattern, atr=current_atr)
+            return None
+
+        logger.info(
+            f"📊 [MTF] {tf}: Setup {grade} ({setup_quality['score']}/100) | "
+            f"Risk mult: {setup_quality['risk_mult']} | R:R: {setup_quality['target_rr']}"
+        )
+    except Exception as e:
+        logger.debug(f"Setup quality scoring skipped: {e}")
+        setup_quality = {'grade': 'A', 'score': 50, 'risk_mult': 1.0, 'target_rr': 2.5, 'factors_detail': {}}
+
+    # --- 8. SETUP WAŻNY — zwróć parametry trade'a ---
+    grade_icon = {"A+": "⭐", "A": "✅", "B": "⚠️"}.get(setup_quality['grade'], "❓")
     logger.info(
-        f"🎯 [MTF] ZNALEZIONO TRADE na {tf}! "
+        f"🎯 [MTF] ZNALEZIONO TRADE na {tf}! {grade_icon} Grade: {setup_quality['grade']} | "
         f"{direction} @ {entry:.2f} | SL: {sl:.2f} | TP: {tp:.2f} | {logic}"
     )
 
@@ -428,6 +533,8 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         "ml_info": ml_info,
         "analysis": analysis,
         "factors": factors,
+        "setup_quality": setup_quality,
+        "ensemble_result": ensemble_result,
     }
 
 
@@ -572,6 +679,11 @@ async def scan_market_task(context):
             ml_info = trade_found['ml_info']
             analysis = trade_found['analysis']
 
+            # Setup quality data
+            setup_quality = trade_found.get('setup_quality', {})
+            setup_grade = setup_quality.get('grade', 'A')
+            setup_score = setup_quality.get('score', 50)
+
             # Deduplikacja — nie stawiaj tego samego trade'a dwa razy
             trade_key = _hash(f"mtf_{direction}_{entry:.1f}_{tf}")
             if not db.is_news_processed(trade_key):
@@ -592,7 +704,52 @@ async def scan_market_task(context):
                     pattern=pattern,
                     lot=lot,
                 )
-                logger.info(f"💾 [SCANNER] Trade zapisany do trades: {direction} @ {entry:.2f}")
+
+                # Zapisz setup grade + confirmation data + model agreement do trade'a
+                try:
+                    last_trade = db._query_one("SELECT id FROM trades ORDER BY id DESC LIMIT 1")
+                    if last_trade:
+                        trade_id = last_trade[0]
+                        db.update_trade_setup_grade(trade_id, setup_grade, setup_score)
+
+                        # Zapisz confirmation details + model agreement
+                        import json as _json
+                        # ensemble_result pochodzi z _evaluate_tf_for_trade (zachowany z get_ensemble_prediction)
+                        ens_data = trade_found.get('ensemble_result')
+
+                        if ens_data:
+                            # Confirmation data
+                            confirmation = ens_data.get('confirmation', {})
+                            conf_json = _json.dumps(confirmation) if confirmation else None
+
+                            # Model agreement
+                            agreement_data = ens_data.get('model_agreement', {})
+                            agreement_ratio = agreement_data.get('ratio', 0) if agreement_data else 0
+
+                            # Volatility regime
+                            vol_regime = "normal"
+                            vol_pctile = ens_data.get('volatility_percentile', 0.5)
+                            if vol_pctile < 0.25:
+                                vol_regime = "low"
+                            elif vol_pctile > 0.75:
+                                vol_regime = "high"
+
+                            db.update_trade_confirmation(trade_id, conf_json, agreement_ratio, vol_regime)
+
+                            # Linkuj ostatnią ml_prediction z tym trade_id
+                            db._execute(
+                                "UPDATE ml_predictions SET trade_id = ? WHERE id = "
+                                "(SELECT id FROM ml_predictions ORDER BY id DESC LIMIT 1)",
+                                (trade_id,))
+                        else:
+                            db.update_trade_confirmation(trade_id, None, 0, "unknown")
+                except Exception:
+                    pass
+
+                logger.info(
+                    f"💾 [SCANNER] Trade zapisany: {direction} @ {entry:.2f} "
+                    f"| Grade: {setup_grade} ({setup_score}/100)"
+                )
 
                 # Zapisz sygnał do scanner_signals
                 db.save_scanner_signal(
@@ -606,8 +763,10 @@ async def scan_market_task(context):
                 )
                 logger.info(f"📡 [SCANNER] Sygnał MTF zapisany do scanner_signals.")
 
-                # Wyślij alert Telegram
+                # Wyślij alert Telegram z setup quality
                 ml_line = f"\n🤖 {ml_info}" if ml_info else ""
+                grade_icon = {"A+": "⭐", "A": "✅", "B": "⚠️"}.get(setup_grade, "❓")
+                grade_line = f"\n{grade_icon} Setup: *{setup_grade}* ({setup_score}/100)"
                 alert_msg = (
                     f"🎯 *NOWY TRADE — Kaskada MTF*\n"
                     f"━━━━━━━━━━━━━━\n"
@@ -620,7 +779,7 @@ async def scan_market_task(context):
                     f"━━━━━━━━━━━━━━\n"
                     f"📈 Trend: `{trend}` | RSI: `{rsi:.1f}`\n"
                     f"🏗️ Struktura: `{structure}`\n"
-                    f"💡 Logika: _{logic}_{ml_line}\n"
+                    f"💡 Logika: _{logic}_{ml_line}{grade_line}\n"
                     f"━━━━━━━━━━━━━━\n"
                     f"🔎 _Przeszukano: {' → '.join(SCAN_TIMEFRAMES)}_\n"
                     f"✅ _Znaleziono na: {tf_label}_"
@@ -810,12 +969,21 @@ async def scan_market_task(context):
 
 async def resolve_trades_task(context):
     """
-    Poprawiona wersja: Przy LOSS zapisuje powód i okoliczności do bazy.
+    Resolver v2: Trailing Stop + Setup Quality Stats + Hourly Stats + Loss Classification.
+
+    Trailing Stop Logic:
+      ╔═══════════════════════════════════════════════════════╗
+      ║  R-Multiple  │  Akcja                                ║
+      ╠═══════════════════════════════════════════════════════╣
+      ║  >= 1.0R     │  🔒 SL → Breakeven (entry)            ║
+      ║  >= 1.5R     │  📈 SL → Entry + 1.0R (lock profit)   ║
+      ║  >= 2.0R     │  🚀 SL → Entry + 1.5R (trail)         ║
+      ╚═══════════════════════════════════════════════════════╝
     """
     from src.database import NewsDB
     db = NewsDB()
 
-    # 1. POBIERANIE CENY (przez DataProvider — rate limited, cached, WS fallback)
+    # 1. POBIERANIE CENY
     try:
         from src.data_sources import get_provider
         provider = get_provider()
@@ -832,11 +1000,11 @@ async def resolve_trades_task(context):
 
     # 2. POBIERANIE I ROZLICZANIE POZYCJI
     try:
-        open_trades = db.get_open_trades()
+        open_trades = db.get_open_trades_extended()
         if not open_trades:
             return
 
-        # Pobierz aktualny kontekst rynkowy raz dla wszystkich pozycji
+        # Kontekst rynkowy (raz dla wszystkich)
         try:
             analysis = get_smc_analysis(USER_PREFS['tf'])
             market_snapshot = (
@@ -850,65 +1018,185 @@ async def resolve_trades_task(context):
             market_snapshot = f"Cena: {current_price}"
 
         for trade in open_trades:
-            t_id, direction, entry, sl, tp = trade
+            t_id, direction, entry, sl, tp, trailing_sl, setup_grade, factors_json = trade
             status = None
 
             dir_clean = str(direction).strip().upper()
+            entry_f = float(entry or 0)
+            sl_f = float(trailing_sl or sl or 0)  # użyj trailing SL jeśli istnieje
+            tp_f = float(tp or 0)
+            original_sl = float(sl or 0)
 
+            # ═══════════════════════════════════════════════════
+            # TRAILING STOP LOGIC
+            # ═══════════════════════════════════════════════════
+            sl_distance = abs(entry_f - original_sl) if entry_f and original_sl else 0
+
+            if sl_distance > 0:
+                if "LONG" in dir_clean:
+                    r_multiple = (current_price - entry_f) / sl_distance
+                else:
+                    r_multiple = (entry_f - current_price) / sl_distance
+
+                # Trailing stop adjustments (tylko w górę — nigdy nie cofaj SL)
+                new_sl = sl_f  # domyślnie bez zmian
+
+                if r_multiple >= 2.0:
+                    # 🚀 Trail: SL = entry + 1.5R
+                    if "LONG" in dir_clean:
+                        candidate_sl = round(entry_f + sl_distance * 1.5, 2)
+                    else:
+                        candidate_sl = round(entry_f - sl_distance * 1.5, 2)
+                    trail_event = "🚀 TRAIL_2R"
+
+                    if ("LONG" in dir_clean and candidate_sl > sl_f) or \
+                       ("SHORT" in dir_clean and candidate_sl < sl_f):
+                        new_sl = candidate_sl
+                        db.update_trade_trailing_sl(t_id, new_sl)
+                        db.log_trailing_stop_event(t_id, trail_event, sl_f, new_sl, current_price, round(r_multiple, 2))
+                        logger.info(
+                            f"🚀 [TRAILING] #{t_id} | R={r_multiple:.1f} | "
+                            f"SL: {sl_f:.2f}$ → {new_sl:.2f}$ | "
+                            f"Zysk zabezpieczony: +{abs(new_sl - entry_f):.2f}$"
+                        )
+
+                elif r_multiple >= 1.5:
+                    # 📈 Lock: SL = entry + 1.0R
+                    if "LONG" in dir_clean:
+                        candidate_sl = round(entry_f + sl_distance * 1.0, 2)
+                    else:
+                        candidate_sl = round(entry_f - sl_distance * 1.0, 2)
+                    trail_event = "📈 LOCK_1.5R"
+
+                    if ("LONG" in dir_clean and candidate_sl > sl_f) or \
+                       ("SHORT" in dir_clean and candidate_sl < sl_f):
+                        new_sl = candidate_sl
+                        db.update_trade_trailing_sl(t_id, new_sl)
+                        db.log_trailing_stop_event(t_id, trail_event, sl_f, new_sl, current_price, round(r_multiple, 2))
+                        logger.info(
+                            f"📈 [TRAILING] #{t_id} | R={r_multiple:.1f} | "
+                            f"SL: {sl_f:.2f}$ → {new_sl:.2f}$ | "
+                            f"Profit locked: +{abs(new_sl - entry_f):.2f}$"
+                        )
+
+                elif r_multiple >= 1.0:
+                    # 🔒 Breakeven: SL = entry
+                    if "LONG" in dir_clean:
+                        candidate_sl = round(entry_f + 0.50, 2)  # +0.50$ spread buffer
+                    else:
+                        candidate_sl = round(entry_f - 0.50, 2)
+                    trail_event = "🔒 BREAKEVEN_1R"
+
+                    if ("LONG" in dir_clean and candidate_sl > sl_f) or \
+                       ("SHORT" in dir_clean and candidate_sl < sl_f):
+                        new_sl = candidate_sl
+                        db.update_trade_trailing_sl(t_id, new_sl)
+                        db.log_trailing_stop_event(t_id, trail_event, sl_f, new_sl, current_price, round(r_multiple, 2))
+                        logger.info(
+                            f"🔒 [TRAILING] #{t_id} | R={r_multiple:.1f} | "
+                            f"SL: {sl_f:.2f}$ → {new_sl:.2f}$ (breakeven) | "
+                            f"Ryzyko wyeliminowane ✓"
+                        )
+                        # Alert Telegram o breakeven
+                        try:
+                            be_msg = (
+                                f"🔒 *BREAKEVEN AKTYWOWANY*\n"
+                                f"━━━━━━━━━━━━━━\n"
+                                f"Trade #{t_id} | {dir_clean}\n"
+                                f"📍 Entry: `{entry_f:.2f}$`\n"
+                                f"🔒 Nowy SL: `{new_sl:.2f}$`\n"
+                                f"📊 R: `{r_multiple:.1f}` | Cena: `{current_price:.2f}$`\n"
+                                f"━━━━━━━━━━━━━━\n"
+                                f"✅ _Ryzyko wyeliminowane — zysk zabezpieczony_"
+                            )
+                            send_telegram_alert(be_msg)
+                        except Exception:
+                            pass
+
+                # Użyj zaktualizowanego SL do sprawdzenia wyjścia
+                sl_f = new_sl if new_sl != sl_f else sl_f
+
+            # ═══════════════════════════════════════════════════
+            # SPRAWDZENIE WIN/LOSS
+            # ═══════════════════════════════════════════════════
             if "LONG" in dir_clean:
-                if current_price >= float(tp):
+                if current_price >= tp_f:
                     status = "WIN"
-                elif current_price <= float(sl):
+                elif current_price <= sl_f:
                     status = "LOSS"
             elif "SHORT" in dir_clean:
-                if current_price <= float(tp):
+                if current_price <= tp_f:
                     status = "WIN"
-                elif current_price >= float(sl):
+                elif current_price >= sl_f:
                     status = "LOSS"
 
             if status:
-                # Oblicz profit/loss w dolarach przed zapisem
+                # Oblicz profit/loss
                 try:
-                    entry_f = float(entry or 0)
-                    sl_f = float(sl or 0)
-                    tp_f = float(tp or 0)
                     if status == "WIN":
                         profit_val = round(abs(tp_f - entry_f), 2) if entry_f > 0 else 0
-                    else:  # LOSS
-                        profit_val = round(-abs(entry_f - sl_f), 2) if entry_f > 0 else 0
+                    else:
+                        # Przy trailing stop, loss może być mniejszy (lub nawet profit!)
+                        if "LONG" in dir_clean:
+                            profit_val = round(sl_f - entry_f, 2)
+                        else:
+                            profit_val = round(entry_f - sl_f, 2)
                 except (ValueError, TypeError):
                     profit_val = 0
 
                 db.update_trade_status(t_id, status)
                 db.update_trade_profit(t_id, profit_val)
 
-                # ========== NOWE: aktualizacja statystyk sesji ==========
+                # ═══════════════════════════════════════════════
+                # AKTUALIZACJA STATYSTYK
+                # ═══════════════════════════════════════════════
+
+                # Session stats
                 if status in ("WIN", "LOSS"):
-                    row = db._query_one("SELECT pattern, session FROM trades WHERE id = ?", (t_id,))
-                    if row and row[0]:
-                        pattern = row[0]
+                    row = db._query_one("SELECT pattern, session, timestamp FROM trades WHERE id = ?", (t_id,))
+                    if row:
+                        pattern = row[0] or "unknown"
                         session = row[1] or "Unknown"
                         db.update_session_stats(pattern, session, status)
 
+                        # Hourly stats (nowe!)
+                        try:
+                            ts = row[2]
+                            if ts:
+                                hour = int(ts[11:13])
+                                db.update_hourly_stats(hour, dir_clean, status)
+                        except Exception:
+                            pass
+
+                    # Setup quality stats (nowe!)
+                    if setup_grade:
+                        db.update_setup_quality_stats(setup_grade, dir_clean, status, profit_val)
+
+                # Factor weights + ensemble weights
                 if status in ("WIN", "LOSS"):
                     from src.self_learning import update_factor_weights
                     update_factor_weights(t_id, status)
 
-                    # Aktualizuj wagi ensemble na podstawie wyników modeli
+                    # Loss classification (nowe!)
+                    if status == "LOSS":
+                        try:
+                            from src.self_learning import classify_loss
+                            classify_loss(t_id)
+                        except Exception as e:
+                            logger.debug(f"Loss classification skipped: {e}")
+
+                    # Ensemble weights
                     try:
                         from src.ensemble_models import update_ensemble_weights
                         factors = db.get_trade_factors(t_id)
                         correct = []
                         incorrect = []
 
-                        # SMC — zawsze używane
                         if status == "WIN":
                             correct.append("smc")
                         else:
                             incorrect.append("smc")
 
-                        # ML — sprawdź czy czynniki ML były obecne i czy kierunek się zgadzał
-                        # Czynniki ML: ichimoku_bull/bear, rsi_divergence, engulfing, pin_bar, ml_ensemble_*
                         ml_factors_bull = any(factors.get(k) for k in ('ichimoku_bull', 'ml_ensemble_long'))
                         ml_factors_bear = any(factors.get(k) for k in ('ichimoku_bear', 'ml_ensemble_short'))
 
@@ -919,22 +1207,18 @@ async def resolve_trades_task(context):
                                 (ml_factors_bear and "SHORT" in dir_clean)
                             )
                             if status == "WIN" and ml_agreed_with_direction:
-                                correct.append("lstm")
-                                correct.append("xgb")
+                                correct.extend(["lstm", "xgb"])
                             elif status == "LOSS" and ml_agreed_with_direction:
-                                incorrect.append("lstm")
-                                incorrect.append("xgb")
+                                incorrect.extend(["lstm", "xgb"])
                             elif status == "WIN" and not ml_agreed_with_direction:
-                                # ML sygnalizowało przeciwny kierunek ale trade wygrał (SMC miało rację)
-                                incorrect.append("lstm")
-                                incorrect.append("xgb")
+                                incorrect.extend(["lstm", "xgb"])
 
                         if correct or incorrect:
                             update_ensemble_weights(correct, incorrect)
                     except Exception as e:
                         logger.debug(f"Ensemble weight update skipped: {e}")
 
-                    # Aktualizuj statystyki reżimu
+                    # Regime stats
                     try:
                         trow = db._query_one(
                             "SELECT session, factors FROM trades WHERE id = ?", (t_id,)
@@ -950,21 +1234,74 @@ async def resolve_trades_task(context):
                     except Exception as e:
                         logger.debug(f"Regime stats update skipped: {e}")
 
-                pattern = db._query_one("SELECT pattern FROM trades WHERE id = ?", (t_id,))
-                pattern = pattern[0] if pattern else None
+                # Pattern weight
+                pattern_row = db._query_one("SELECT pattern FROM trades WHERE id = ?", (t_id,))
+                pattern = pattern_row[0] if pattern_row else None
                 analysis_data = {"pattern": pattern}
                 from src.self_learning import update_pattern_weight
                 update_pattern_weight(analysis_data, status)
 
-                exit_price = float(tp) if status == "WIN" else float(sl)
+                # ═══════════════════════════════════════════════
+                # FILTER PERFORMANCE TRACKING
+                # ═══════════════════════════════════════════════
+                # Po rozwiązaniu trade'a: zaktualizuj accuracy filtrów
+                # które przepuściły ten trade (blocked=False)
+                try:
+                    import json as _jfp
+                    conf_row = db._query_one(
+                        "SELECT confirmation_data FROM trades WHERE id = ?", (t_id,))
+                    if conf_row and conf_row[0]:
+                        conf_data = _jfp.loads(conf_row[0])
+                        adjustments = conf_data.get('adjustments', {})
+                        trade_won = status == "WIN"
+                        # Każdy filtr który przepuścił ten trade
+                        for filter_name, mult_value in adjustments.items():
+                            db.update_filter_performance(
+                                filter_name, dir_clean,
+                                blocked=False, trade_won=trade_won)
+                except Exception as e:
+                    logger.debug(f"Filter performance update skipped: {e}")
 
-                # ← ZAPISUJE POWÓD I OKOLICZNOŚCI PRZEGRANEJ
+                # Walidacja ostatnich odrzuceń — sprawdź czy odrzucone setupy
+                # faktycznie by przegrały (na podstawie ceny po odrzuceniu)
+                try:
+                    recent_rejections = db._query("""
+                        SELECT id, direction, price, filter_name
+                        FROM rejected_setups
+                        WHERE would_have_won IS NULL
+                        AND timestamp > datetime('now', '-24 hours')
+                        LIMIT 20
+                    """)
+                    for rej in recent_rejections:
+                        rej_id, rej_dir, rej_price, rej_filter = rej
+                        if rej_price and current_price:
+                            rej_price_f = float(rej_price)
+                            # Prosty heurystyka: jeśli cena poszła w kierunku trade'a o > 0.3%
+                            # to odrzucenie było złe (trade by wygrał)
+                            price_change_pct = (current_price - rej_price_f) / rej_price_f
+                            if rej_dir == "LONG":
+                                would_win = price_change_pct > 0.003  # >0.3% w górę
+                            else:
+                                would_win = price_change_pct < -0.003  # >0.3% w dół
+                            db.validate_rejection(rej_id, would_win)
+                            if rej_filter:
+                                db.update_filter_performance(
+                                    rej_filter, rej_dir,
+                                    blocked=True, trade_won=would_win)
+                except Exception as e:
+                    logger.debug(f"Rejection validation skipped: {e}")
+
+                exit_price = float(tp) if status == "WIN" else sl_f
+
+                # Loss details
                 if status == "LOSS":
                     reason = (
-                        f"Cena dotknęła SL ({sl}$). "
-                        f"Wejście było na {entry}$, "
+                        f"Cena dotknęła SL ({sl_f:.2f}$). "
+                        f"Wejście było na {entry_f:.2f}$, "
                         f"kierunek: {direction}."
                     )
+                    if trailing_sl and float(trailing_sl) != original_sl:
+                        reason += f" [Trailing SL aktywny: original SL={original_sl:.2f}$]"
                     db.log_loss_details(
                         trade_id=t_id,
                         reason=reason,
@@ -972,19 +1309,33 @@ async def resolve_trades_task(context):
                     )
                     logger.info(f"📝 [RESOLVER] Zapisano okoliczności straty dla pozycji {t_id}.")
 
+                # ═══════════════════════════════════════════════
+                # POWIADOMIENIE
+                # ═══════════════════════════════════════════════
                 icon = "✅" if status == "WIN" else "❌"
+                profit_icon = "💰" if profit_val > 0 else "📉"
+                trailing_info = ""
+                if trailing_sl and float(trailing_sl or 0) != original_sl:
+                    trailing_events = db.get_trailing_stop_history(t_id)
+                    if trailing_events:
+                        trail_summary = " → ".join([f"{e[1]}" for e in trailing_events])
+                        trailing_info = f"\n📊 Trailing: {trail_summary}"
+
+                grade_info = f" | Grade: {setup_grade}" if setup_grade else ""
                 msg = (
                     f"{icon} *POZYCJA ROZSTRZYGNIĘTA!*\n"
-                    f"ID: `{t_id}` | Kierunek: {direction}\n"
-                    f"Wynik: *{status}*\n"
-                    f"Wejście: `{entry}` | Wyjście: `{exit_price}`"
+                    f"━━━━━━━━━━━━━━\n"
+                    f"ID: `{t_id}` | Kierunek: {direction}{grade_info}\n"
+                    f"Wynik: *{status}* {profit_icon} `{profit_val:+.2f}$`\n"
+                    f"Wejście: `{entry_f:.2f}$` | Wyjście: `{exit_price:.2f}$`"
+                    f"{trailing_info}"
                 )
                 await context.bot.send_message(
                     chat_id=CHAT_ID,
                     text=msg,
                     parse_mode="Markdown"
                 )
-                logger.info(f"💰 [RESOLVER] Zamknięto pozycję {t_id} jako {status}")
+                logger.info(f"💰 [RESOLVER] Zamknięto pozycję {t_id} jako {status} ({profit_val:+.2f}$)")
 
     except Exception as e:
         logger.error(f"🚨 [RESOLVER] Błąd podczas sprawdzania pozycji: {e}")

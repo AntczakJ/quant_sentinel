@@ -340,9 +340,9 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
         return None
 
 
-def predict_dqn_action(close_prices: np.ndarray, balance: float = 1.0, position: int = 0) -> Optional[int]:
+def predict_dqn_action(close_prices: np.ndarray, balance: float = 1.0, position: int = 0) -> Optional[dict]:
     """
-    Predykcja DQN: akcja (0=hold, 1=buy, 2=sell).
+    Predykcja DQN: akcja (0=hold, 1=buy, 2=sell) + confidence z Q-values.
     Uses ONNX Runtime DirectML (GPU) if available.
 
     Args:
@@ -351,7 +351,7 @@ def predict_dqn_action(close_prices: np.ndarray, balance: float = 1.0, position:
         position: Aktualna pozycja (-1=short, 0=none, 1=long)
 
     Returns:
-        int: Akcja (0, 1, lub 2), lub None jeśli błąd
+        dict: {'action': int, 'confidence': float} lub None jeśli błąd
     """
     try:
         dqn_loaded = _load_dqn()
@@ -361,21 +361,30 @@ def predict_dqn_action(close_prices: np.ndarray, balance: float = 1.0, position:
         model_type, model = dqn_loaded
 
         if model_type == "onnx":
-            # Build state manually (same logic as DQNAgent.build_state)
             from src.rl_agent import DQNAgent
             temp = DQNAgent.__new__(DQNAgent)
             state = DQNAgent.build_state(temp, close_prices, balance, position)
-            # ONNX inference on GPU
             from src.compute import onnx_predict
             q_values = onnx_predict(model, state.reshape(1, -1).astype(np.float32))
             if q_values is not None:
-                return int(np.argmax(q_values[0]))
+                action = int(np.argmax(q_values[0]))
+                # Confidence z softmax Q-values
+                q = q_values[0]
+                exp_q = np.exp(q - np.max(q))  # numerycznie stabilny softmax
+                softmax = exp_q / exp_q.sum()
+                confidence = float(softmax[action])
+                return {'action': action, 'confidence': confidence}
             return None
         else:
-            # Keras agent
+            # Keras agent — uzyskaj Q-values bezpośrednio
             state = model.build_state(close_prices, balance, position)
-            action = model.act(state)
-            return int(action)
+            q_values = model.model.predict(state.reshape(1, -1), verbose=0)
+            action = int(np.argmax(q_values[0]))
+            q = q_values[0]
+            exp_q = np.exp(q - np.max(q))
+            softmax = exp_q / exp_q.sum()
+            confidence = float(softmax[action])
+            return {'action': action, 'confidence': confidence}
 
     except Exception as e:
         logger.debug(f"DQN prediction error: {e}")
@@ -442,7 +451,7 @@ def update_ensemble_weights(correct_models: list, incorrect_models: list, learni
 
 
 def _persist_prediction(results: Dict):
-    """Zapisz predykcję ensemble do bazy dla post-hoc analizy."""
+    """Zapisz predykcję ensemble do bazy dla post-hoc analizy (z agreement + regime)."""
     try:
         from src.database import NewsDB
         db = NewsDB()
@@ -452,6 +461,25 @@ def _persist_prediction(results: Dict):
                 for kk, vv in v.items()}
             for k, v in results.get('predictions', {}).items()
         })
+
+        # Model agreement i regime data
+        agreement = results.get('model_agreement', {})
+        agreement_ratio = agreement.get('ratio', 0)
+        vol_pctile = results.get('volatility_percentile', 0.5)
+        vol_regime = "low" if vol_pctile < 0.25 else ("high" if vol_pctile > 0.75 else "normal")
+
+        # Rozszerzony zapis — dodajemy agreement i regime
+        predictions_json_ext = json.dumps({
+            'predictions': {
+                k: {kk: (str(vv) if not isinstance(vv, (int, float, bool, type(None))) else vv)
+                    for kk, vv in v.items()}
+                for k, v in results.get('predictions', {}).items()
+            },
+            'model_agreement': agreement,
+            'vol_regime': vol_regime,
+            'regime_weights': {k: round(v, 4) for k, v in results.get('regime_weights', {}).items()},
+        })
+
         db._execute("""
             INSERT INTO ml_predictions
             (lstm_pred, xgb_pred, dqn_action, ensemble_score, ensemble_signal, confidence, predictions_json)
@@ -463,7 +491,7 @@ def _persist_prediction(results: Dict):
             results['final_score'],
             results['ensemble_signal'],
             results['confidence'],
-            predictions_json
+            predictions_json_ext
         ))
     except Exception as e:
         logger.debug(f"Could not persist prediction: {e}")
@@ -598,12 +626,15 @@ def get_ensemble_prediction(
             "status": "unavailable"
         }
 
-    # --- 4. DQN Action ---
+    # --- 4. DQN Action (z dynamicznym confidence z Q-values) ---
     norm_balance = balance / initial_balance if initial_balance > 0 else 1.0
     close_prices = df['close'].tail(20).values
 
-    dqn_action = predict_dqn_action(close_prices, norm_balance, position)
-    if dqn_action is not None:
+    dqn_result = predict_dqn_action(close_prices, norm_balance, position)
+    if dqn_result is not None:
+        dqn_action = dqn_result['action']
+        dqn_confidence = dqn_result['confidence']
+
         # Konwertuj akcję DQN na signal (0-1)
         dqn_signal = {
             0: 0.5,   # hold = neutral
@@ -621,7 +652,7 @@ def get_ensemble_prediction(
             "value": dqn_signal,
             "action": dqn_action,
             "direction": dqn_direction,
-            "confidence": 0.7
+            "confidence": dqn_confidence  # dynamiczny confidence z softmax(Q-values)
         }
     else:
         results["predictions"]["dqn"] = {
@@ -633,13 +664,35 @@ def get_ensemble_prediction(
         }
 
     # ========== REGIME-DEPENDENT WEIGHTS ==========
-    # Adjust model weights based on volatility regime
+    # Adjust model weights based on volatility regime + historical per-regime accuracy
     try:
         vol_pctile = df['close'].pct_change().rolling(20).std().rank(pct=True).iloc[-1]
     except Exception:
         vol_pctile = 0.5
 
+    vol_regime = "low" if vol_pctile < 0.25 else ("high" if vol_pctile > 0.75 else "normal")
+
     regime_weights = dict(weights)  # copy
+
+    # Spróbuj załadować historyczną accuracy per-regime z bazy
+    try:
+        from src.database import NewsDB
+        _rdb = NewsDB()
+        regime_history = _rdb.get_model_accuracy_by_regime(vol_regime)
+        if len(regime_history) >= 10:
+            # Oblicz accuracy ensemble w tym regime
+            regime_wins = sum(1 for r in regime_history if r[1] == "WIN")
+            regime_total = len(regime_history)
+            regime_wr = regime_wins / regime_total
+
+            # Jeśli WR w tym regime jest niski, zwiększ próg ostrożności
+            if regime_wr < 0.40:
+                logger.info(f"⚠️ Ensemble: regime={vol_regime} WR={regime_wr:.0%} — ostrożniejsze wagi")
+                # Wzmocnij SMC (rule-based, stabilniejszy w złych reżimach)
+                regime_weights['smc'] = regime_weights.get('smc', 0.3) * 1.3
+    except Exception:
+        pass
+
     if vol_pctile < 0.25:
         # Low volatility — XGB (mean reversion) stronger, LSTM/DQN weaker
         regime_weights['xgb'] = regime_weights.get('xgb', 0.2) * 1.5
@@ -659,6 +712,10 @@ def get_ensemble_prediction(
     weighted_sum = 0
     confidence_sum = 0
     available_models = 0
+    # Model Agreement tracking
+    models_long = 0
+    models_short = 0
+    models_neutral = 0
 
     for model_name, weight in regime_weights.items():
         if model_name in results["predictions"]:
@@ -668,6 +725,13 @@ def get_ensemble_prediction(
                 confidence_sum += pred.get("confidence", 0.5) * weight
                 total_weight += weight
                 available_models += 1
+                # Count directional agreement
+                if pred["value"] > 0.55:
+                    models_long += 1
+                elif pred["value"] < 0.45:
+                    models_short += 1
+                else:
+                    models_neutral += 1
 
     # Znormalizuj wagi
     if total_weight > 0:
@@ -677,15 +741,42 @@ def get_ensemble_prediction(
         results["final_score"] = 0.5
         results["confidence"] = 0.0
 
-    # ========== OSTATECZNY SYGNAL (adjusted thresholds) ==========
-    # Progi: 0.58/0.42 zamiast 0.65/0.35 — mniej agresywne, wiecej sygnalow
-    # Confidence: 0.20 zamiast 0.40 — pozwala na exploratory signals
+    # ========== MODEL AGREEMENT FILTER ==========
+    # Sprawdź czy modele się zgadzają w kierunku
+    # Wymagamy >= 60% modeli w tym samym kierunku (ale nie blokujemy przy 2 modelach)
+    agreement_ratio = 0.0
+    agreement_direction = "NEUTRAL"
+    if available_models > 0:
+        long_ratio = models_long / available_models
+        short_ratio = models_short / available_models
+        agreement_ratio = max(long_ratio, short_ratio)
+        if long_ratio > short_ratio:
+            agreement_direction = "LONG"
+        elif short_ratio > long_ratio:
+            agreement_direction = "SHORT"
+
+    results["model_agreement"] = {
+        "ratio": round(agreement_ratio, 2),
+        "direction": agreement_direction,
+        "long": models_long,
+        "short": models_short,
+        "neutral": models_neutral,
+    }
+
+    # ========== OSTATECZNY SYGNAL ==========
+    # Confidence threshold: 0.25 (podniesiony z 0.20, ale nie za wysoko)
+    # Agreement: >= 50% modeli musi się zgadzać (łagodny filtr)
     if available_models == 0:
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "NEUTRAL"
-    elif results["confidence"] < 0.20:
+    elif results["confidence"] < 0.25:
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "UNCERTAIN"
+    elif agreement_ratio < 0.50 and available_models >= 3:
+        # Modele zbyt podzielone — nie ryzykuj
+        results["ensemble_signal"] = "CZEKAJ"
+        results["final_direction"] = "CONFLICTED"
+        logger.info(f"⚠️ Ensemble: modele podzielone (agreement={agreement_ratio:.0%}) — CZEKAJ")
     elif results["final_score"] > 0.58:
         results["ensemble_signal"] = "LONG"
         results["final_direction"] = "LONG"

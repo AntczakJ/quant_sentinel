@@ -177,6 +177,57 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
             "ensemble_data": ensemble_result
         }
 
+    # --- 1b. SETUP QUALITY SCORING ---
+    setup_quality = None
+    try:
+        from src.smc_engine import score_setup_quality
+        setup_quality = score_setup_quality(analysis_data, direction)
+        grade = setup_quality['grade']
+        logger.info(
+            f"📊 Setup Quality: {grade} ({setup_quality['score']}/100) | "
+            f"Factors: {list(setup_quality['factors_detail'].keys())}"
+        )
+
+        # Grade C = zbyt słaby setup → nie handluj
+        if grade == "C":
+            return {
+                "direction": "CZEKAJ",
+                "reason": f"Setup quality zbyt niski: {grade} ({setup_quality['score']}/100)",
+                "setup_quality": setup_quality
+            }
+
+        # Dynamiczny R:R i risk na podstawie grade
+        if grade == "A+":
+            tp_to_sl_ratio = max(tp_to_sl_ratio, 3.0)
+            risk_percent = min(risk_percent * 1.5, 2.0)  # max 2%
+        elif grade == "A":
+            tp_to_sl_ratio = max(tp_to_sl_ratio, 2.5)
+            # risk_percent bez zmian (default)
+        elif grade == "B":
+            tp_to_sl_ratio = max(tp_to_sl_ratio, 2.0)
+            risk_percent = risk_percent * 0.7  # zmniejszone ryzyko
+
+        logger.info(f"📊 Adjusted: R:R={tp_to_sl_ratio}, Risk={risk_percent:.2f}%")
+    except Exception as e:
+        logger.debug(f"Setup quality scoring skipped: {e}")
+
+    # --- Consecutive loss protection ---
+    try:
+        recent_trades = db._query(
+            "SELECT status FROM trades WHERE status IN ('WIN', 'LOSS') ORDER BY id DESC LIMIT 3"
+        )
+        consecutive_losses = 0
+        for t in recent_trades:
+            if t[0] == 'LOSS':
+                consecutive_losses += 1
+            else:
+                break
+        if consecutive_losses >= 2:
+            risk_percent *= 0.75  # 25% reduction after 2 consecutive losses
+            logger.info(f"⚠️ {consecutive_losses} strat z rzędu → risk zmniejszony do {risk_percent:.2f}%")
+    except Exception:
+        pass
+
     # --- 2. SL i TP (STRUCTURAL PLACEMENT) ---
     # Zasada: SL oparte na strukturze rynku (swing levels), nie na ATR od entry.
     # Minimalne R:R = 2.0:1 — nie otwieraj trade jesli R:R za niskie.
@@ -289,8 +340,12 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         'tp': tp,
         'entry': entry,
         'direction': direction,
-        'logic': logic
+        'logic': logic,
     }
+
+    # Dodaj setup quality data jeśli dostępna
+    if setup_quality:
+        result['setup_quality'] = setup_quality
 
     # Dodaj ML ensemble data jeśli dostępna
     if ensemble_result:

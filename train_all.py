@@ -350,9 +350,15 @@ def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
         if (episode + 1) % 50 == 0:
             avg = np.mean(scores[-20:])
             wr = info.get('win_rate', 0) * 100
+            trades = info.get('total_trades', 0)
+            wins = info.get('wins', 0)
+            losses = info.get('losses', 0)
+            be = info.get('breakevens', 0)
             lr_now = float(agent.model.optimizer.learning_rate)
             print(f"   Ep {episode+1}/{episodes}: avg_reward={avg:.4f}, "
-                  f"win_rate={wr:.0f}%, ε={agent.epsilon:.3f}, lr={lr_now:.5f}")
+                  f"WR={wr:.0f}% ({wins}W/{losses}L/{be}BE of {trades}), "
+                  f"bal=${info.get('balance', 0):.0f}, "
+                  f"e={agent.epsilon:.3f}, lr={lr_now:.5f}")
 
         # Early stop: no improvement for `patience` episodes
         if no_improve_count >= patience and episode >= 100:

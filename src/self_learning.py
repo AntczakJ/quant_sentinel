@@ -32,7 +32,7 @@ def update_pattern_weight(analysis_data: dict, outcome: str):
 def get_pattern_adjustment(analysis_data: dict) -> float:
     """
     Zwraca współczynnik korekty (0.5-1.5) na podstawie historycznej win rate wzorca.
-    Im wyższa win rate, tym większy współczynnik.
+    Kontekstowy: uwzględnia sesję, godzinę i reżim makro.
     """
     db = NewsDB()
     pattern = analysis_data.get('pattern')
@@ -41,8 +41,67 @@ def get_pattern_adjustment(analysis_data: dict) -> float:
     stats = db.get_pattern_stats(pattern)
     if stats['count'] < 5:
         return 1.0  # za mało danych
-    # Współczynnik: win_rate * 1.5 (max 1.5, min 0.5)
+
+    # Bazowy współczynnik z globalnego WR
     adj = stats['win_rate'] * 1.5
+
+    # --- KOREKTA KONTEKSTOWA: sesja ---
+    try:
+        import datetime
+        now = datetime.datetime.now()
+        hour = now.hour
+        if 0 <= hour < 8:
+            current_session = "Asia"
+        elif 8 <= hour < 16:
+            current_session = "London"
+        else:
+            current_session = "NewYork"
+
+        session_stats = db.get_session_stats(pattern)
+        for ss in session_stats:
+            # ss = (pattern, session, count, wins, losses, win_rate)
+            if ss[1] == current_session and ss[2] >= 5:
+                session_wr = ss[5]
+                # Jeśli pattern w tej sesji ma lepszy/gorszy WR niż globalny, skoryguj
+                if session_wr > stats['win_rate'] + 0.1:
+                    adj *= 1.15  # bonus za dobrą sesję
+                elif session_wr < stats['win_rate'] - 0.1:
+                    adj *= 0.85  # kara za złą sesję
+                break
+    except Exception:
+        pass
+
+    # --- KOREKTA KONTEKSTOWA: godzina ---
+    try:
+        hourly = db.get_hourly_stats(hour)
+        direction = pattern.split('_')[0] if '_' in pattern else None
+        if direction and hourly:
+            for h in hourly:
+                # h = (hour, direction, count, wins, losses, win_rate)
+                if h[1] == direction and h[2] >= 5:
+                    hourly_wr = h[5]
+                    if hourly_wr < 0.35:
+                        adj *= 0.7  # godzina z niskim WR
+                    elif hourly_wr > 0.65:
+                        adj *= 1.2  # godzina z wysokim WR
+                    break
+    except Exception:
+        pass
+
+    # --- KOREKTA KONTEKSTOWA: setup grade historyczny ---
+    try:
+        grade_stats = db.get_setup_quality_stats()
+        for gs in grade_stats:
+            # gs = (grade, direction, count, wins, losses, win_rate, avg_profit)
+            if gs[2] >= 10:  # minimum 10 trade'ów
+                if gs[5] > 0.65:
+                    # Grade z dobrym WR → bonus jeśli nasz pattern pasuje
+                    pass  # grade jest oceniany osobno w score_setup_quality
+                elif gs[5] < 0.35 and gs[0] == "B":
+                    adj *= 0.9  # Grade B ma niski WR historycznie
+    except Exception:
+        pass
+
     return max(0.5, min(1.5, adj))
 
 
@@ -450,6 +509,110 @@ async def auto_analyze_and_learn(context):
         except:
             # Fallback jeśli logger nie dostępny
             print(f"❌ [AUTO-LEARN] Błąd: {e}")
+
+
+def classify_loss(trade_id: int) -> str:
+    """
+    Klasyfikuje typ straty na podstawie condition_at_loss i parametrów trade'a.
+    Zwraca pattern_type: 'sl_too_tight', 'wrong_direction', 'timing', 'news_spike', 'unknown'.
+    Zapisuje do loss_patterns w bazie.
+    """
+    db = NewsDB()
+    row = db._query_one(
+        "SELECT direction, entry, sl, tp, condition_at_loss, factors, rsi, trend FROM trades WHERE id = ?",
+        (trade_id,)
+    )
+    if not row:
+        return "unknown"
+
+    direction, entry, sl, tp, condition, factors_json, rsi, trend = row
+    import json
+    factors = json.loads(factors_json) if factors_json else {}
+
+    entry_f = float(entry or 0)
+    sl_f = float(sl or 0)
+    tp_f = float(tp or 0)
+    sl_dist = abs(entry_f - sl_f) if entry_f and sl_f else 0
+    tp_dist = abs(entry_f - tp_f) if entry_f and tp_f else 0
+
+    pattern_type = "unknown"
+    description = ""
+
+    # --- KLASYFIKACJA ---
+
+    # 1. SL za ciasny — cena prawie dotarła do TP ale cofnęła się do SL
+    # Indykator: TP daleko, ale SL bliski (niski R:R efektywny)
+    if sl_dist > 0 and tp_dist > 0:
+        rr = tp_dist / sl_dist
+        if rr > 3.0 and sl_dist < 8.0:
+            pattern_type = "sl_too_tight"
+            description = f"SL={sl_dist:.1f}$ za ciasny przy TP={tp_dist:.1f}$ (R:R={rr:.1f})"
+
+    # 2. Wrong direction — trend i direction się nie zgadzają
+    if direction and trend:
+        dir_clean = str(direction).strip().upper()
+        if ("LONG" in dir_clean and trend == "bear") or ("SHORT" in dir_clean and trend == "bull"):
+            pattern_type = "wrong_direction"
+            description = f"Trade {dir_clean} przeciw trendowi {trend}"
+
+    # 3. Timing — wejście w złej sesji / godzinie
+    # Sprawdzamy condition_at_loss po RSI extreme
+    if condition and rsi:
+        rsi_val = float(rsi) if rsi else 50
+        if rsi_val > 75 and "LONG" in str(direction).upper():
+            pattern_type = "timing"
+            description = f"LONG przy RSI={rsi_val:.0f} (wykupiony)"
+        elif rsi_val < 25 and "SHORT" in str(direction).upper():
+            pattern_type = "timing"
+            description = f"SHORT przy RSI={rsi_val:.0f} (wyprzedany)"
+
+    # 4. Brak konfluencji — za mało czynników
+    if len(factors) <= 2:
+        pattern_type = "low_confluence"
+        description = f"Tylko {len(factors)} czynników: {list(factors.keys())}"
+
+    # Zapisz do bazy
+    dir_clean = str(direction).strip().upper() if direction else "UNKNOWN"
+    db.update_loss_pattern(pattern_type, dir_clean, description)
+    logger.info(f"📝 Loss classified: {pattern_type} — {description}")
+
+    return pattern_type
+
+
+def check_loss_pattern_match(analysis_data: dict, direction: str) -> dict | None:
+    """
+    Sprawdza czy obecne warunki rynkowe pasują do historycznych wzorców strat.
+    Jeśli pasują do wzorca z >= 3 wystąpieniami → zwraca warning.
+    Nie blokuje trade'a (to robi caller), tylko informuje.
+
+    Returns:
+        dict z pattern_type i count, lub None jeśli nie znaleziono dopasowania
+    """
+    db = NewsDB()
+    loss_patterns = db.get_loss_patterns(direction, min_count=3)
+    if not loss_patterns:
+        return None
+
+    rsi = analysis_data.get('rsi', 50)
+    trend = analysis_data.get('trend', '')
+
+    for pattern_type, pat_dir, count, description in loss_patterns:
+        # Sprawdź czy obecne warunki pasują
+        if pattern_type == "wrong_direction":
+            if (direction == "LONG" and trend == "bear") or \
+               (direction == "SHORT" and trend == "bull"):
+                return {"pattern_type": pattern_type, "count": count, "desc": description}
+
+        elif pattern_type == "timing":
+            if (direction == "LONG" and rsi > 72) or \
+               (direction == "SHORT" and rsi < 28):
+                return {"pattern_type": pattern_type, "count": count, "desc": description}
+
+        elif pattern_type == "low_confluence":
+            # Ten pattern jest sprawdzany przez setup quality scoring
+            pass
+
+    return None
 
 
 def update_factor_weights(trade_id, outcome):
