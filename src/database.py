@@ -138,10 +138,53 @@ class NewsDB:
         self._execute("""CREATE TABLE IF NOT EXISTS news_sentiment (
             id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             headline TEXT, sentiment TEXT, score REAL, source TEXT)""")
+        # ── NOWE TABELE: Setup Quality, Hourly Stats, Trailing Stop ──
+        self._execute("""CREATE TABLE IF NOT EXISTS setup_quality_stats (
+            grade TEXT NOT NULL, direction TEXT NOT NULL,
+            count INTEGER DEFAULT 0, wins INTEGER DEFAULT 0, losses INTEGER DEFAULT 0,
+            win_rate REAL DEFAULT 0, avg_profit REAL DEFAULT 0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(grade, direction))""")
+        self._execute("""CREATE TABLE IF NOT EXISTS hourly_stats (
+            hour INTEGER NOT NULL, direction TEXT NOT NULL,
+            count INTEGER DEFAULT 0, wins INTEGER DEFAULT 0, losses INTEGER DEFAULT 0,
+            win_rate REAL DEFAULT 0, last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(hour, direction))""")
+        self._execute("""CREATE TABLE IF NOT EXISTS trailing_stop_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, trade_id INTEGER NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            event TEXT NOT NULL, old_sl REAL, new_sl REAL,
+            price_at_event REAL, r_multiple REAL)""")
+        self._execute("""CREATE TABLE IF NOT EXISTS loss_patterns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern_type TEXT NOT NULL, direction TEXT,
+            count INTEGER DEFAULT 0, description TEXT,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(pattern_type, direction))""")
+        # ── REJECTED SETUPS — śledzenie odrzuconych trade'ów ──
+        self._execute("""CREATE TABLE IF NOT EXISTS rejected_setups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            timeframe TEXT, direction TEXT, price REAL,
+            rejection_reason TEXT, filter_name TEXT,
+            confluence_count INTEGER, rsi REAL, trend TEXT,
+            pattern TEXT, atr REAL,
+            would_have_won INTEGER DEFAULT NULL)""")
+        # ── FILTER PERFORMANCE — skuteczność każdego filtra ──
+        self._execute("""CREATE TABLE IF NOT EXISTS filter_performance (
+            filter_name TEXT NOT NULL, direction TEXT NOT NULL,
+            correct_blocks INTEGER DEFAULT 0, incorrect_blocks INTEGER DEFAULT 0,
+            correct_passes INTEGER DEFAULT 0, incorrect_passes INTEGER DEFAULT 0,
+            accuracy REAL DEFAULT 0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(filter_name, direction))""")
 
     def migrate(self):
         needed = {'pattern': 'TEXT', 'failure_reason': 'TEXT', 'condition_at_loss': 'TEXT',
-                  'factors': 'TEXT', 'session': 'TEXT', 'lot': 'REAL', 'profit': 'REAL'}
+                  'factors': 'TEXT', 'session': 'TEXT', 'lot': 'REAL', 'profit': 'REAL',
+                  'setup_grade': 'TEXT', 'setup_score': 'REAL', 'trailing_sl': 'REAL',
+                  'confirmation_data': 'TEXT', 'model_agreement': 'REAL',
+                  'vol_regime': 'TEXT'}
         for col, typ in needed.items():
             try:
                 with _db_lock:
@@ -464,6 +507,224 @@ class NewsDB:
 
     def get_recent_ml_predictions(self, limit: int = 20) -> list:
         return self._query("SELECT id, timestamp, lstm_pred, xgb_pred, dqn_action, ensemble_score, ensemble_signal, confidence FROM ml_predictions ORDER BY timestamp DESC LIMIT ?", (limit,))
+
+    # ── SETUP QUALITY STATS ──
+
+    def update_setup_quality_stats(self, grade: str, direction: str, outcome: str, profit: float = 0):
+        is_win = 1 if outcome in ("WIN", "PROFIT") else 0
+        is_loss = 1 if outcome not in ("WIN", "PROFIT") else 0
+        self._execute("""
+            INSERT INTO setup_quality_stats (grade, direction, count, wins, losses, win_rate, avg_profit)
+            VALUES (?, ?, 1, ?, ?, ?, ?)
+            ON CONFLICT(grade, direction) DO UPDATE SET
+                count = count + 1,
+                wins = wins + ?,
+                losses = losses + ?,
+                win_rate = CAST(wins + ? AS REAL) / (count + 1),
+                avg_profit = (avg_profit * count + ?) / (count + 1),
+                last_updated = CURRENT_TIMESTAMP
+        """, (grade, direction, is_win, is_loss, float(is_win), profit,
+              is_win, is_loss, is_win, profit))
+
+    def get_setup_quality_stats(self, grade: str = None) -> list:
+        if grade:
+            return self._query("SELECT grade, direction, count, wins, losses, win_rate, avg_profit FROM setup_quality_stats WHERE grade = ?", (grade,))
+        return self._query("SELECT grade, direction, count, wins, losses, win_rate, avg_profit FROM setup_quality_stats ORDER BY grade, direction")
+
+    # ── HOURLY STATS ──
+
+    def update_hourly_stats(self, hour: int, direction: str, outcome: str):
+        is_win = 1 if outcome in ("WIN", "PROFIT") else 0
+        is_loss = 1 if outcome not in ("WIN", "PROFIT") else 0
+        self._execute("""
+            INSERT INTO hourly_stats (hour, direction, count, wins, losses, win_rate)
+            VALUES (?, ?, 1, ?, ?, ?)
+            ON CONFLICT(hour, direction) DO UPDATE SET
+                count = count + 1,
+                wins = wins + ?,
+                losses = losses + ?,
+                win_rate = CAST(wins + ? AS REAL) / (count + 1),
+                last_updated = CURRENT_TIMESTAMP
+        """, (hour, direction, is_win, is_loss, float(is_win),
+              is_win, is_loss, is_win))
+
+    def get_hourly_stats(self, hour: int = None) -> list:
+        if hour is not None:
+            return self._query("SELECT hour, direction, count, wins, losses, win_rate FROM hourly_stats WHERE hour = ?", (hour,))
+        return self._query("SELECT hour, direction, count, wins, losses, win_rate FROM hourly_stats ORDER BY hour")
+
+    def get_bad_hours(self, min_trades: int = 5, max_winrate: float = 0.35) -> list:
+        """Zwraca godziny z win_rate < max_winrate (historycznie przegrywające)."""
+        return self._query(
+            "SELECT hour, direction, win_rate, count FROM hourly_stats WHERE count >= ? AND win_rate < ? ORDER BY win_rate ASC",
+            (min_trades, max_winrate))
+
+    # ── TRAILING STOP LOG ──
+
+    def log_trailing_stop_event(self, trade_id: int, event: str, old_sl: float, new_sl: float, price: float, r_multiple: float):
+        self._execute(
+            "INSERT INTO trailing_stop_log (trade_id, event, old_sl, new_sl, price_at_event, r_multiple) VALUES (?, ?, ?, ?, ?, ?)",
+            (trade_id, event, old_sl, new_sl, price, r_multiple))
+
+    def get_trailing_stop_history(self, trade_id: int) -> list:
+        return self._query(
+            "SELECT timestamp, event, old_sl, new_sl, price_at_event, r_multiple FROM trailing_stop_log WHERE trade_id = ? ORDER BY timestamp",
+            (trade_id,))
+
+    # ── LOSS PATTERNS ──
+
+    def update_loss_pattern(self, pattern_type: str, direction: str, description: str = ""):
+        self._execute("""
+            INSERT INTO loss_patterns (pattern_type, direction, count, description)
+            VALUES (?, ?, 1, ?)
+            ON CONFLICT(pattern_type, direction) DO UPDATE SET
+                count = count + 1,
+                description = excluded.description,
+                last_seen = CURRENT_TIMESTAMP
+        """, (pattern_type, direction, description))
+
+    def get_loss_patterns(self, direction: str = None, min_count: int = 2) -> list:
+        if direction:
+            return self._query(
+                "SELECT pattern_type, direction, count, description FROM loss_patterns WHERE direction = ? AND count >= ? ORDER BY count DESC",
+                (direction, min_count))
+        return self._query(
+            "SELECT pattern_type, direction, count, description FROM loss_patterns WHERE count >= ? ORDER BY count DESC",
+            (min_count,))
+
+    def get_trade_by_id(self, trade_id: int):
+        return self._query_one("SELECT * FROM trades WHERE id = ?", (trade_id,))
+
+    def update_trade_trailing_sl(self, trade_id: int, new_sl: float):
+        self._execute("UPDATE trades SET trailing_sl = ?, sl = ? WHERE id = ?", (new_sl, new_sl, trade_id))
+
+    def update_trade_setup_grade(self, trade_id: int, grade: str, score: float):
+        self._execute("UPDATE trades SET setup_grade = ?, setup_score = ? WHERE id = ?", (grade, score, trade_id))
+
+    def get_open_trades_extended(self):
+        """Zwraca otwarte trade'y z rozszerzonymi danymi (do trailing stop)."""
+        return self._query(
+            "SELECT id, direction, entry, sl, tp, trailing_sl, setup_grade, factors FROM trades WHERE status = 'OPEN'"
+        )
+
+    # ── REJECTED SETUPS ──
+
+    def log_rejected_setup(self, timeframe: str, direction: str, price: float,
+                           rejection_reason: str, filter_name: str,
+                           confluence_count: int = 0, rsi: float = 0,
+                           trend: str = "", pattern: str = "", atr: float = 0):
+        self._execute("""
+            INSERT INTO rejected_setups
+            (timeframe, direction, price, rejection_reason, filter_name,
+             confluence_count, rsi, trend, pattern, atr)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (timeframe, direction, price, rejection_reason, filter_name,
+              confluence_count, rsi, trend, pattern, atr))
+
+    def get_recent_rejections(self, filter_name: str = None, limit: int = 50) -> list:
+        if filter_name:
+            return self._query(
+                "SELECT id, timestamp, timeframe, direction, price, rejection_reason, filter_name, pattern "
+                "FROM rejected_setups WHERE filter_name = ? ORDER BY id DESC LIMIT ?",
+                (filter_name, limit))
+        return self._query(
+            "SELECT id, timestamp, timeframe, direction, price, rejection_reason, filter_name, pattern "
+            "FROM rejected_setups ORDER BY id DESC LIMIT ?", (limit,))
+
+    def validate_rejection(self, rejection_id: int, would_have_won: bool):
+        """Po fakcie sprawdź czy odrzucenie było trafne."""
+        self._execute(
+            "UPDATE rejected_setups SET would_have_won = ? WHERE id = ?",
+            (1 if would_have_won else 0, rejection_id))
+
+    def get_filter_rejection_accuracy(self, filter_name: str) -> dict:
+        """Zwraca accuracy filtra na podstawie walidacji odrzuceń."""
+        row = self._query_one("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN would_have_won = 0 THEN 1 ELSE 0 END) as correct_rejections,
+                SUM(CASE WHEN would_have_won = 1 THEN 1 ELSE 0 END) as missed_wins
+            FROM rejected_setups
+            WHERE filter_name = ? AND would_have_won IS NOT NULL
+        """, (filter_name,))
+        if not row or not row[0]:
+            return {"total": 0, "accuracy": 0, "correct": 0, "missed_wins": 0}
+        total, correct, missed = row
+        return {
+            "total": total,
+            "accuracy": round(correct / total, 3) if total > 0 else 0,
+            "correct": correct or 0,
+            "missed_wins": missed or 0,
+        }
+
+    # ── FILTER PERFORMANCE ──
+
+    def update_filter_performance(self, filter_name: str, direction: str,
+                                  blocked: bool, trade_won: bool):
+        """Aktualizuj accuracy filtra po rozwiązaniu trade'a.
+
+        Logika:
+          blocked=True,  trade_won=False → correct_block  (filtr słusznie zablokował)
+          blocked=True,  trade_won=True  → incorrect_block (filtr zablokował winnera)
+          blocked=False, trade_won=True  → correct_pass   (filtr słusznie przepuścił)
+          blocked=False, trade_won=False → incorrect_pass  (filtr przepuścił losera)
+        """
+        cb = 1 if (blocked and not trade_won) else 0
+        ib = 1 if (blocked and trade_won) else 0
+        cp = 1 if (not blocked and trade_won) else 0
+        ip = 1 if (not blocked and not trade_won) else 0
+
+        self._execute("""
+            INSERT INTO filter_performance (filter_name, direction,
+                correct_blocks, incorrect_blocks, correct_passes, incorrect_passes, accuracy)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
+            ON CONFLICT(filter_name, direction) DO UPDATE SET
+                correct_blocks = correct_blocks + ?,
+                incorrect_blocks = incorrect_blocks + ?,
+                correct_passes = correct_passes + ?,
+                incorrect_passes = incorrect_passes + ?,
+                accuracy = CAST(correct_blocks + ? + correct_passes + ? AS REAL) /
+                           MAX(correct_blocks + ? + incorrect_blocks + ? + correct_passes + ? + incorrect_passes + ?, 1),
+                last_updated = CURRENT_TIMESTAMP
+        """, (filter_name, direction, cb, ib, cp, ip,
+              cb, ib, cp, ip,
+              cb, cp,
+              cb, ib, cp, ip))
+
+    def get_filter_accuracy(self, filter_name: str = None) -> list:
+        if filter_name:
+            return self._query(
+                "SELECT filter_name, direction, correct_blocks, incorrect_blocks, "
+                "correct_passes, incorrect_passes, accuracy FROM filter_performance WHERE filter_name = ?",
+                (filter_name,))
+        return self._query(
+            "SELECT filter_name, direction, correct_blocks, incorrect_blocks, "
+            "correct_passes, incorrect_passes, accuracy FROM filter_performance ORDER BY accuracy DESC")
+
+    # ── TRADE CONFIRMATION DATA ──
+
+    def update_trade_confirmation(self, trade_id: int, confirmation_data: str,
+                                  model_agreement: float, vol_regime: str):
+        self._execute(
+            "UPDATE trades SET confirmation_data = ?, model_agreement = ?, vol_regime = ? WHERE id = ?",
+            (confirmation_data, model_agreement, vol_regime, trade_id))
+
+    # ── PER-REGIME MODEL ACCURACY ──
+
+    def get_model_accuracy_by_regime(self, regime: str = None) -> list:
+        """Zwraca accuracy modeli per regime (z ml_predictions + trades)."""
+        sql = """
+            SELECT mp.ensemble_signal, t.status, t.vol_regime,
+                   mp.confidence, mp.ensemble_score
+            FROM ml_predictions mp
+            JOIN trades t ON mp.trade_id = t.id
+            WHERE t.status IN ('WIN', 'LOSS')
+        """
+        params = ()
+        if regime:
+            sql += " AND t.vol_regime = ?"
+            params = (regime,)
+        return self._query(sql, params)
 
     def get_trade_performance_metrics(self) -> dict:
         rows = self._query("SELECT status, profit FROM trades WHERE status IN ('WIN', 'LOSS', 'PROFIT') ORDER BY id ASC")

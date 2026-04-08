@@ -983,3 +983,177 @@ def get_mtf_confluence(symbol: str = "XAU/USD") -> dict:
         "timeframes": tf_breakdown,
         "session": get_active_session(),
     }
+
+
+# ==================== SETUP QUALITY SCORING ====================
+
+def score_setup_quality(analysis: dict, direction: str) -> dict:
+    """
+    Ocenia jakość setupu tradingowego na podstawie wagowanych konfluencji.
+
+    Zwraca:
+        {
+            'grade': 'A+' | 'A' | 'B' | 'C',
+            'score': float (0-100),
+            'factors_detail': dict,  # per-factor breakdown
+            'risk_mult': float,      # mnożnik ryzyka (0.5-1.5)
+            'target_rr': float,      # sugerowany R:R
+        }
+
+    Progi (zbalansowane — nie za rygorystyczne):
+        A+ : score >= 75  → pełna pozycja, agresywny TP
+        A  : score >= 55  → standardowa pozycja
+        B  : score >= 35  → zmniejszona pozycja
+        C  : score < 35   → pominięty (zbyt ryzykowny)
+    """
+    score = 0.0
+    factors_detail = {}
+
+    # --- CZYNNIKI STRUKTURALNE (najważniejsze) ---
+
+    # Liquidity Grab + MSS — premium setup (max 25 pkt)
+    has_grab_mss = analysis.get('liquidity_grab') and analysis.get('mss')
+    if has_grab_mss:
+        grab_dir = analysis.get('liquidity_grab_dir', '')
+        if (direction == "LONG" and grab_dir == "bullish") or \
+           (direction == "SHORT" and grab_dir == "bearish"):
+            score += 25
+            factors_detail['grab_mss'] = 25
+        else:
+            score += 8  # grab+mss w przeciwnym kierunku — mniejsza wartość
+            factors_detail['grab_mss_opposite'] = 8
+
+    # DBR/RBD — silny pattern (max 20 pkt)
+    dbr_type = analysis.get('dbr_rbd_type')
+    if (direction == "LONG" and dbr_type == "DBR") or \
+       (direction == "SHORT" and dbr_type == "RBD"):
+        score += 20
+        factors_detail['dbr_rbd'] = 20
+
+    # BOS — Break of Structure (max 12 pkt)
+    if (direction == "LONG" and analysis.get('bos_bullish')) or \
+       (direction == "SHORT" and analysis.get('bos_bearish')):
+        score += 12
+        factors_detail['bos'] = 12
+
+    # CHoCH — Change of Character (max 15 pkt)
+    if (direction == "LONG" and analysis.get('choch_bullish')) or \
+       (direction == "SHORT" and analysis.get('choch_bearish')):
+        score += 15
+        factors_detail['choch'] = 15
+
+    # --- CZYNNIKI POTWIERDZAJĄCE ---
+
+    # FVG w kierunku (max 10 pkt)
+    fvg_type = analysis.get('fvg_type')
+    if (direction == "LONG" and fvg_type == "bullish") or \
+       (direction == "SHORT" and fvg_type == "bearish"):
+        score += 10
+        factors_detail['fvg'] = 10
+
+    # Order Block (max 8 pkt)
+    ob_price = analysis.get('ob_price')
+    price = analysis.get('price', 0)
+    if ob_price and price:
+        if (direction == "LONG" and ob_price < price) or \
+           (direction == "SHORT" and ob_price > price):
+            score += 8
+            factors_detail['order_block'] = 8
+
+    # RSI Divergence (max 10 pkt)
+    if (direction == "LONG" and analysis.get('rsi_div_bull')) or \
+       (direction == "SHORT" and analysis.get('rsi_div_bear')):
+        score += 10
+        factors_detail['rsi_divergence'] = 10
+
+    # RSI w optymalnej strefie (max 5 pkt)
+    rsi = analysis.get('rsi', 50)
+    if direction == "LONG" and 35 <= rsi <= 55:
+        score += 5
+        factors_detail['rsi_optimal'] = 5
+    elif direction == "SHORT" and 45 <= rsi <= 65:
+        score += 5
+        factors_detail['rsi_optimal'] = 5
+
+    # --- CZYNNIKI DODATKOWE ---
+
+    # Engulfing pattern (max 6 pkt)
+    eng = analysis.get('engulfing', False)
+    if (direction == "LONG" and eng == 'bullish') or \
+       (direction == "SHORT" and eng == 'bearish'):
+        score += 6
+        factors_detail['engulfing'] = 6
+
+    # Pin bar (max 5 pkt)
+    pb = analysis.get('pin_bar', False)
+    if (direction == "LONG" and pb == 'bullish') or \
+       (direction == "SHORT" and pb == 'bearish'):
+        score += 5
+        factors_detail['pin_bar'] = 5
+
+    # Ichimoku cloud (max 6 pkt)
+    if (direction == "LONG" and analysis.get('ichimoku_above_cloud')) or \
+       (direction == "SHORT" and analysis.get('ichimoku_below_cloud')):
+        score += 6
+        factors_detail['ichimoku'] = 6
+
+    # Makro regime alignment (max 8 pkt)
+    macro = analysis.get('macro_regime', 'neutralny')
+    if (direction == "LONG" and macro == "zielony") or \
+       (direction == "SHORT" and macro == "czerwony"):
+        score += 8
+        factors_detail['macro'] = 8
+
+    # Killzone bonus (max 4 pkt)
+    if analysis.get('is_killzone'):
+        score += 4
+        factors_detail['killzone'] = 4
+
+    # --- DYNAMICZNA KOREKTA Z BAZY (historyczna skuteczność grade'a) ---
+    try:
+        from src.database import NewsDB
+        db = NewsDB()
+        # Korekta per-pattern z self-learning
+        pattern = f"{direction}_{analysis.get('structure', 'unknown')}_{fvg_type}"
+        stats = db.get_pattern_stats(pattern)
+        if stats['count'] >= 10:
+            # Jeśli pattern historycznie ma >60% WR → bonus, <40% → kara
+            if stats['win_rate'] > 0.60:
+                bonus = min(10, (stats['win_rate'] - 0.5) * 40)
+                score += bonus
+                factors_detail['history_bonus'] = round(bonus, 1)
+            elif stats['win_rate'] < 0.40:
+                penalty = min(10, (0.5 - stats['win_rate']) * 40)
+                score -= penalty
+                factors_detail['history_penalty'] = round(-penalty, 1)
+    except Exception:
+        pass
+
+    # Clamp score to 0-100
+    score = max(0, min(100, score))
+
+    # --- GRADE ASSIGNMENT ---
+    if score >= 75:
+        grade = "A+"
+        risk_mult = 1.5
+        target_rr = 3.0
+    elif score >= 55:
+        grade = "A"
+        risk_mult = 1.0
+        target_rr = 2.5
+    elif score >= 35:
+        grade = "B"
+        risk_mult = 0.7
+        target_rr = 2.0
+    else:
+        grade = "C"
+        risk_mult = 0.0  # nie handluj
+        target_rr = 0.0
+
+    return {
+        'grade': grade,
+        'score': round(score, 1),
+        'factors_detail': factors_detail,
+        'risk_mult': risk_mult,
+        'target_rr': target_rr,
+    }

@@ -21,42 +21,78 @@ from src.compute import detect_gpu, get_tf_batch_size
 
 class TradingEnv:
     """
-    Środowisko tradingowe z ulepszonym reward shaping:
-    - Nagroda za zrealizowany P/L (nie za trzymanie)
-    - Kara za brak akcji (zachęta do aktywnego tradingu)
-    - Kara za zbyt częste zmiany pozycji (overtrading)
-    - Sharpe-style normalizacja
+    Srodowisko tradingowe z realistycznym SL/TP opartym na ATR.
 
-    Optimized: prices pre-cached as numpy array — eliminates pandas overhead
-    in _state() (called ~600k times during training).
+    Kluczowe roznice vs poprzednia wersja:
+      - Agent NIE decyduje kiedy zamknac — pozycja zamyka sie automatycznie
+        na SL lub TP, tak jak w live systemie
+      - SL = 1.5 * ATR, TP = SL * target_rr (domyslnie 2.5)
+      - Agent uczy sie KIEDY WEJSC i W JAKIM KIERUNKU, nie kiedy wyjsc
+      - Win = cena dotarla do TP, Loss = cena dotarla do SL
+      - Trailing stop: po 1R → breakeven, po 1.5R → lock 1R
+
+    Actions:
+      0 = HOLD (czekaj / nie rob nic)
+      1 = BUY  (otworz LONG z automatycznym SL/TP)
+      2 = SELL (otworz SHORT z automatycznym SL/TP)
+
+    Optimized: prices pre-cached as numpy array.
     """
-    def __init__(self, data, initial_balance=10000, transaction_cost=0.001):
+    def __init__(self, data, initial_balance=10000, transaction_cost=0.001,
+                 atr_period=14, sl_atr_mult=1.5, target_rr=2.5):
         self.data = data
-        # Pre-cache prices as contiguous numpy array (avoids .iloc[] on every step)
         self._prices = np.ascontiguousarray(data['close'].values, dtype=np.float64)
+        self._highs = np.ascontiguousarray(data['high'].values, dtype=np.float64) if 'high' in data.columns else self._prices
+        self._lows = np.ascontiguousarray(data['low'].values, dtype=np.float64) if 'low' in data.columns else self._prices
         self._n = len(self._prices)
         self.initial_balance = initial_balance
         self.transaction_cost = transaction_cost
-        # Pre-allocate state buffer (avoids np.concatenate on every step)
+        self.atr_period = atr_period
+        self.sl_atr_mult = sl_atr_mult
+        self.target_rr = target_rr
         self._state_buf = np.zeros(22, dtype=np.float64)
+        # Pre-compute ATR for entire dataset
+        self._atr = self._compute_atr()
         self.reset()
+
+    def _compute_atr(self):
+        """Pre-compute ATR array for the entire dataset."""
+        n = len(self._prices)
+        tr = np.zeros(n)
+        for i in range(1, n):
+            tr[i] = max(
+                self._highs[i] - self._lows[i],
+                abs(self._highs[i] - self._prices[i - 1]),
+                abs(self._lows[i] - self._prices[i - 1])
+            )
+        # Rolling mean ATR
+        atr = np.zeros(n)
+        for i in range(self.atr_period, n):
+            atr[i] = np.mean(tr[i - self.atr_period + 1:i + 1])
+        # Fill early values with first valid ATR
+        first_valid = atr[self.atr_period] if self.atr_period < n else 1.0
+        atr[:self.atr_period] = first_valid
+        return atr
 
     def reset(self):
         self.balance = self.initial_balance
-        self.position = 0
+        self.position = 0       # 0=flat, 1=long, -1=short
         self.entry_price = 0
+        self.sl_price = 0       # automatyczny stop loss
+        self.tp_price = 0       # automatyczny take profit
+        self.trailing_sl = 0    # trailing stop level
         self.index = 0
         self.done = False
         self.total_trades = 0
         self.wins = 0
         self.losses = 0
+        self.breakevens = 0
         self.rewards_history = []
         self.hold_steps = 0
+        self.consecutive_losses = 0
         return self._state()
 
     def _state(self):
-        # Znormalizowane zwroty procentowe zamiast surowych cen — model uczy się
-        # wzorców niezależnych od poziomu ceny, co poprawia generalizację
         start = max(0, self.index - 19)
         end = self.index + 1
         window = self._prices[start:end]
@@ -64,91 +100,165 @@ class TradingEnv:
         buf[:] = 0.0
 
         if len(window) >= 2:
-            # Zwroty procentowe normalizowane przez zmienność
             returns = np.diff(window) / window[:-1]
             std = np.std(returns) if len(returns) > 1 else 1e-6
             if std < 1e-8:
                 std = 1e-6
             normalized = returns / std
-            # Wstaw znormalizowane zwroty (max 19 wartości z 20 cen)
             buf[20 - len(normalized):20] = normalized
         else:
             buf[19] = 0.0
 
         buf[20] = self.balance / self.initial_balance
         buf[21] = self.position
-        return buf.copy()  # copy needed since buf is reused
+        return buf.copy()
 
     def step(self, action):
         if self.index >= self._n - 1:
             self.done = True
-            return self._state(), 0, self.done, {}
+            # Wymus zamkniecie otwartej pozycji na koncu danych
+            if self.position != 0:
+                reward = self._close_position(self._prices[self.index])
+            else:
+                reward = 0.0
+            return self._state(), reward, self.done, self._info()
 
         price = self._prices[self.index]
-        next_price = self._prices[self.index + 1]
-        change = (next_price - price) / price
+        current_high = self._highs[self.index]
+        current_low = self._lows[self.index]
+        atr = self._atr[self.index]
         reward = 0.0
 
-        # Otwarcie pozycji LONG
-        if action == 1 and self.position == 0:
-            self.position = 1
-            self.entry_price = price
-            self.balance -= self.transaction_cost * price
-            self.hold_steps = 0
-
-        # Otwarcie pozycji SHORT
-        elif action == 2 and self.position == 0:
-            self.position = -1
-            self.entry_price = price
-            self.balance -= self.transaction_cost * price
-            self.hold_steps = 0
-
-        # Zamknięcie pozycji
-        elif action == 0 and self.position != 0:
-            pnl = (price - self.entry_price) / self.entry_price if self.position == 1 else (self.entry_price - price) / self.entry_price
-            # Asymetryczny reward: większa kara za straty niż nagroda za zyski
-            # Uczy agenta unikać strat zamiast łapać każdy mały ruch
-            if pnl > 0:
-                reward = pnl * 8
-            else:
-                reward = pnl * 12  # Większa kara za straty
-            self.balance += pnl * price
-            self.total_trades += 1
-            if pnl > 0:
-                self.wins += 1
-            else:
-                self.losses += 1
-            self.position = 0
-            self.entry_price = 0
-
-        # Holding reward/penalty
-        elif self.position != 0:
-            unrealized = change if self.position == 1 else -change
-            reward = unrealized * 1.5
-            self.balance += unrealized * price
+        # ═══════════════════════════════════════════════════
+        # 1. SPRAWDZ SL/TP DLA OTWARTEJ POZYCJI (przed nowa akcja)
+        # ═══════════════════════════════════════════════════
+        if self.position != 0:
             self.hold_steps += 1
-            # Kara za zbyt długie trzymanie (zachęta do realizacji)
-            if self.hold_steps > 30:
-                reward -= 0.002
+            active_sl = self.trailing_sl if self.trailing_sl != 0 else self.sl_price
 
-        # Brak pozycji — minimalna kara, ale nie za agresywna
-        elif self.position == 0:
-            reward = 0.0  # Neutralne — niech uczy się z wyników, nie z kary za czekanie
+            if self.position == 1:  # LONG
+                # Trailing stop update
+                sl_dist = self.entry_price - self.sl_price
+                if sl_dist > 0:
+                    r_mult = (current_high - self.entry_price) / sl_dist
+                    if r_mult >= 1.5 and self.trailing_sl < self.entry_price + sl_dist:
+                        self.trailing_sl = self.entry_price + sl_dist  # lock 1R
+                        active_sl = self.trailing_sl
+                    elif r_mult >= 1.0 and self.trailing_sl < self.entry_price:
+                        self.trailing_sl = self.entry_price + 0.01  # breakeven
+                        active_sl = self.trailing_sl
+
+                # Check TP hit (high touched TP)
+                if current_high >= self.tp_price:
+                    reward = self._close_position(self.tp_price)
+                # Check SL hit (low touched SL)
+                elif current_low <= active_sl:
+                    reward = self._close_position(active_sl)
+
+            elif self.position == -1:  # SHORT
+                sl_dist = self.sl_price - self.entry_price
+                if sl_dist > 0:
+                    r_mult = (self.entry_price - current_low) / sl_dist
+                    if r_mult >= 1.5 and (self.trailing_sl == 0 or self.trailing_sl > self.entry_price - sl_dist):
+                        self.trailing_sl = self.entry_price - sl_dist
+                        active_sl = self.trailing_sl
+                    elif r_mult >= 1.0 and (self.trailing_sl == 0 or self.trailing_sl > self.entry_price):
+                        self.trailing_sl = self.entry_price - 0.01
+                        active_sl = self.trailing_sl
+
+                if current_low <= self.tp_price:
+                    reward = self._close_position(self.tp_price)
+                elif current_high >= active_sl:
+                    reward = self._close_position(active_sl)
+
+        # ═══════════════════════════════════════════════════
+        # 2. NOWA AKCJA (tylko jesli flat)
+        # ═══════════════════════════════════════════════════
+        if self.position == 0 and action in (1, 2):
+            sl_distance = max(atr * self.sl_atr_mult, price * 0.002)  # min 0.2%
+            tp_distance = sl_distance * self.target_rr
+
+            if action == 1:  # BUY → LONG
+                self.position = 1
+                self.entry_price = price
+                self.sl_price = price - sl_distance
+                self.tp_price = price + tp_distance
+                self.trailing_sl = 0
+                self.hold_steps = 0
+                self.balance -= self.transaction_cost * price
+
+            elif action == 2:  # SELL → SHORT
+                self.position = -1
+                self.entry_price = price
+                self.sl_price = price + sl_distance
+                self.tp_price = price - tp_distance
+                self.trailing_sl = 0
+                self.hold_steps = 0
+                self.balance -= self.transaction_cost * price
+
+        # Kara za hold bez pozycji (lekka — zacheta do szukania wejsc)
+        elif self.position == 0 and action == 0:
+            reward = 0.0  # neutralne
 
         self.rewards_history.append(reward)
         self.index += 1
 
-        if self.index >= len(self.data) - 1:
+        if self.index >= self._n - 1:
             self.done = True
-            # Bonus/kara końcowa za ogólny wynik
+            if self.position != 0:
+                reward += self._close_position(self._prices[self.index])
             final_return = (self.balance - self.initial_balance) / self.initial_balance
-            reward += final_return * 5
+            reward += final_return * 3
 
-        return self._state(), reward, self.done, {
+        return self._state(), reward, self.done, self._info()
+
+    def _close_position(self, exit_price):
+        """Zamknij pozycje i oblicz reward."""
+        if self.position == 1:
+            pnl = (exit_price - self.entry_price) / self.entry_price
+        elif self.position == -1:
+            pnl = (self.entry_price - exit_price) / self.entry_price
+        else:
+            return 0.0
+
+        # Asymetryczny reward — wieksza kara za straty
+        if pnl > 0:
+            reward = pnl * 10
+            self.wins += 1
+            self.consecutive_losses = 0
+        elif pnl < -0.0001:  # maly bufor na spread/breakeven
+            reward = pnl * 15
+            self.losses += 1
+            self.consecutive_losses += 1
+            # Dodatkowa kara za consecutive losses (uczy unikania serii strat)
+            if self.consecutive_losses >= 3:
+                reward *= 1.2
+        else:
+            # Breakeven (trailing stop na entry)
+            reward = 0.1  # maly bonus za breakeven (lepsze niz strata)
+            self.breakevens += 1
+            self.consecutive_losses = 0
+
+        self.balance += pnl * self.entry_price
+        self.total_trades += 1
+        self.position = 0
+        self.entry_price = 0
+        self.sl_price = 0
+        self.tp_price = 0
+        self.trailing_sl = 0
+        self.hold_steps = 0
+
+        return reward
+
+    def _info(self):
+        return {
             'balance': self.balance,
             'total_trades': self.total_trades,
             'wins': self.wins,
-            'win_rate': self.wins / max(self.total_trades, 1)
+            'losses': self.losses,
+            'breakevens': self.breakevens,
+            'win_rate': self.wins / max(self.total_trades, 1),
+            'consecutive_losses': self.consecutive_losses,
         }
 
 class DQNAgent:
