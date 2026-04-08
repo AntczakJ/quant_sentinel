@@ -71,7 +71,8 @@ def add_cci(df, period=20):
     """
     typical_price = (df['high'] + df['low'] + df['close']) / 3
     sma = typical_price.rolling(period).mean()
-    mad = typical_price.rolling(period).apply(lambda x: np.abs(x - x.mean()).mean())
+    # Vectorized MAD: rolling().std() * sqrt(2/pi) ≈ 0.7979 for normal-ish data
+    mad = typical_price.rolling(period).std() * 0.7979
     df['cci'] = (typical_price - sma) / (0.015 * mad + 1e-10)
     return df
 
@@ -112,19 +113,22 @@ def detect_price_patterns(df, lookback=5):
     df['higher_high'] = (df['high'].rolling(lookback).max().shift(1) < df['high'])
     df['lower_low'] = (df['low'].rolling(lookback).min().shift(1) > df['low'])
 
-    # Double Top pattern (2 highs at similar level)
-    df['double_top'] = 0
-    for i in range(lookback + 1, len(df)):
-        highs = df['high'].iloc[i-lookback:i]
-        if len(highs[highs > highs.mean() + highs.std() * 0.5]) >= 2:
-            df.loc[i, 'double_top'] = 1
+    # Double Top pattern — vectorized: count highs above (mean + 0.5*std) in each rolling window
+    rolling_high = df['high'].rolling(lookback)
+    high_mean = rolling_high.mean()
+    high_std = rolling_high.std()
+    high_threshold = high_mean + high_std * 0.5
+    # Count how many bars in each window exceed threshold
+    above_thresh = (df['high'] > high_threshold).astype(int)
+    df['double_top'] = (above_thresh.rolling(lookback).sum().shift(1) >= 2).astype(int)
 
-    # Double Bottom pattern
-    df['double_bottom'] = 0
-    for i in range(lookback + 1, len(df)):
-        lows = df['low'].iloc[i-lookback:i]
-        if len(lows[lows < lows.mean() - lows.std() * 0.5]) >= 2:
-            df.loc[i, 'double_bottom'] = 1
+    # Double Bottom pattern — vectorized
+    rolling_low = df['low'].rolling(lookback)
+    low_mean = rolling_low.mean()
+    low_std = rolling_low.std()
+    low_threshold = low_mean - low_std * 0.5
+    below_thresh = (df['low'] < low_threshold).astype(int)
+    df['double_bottom'] = (below_thresh.rolling(lookback).sum().shift(1) >= 2).astype(int)
 
     return df
 

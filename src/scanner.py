@@ -34,6 +34,99 @@ TF_LABELS = {
 def _hash(text: str) -> str:
     return hashlib.md5(text.encode()).hexdigest()
 
+
+def extract_factors(analysis: dict, direction: str) -> dict:
+    """
+    Wyciaga czynniki tradingowe z analizy SMC do zapisu w trades.factors.
+    Uzywane przez background scanner, quick-trade, i log_trade.
+    """
+    factors = {}
+    if not analysis:
+        return factors
+
+    # BOS
+    if (direction == "LONG" and analysis.get('bos_bullish')) or \
+       (direction == "SHORT" and analysis.get('bos_bearish')):
+        factors['bos'] = 1
+
+    # CHoCH
+    if (direction == "LONG" and analysis.get('choch_bullish')) or \
+       (direction == "SHORT" and analysis.get('choch_bearish')):
+        factors['choch'] = 1
+
+    # Order blocks
+    ob_list = analysis.get('order_blocks', [])
+    if ob_list:
+        factors['ob_count'] = min(len(ob_list), 3)
+
+    ob_main = analysis.get('ob_price')
+    if ob_main and analysis.get('price'):
+        if (direction == "LONG" and ob_main < analysis['price']) or \
+           (direction == "SHORT" and ob_main > analysis['price']):
+            factors['ob_main'] = 1
+
+    # FVG
+    fvg_type = analysis.get('fvg_type')
+    if (direction == "LONG" and fvg_type == "bullish") or \
+       (direction == "SHORT" and fvg_type == "bearish"):
+        factors['fvg'] = 1
+
+    # Liquidity Grab + MSS
+    if analysis.get('liquidity_grab') and analysis.get('mss'):
+        grab_dir = analysis.get('liquidity_grab_dir')
+        if (direction == "LONG" and grab_dir == "bullish") or \
+           (direction == "SHORT" and grab_dir == "bearish"):
+            factors['grab_mss'] = 1
+
+    # DBR/RBD
+    dbr_type = analysis.get('dbr_rbd_type')
+    if (direction == "LONG" and dbr_type == "DBR") or \
+       (direction == "SHORT" and dbr_type == "RBD"):
+        factors['dbr_rbd'] = 1
+
+    # Macro
+    macro = analysis.get('macro_regime')
+    if (direction == "LONG" and macro == "zielony") or \
+       (direction == "SHORT" and macro == "czerwony"):
+        factors['macro'] = 1
+
+    # RSI optimal zone
+    rsi = analysis.get('rsi')
+    if rsi:
+        if direction == "LONG" and 40 <= rsi <= 50:
+            factors['rsi_opt'] = 1
+        elif direction == "SHORT" and 50 <= rsi <= 60:
+            factors['rsi_opt'] = 1
+
+    # RSI Divergence
+    if (direction == "LONG" and analysis.get('rsi_div_bull')) or \
+       (direction == "SHORT" and analysis.get('rsi_div_bear')):
+        factors['rsi_divergence'] = 1
+
+    # Engulfing
+    eng = analysis.get('engulfing', False)
+    if (direction == "LONG" and eng == 'bullish') or \
+       (direction == "SHORT" and eng == 'bearish'):
+        factors['engulfing'] = 1
+
+    # Pin bar
+    pb = analysis.get('pin_bar', False)
+    if (direction == "LONG" and pb == 'bullish') or \
+       (direction == "SHORT" and pb == 'bearish'):
+        factors['pin_bar'] = 1
+
+    # Ichimoku
+    if direction == "LONG" and analysis.get('ichimoku_above_cloud'):
+        factors['ichimoku_bull'] = 1
+    elif direction == "SHORT" and analysis.get('ichimoku_below_cloud'):
+        factors['ichimoku_bear'] = 1
+
+    # Killzone / session
+    if analysis.get('is_killzone'):
+        factors['killzone'] = 1
+
+    return factors
+
 def send_telegram_alert(text: str):
     """
     Pomocnicza funkcja do wysyłania powiadomień push na Telegram.
@@ -101,6 +194,20 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     current_fvg = analysis.get('fvg')
     current_fvg_type = analysis.get('fvg_type')
 
+    # --- 0b. FILTR MINIMALNEJ ZMIENNOŚCI (ATR) ---
+    current_atr = analysis.get('atr', 0)
+    if current_atr < 2.0:
+        logger.info(f"🔍 [MTF] {tf}: ATR={current_atr:.2f} za niski (min 2.0) — zbyt mała zmienność")
+        return None
+
+    # --- 0c. FILTR RSI EXTREME — nie wchodź w pozycję przeciw momentum ---
+    if current_trend == "bull" and current_rsi > 78:
+        logger.info(f"🔍 [MTF] {tf}: RSI={current_rsi:.0f} > 78 (wykupiony) — nie LONG na szczycie")
+        return None
+    if current_trend == "bear" and current_rsi < 22:
+        logger.info(f"🔍 [MTF] {tf}: RSI={current_rsi:.0f} < 22 (wyprzedany) — nie SHORT na dnie")
+        return None
+
     # --- 1. FILTR FAIL RATE ---
     fail_rate = db.get_fail_rate_for_pattern(current_rsi, current_structure)
     if fail_rate > 75:
@@ -115,7 +222,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         logger.info(f"🔍 [MTF] {tf}: waga wzorca {pattern} = {weight:.2f} za niska — pomijam")
         return None
 
-    # --- 3. SPRAWDZENIE SETUPU SMC: wymagamy przynajmniej jednego silnego sygnału ---
+    # --- 3. SPRAWDZENIE SETUPU SMC: wymagamy silnej konfluencji ---
     has_grab_mss = analysis.get('liquidity_grab') and analysis.get('mss')
     has_fvg = current_fvg_type in ("bullish", "bearish")
     has_bos = analysis.get('bos_bullish') or analysis.get('bos_bearish')
@@ -123,15 +230,47 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     has_dbr_rbd = analysis.get('dbr_rbd_type') in ("DBR", "RBD")
     has_ob = analysis.get('ob_price') is not None and analysis.get('ob_price') != current_price
 
-    # Wymóg: co najmniej Liquidity Grab+MSS, albo FVG + (BOS/CHoCH/OB), albo DBR/RBD
+    # RSI Divergence — silny kontrtrendowy sygnał
+    has_rsi_div = (
+        (current_trend == "bull" and analysis.get('rsi_div_bull')) or
+        (current_trend == "bear" and analysis.get('rsi_div_bear'))
+    )
+    # Engulfing pattern confirmation
+    has_engulfing = (
+        (current_trend == "bull" and analysis.get('engulfing') == "bullish") or
+        (current_trend == "bear" and analysis.get('engulfing') == "bearish")
+    )
+
+    # Wymagamy co najmniej 2 sygnały konfluencji (zamiast jednego)
+    confluence_count = sum([
+        bool(has_grab_mss),
+        bool(has_fvg),
+        bool(has_bos or has_choch),
+        bool(has_dbr_rbd),
+        bool(has_ob),
+        bool(has_rsi_div),
+        bool(has_engulfing),
+    ])
+
+    # Wymóg: Grab+MSS (premium setup), albo DBR/RBD, albo minimum 2 sygnały konfluencji
     strong_setup = (
         has_grab_mss
-        or (has_fvg and (has_bos or has_choch or has_ob))
         or has_dbr_rbd
+        or confluence_count >= 2
     )
     if not strong_setup:
-        logger.debug(f"🔍 [MTF] {tf}: brak silnego setupu SMC — pomijam")
+        logger.debug(f"🔍 [MTF] {tf}: brak silnego setupu SMC (confluence={confluence_count}) — pomijam")
         return None
+
+    # --- 3b. FILTR KIERUNKU vs FVG ---
+    # Upewnij się że FVG potwierdza kierunek (nie shortuj z bullish FVG!)
+    if has_fvg:
+        if current_trend == "bull" and current_fvg_type == "bearish":
+            logger.info(f"🔍 [MTF] {tf}: FVG bearish vs trend bull — konfluencja słaba, pomijam")
+            return None
+        if current_trend == "bear" and current_fvg_type == "bullish":
+            logger.info(f"🔍 [MTF] {tf}: FVG bullish vs trend bear — konfluencja słaba, pomijam")
+            return None
 
     # --- 4. OBLICZENIE POZYCJI (SL/TP/kierunek) ---
     # Pass empty DataFrame to skip redundant ML candle fetch inside calculate_position —
@@ -154,7 +293,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     lot = pos.get('lot', 0.01)
     logic = pos.get('logic', '')
 
-    # --- 5. ML ENSEMBLE VALIDATION (opcjonalne — nie blokuje, ale loguje) ---
+    # --- 5. ML ENSEMBLE VALIDATION (BLOKUJĄCE jeśli ML silnie się nie zgadza) ---
     ml_info = ""
     try:
         from src.data_sources import get_provider
@@ -172,19 +311,97 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                 initial_balance=10000,
                 position=0
             )
-            if ensemble['confidence'] > 0.7:
-                ml_info = f"ML: {ensemble['ensemble_signal']} ({ensemble['confidence']:.0%})"
-                logger.info(f"✅ [MTF] {tf}: {ml_info}")
-            elif ensemble['confidence'] < 0.3:
-                logger.info(f"⚠️ [MTF] {tf}: ML niska pewność {ensemble['confidence']:.0%} — ostrzeżenie")
+            ml_signal = ensemble.get('ensemble_signal', 'CZEKAJ')
+            ml_conf = ensemble.get('confidence', 0)
+
+            if ml_conf > 0.7 and ml_signal == direction_str:
+                ml_info = f"ML: {ml_signal} ({ml_conf:.0%})"
+                logger.info(f"✅ [MTF] {tf}: ML potwierdza kierunek — {ml_info}")
+            elif ml_conf > 0.5 and ml_signal != "CZEKAJ" and ml_signal != direction_str:
+                # ML silnie się nie zgadza z SMC — BLOKUJ trade
+                logger.warning(
+                    f"🚫 [MTF] {tf}: ML ({ml_signal}, {ml_conf:.0%}) "
+                    f"KONFLIKT z SMC ({direction_str}) — BLOKUJĘ trade"
+                )
+                return None
+            elif ml_conf < 0.3:
+                logger.info(f"⚠️ [MTF] {tf}: ML niska pewność {ml_conf:.0%} — trade dozwolony ale ryzykowny")
+                ml_info = f"ML: niepewny ({ml_conf:.0%})"
     except Exception as e:
         logger.debug(f"[MTF] {tf}: ML ensemble validation skipped: {e}")
 
-    # --- 6. SETUP WAŻNY — zwróć parametry trade'a ---
+    # --- 6b. SENTIMENT FILTER (opcjonalny — nie blokuje jeśli brak danych) ---
+    try:
+        from src.database import NewsDB as _SentDB
+        _sent_db = _SentDB()
+        # Sprawdź ostatni sentyment z news_sentiment (jeśli istnieje)
+        _sent_row = _sent_db._query_one(
+            "SELECT sentiment, score FROM news_sentiment ORDER BY id DESC LIMIT 1"
+        )
+        if _sent_row and _sent_row[0] and _sent_row[1]:
+            news_sentiment = str(_sent_row[0]).lower()
+            sent_conf = float(_sent_row[1]) if _sent_row[1] else 0
+            # Jeśli sentyment jest silnie przeciwny do kierunku — blokuj
+            if sent_conf > 0.7:
+                if direction_str == "LONG" and "bearish" in news_sentiment:
+                    logger.info(
+                        f"📰 [MTF] {tf}: Sentyment BEARISH ({sent_conf:.0%}) "
+                        f"vs LONG — BLOKUJĘ trade"
+                    )
+                    return None
+                elif direction_str == "SHORT" and "bullish" in news_sentiment:
+                    logger.info(
+                        f"📰 [MTF] {tf}: Sentyment BULLISH ({sent_conf:.0%}) "
+                        f"vs SHORT — BLOKUJĘ trade"
+                    )
+                    return None
+    except Exception as e:
+        logger.debug(f"[MTF] Sentiment filter skipped: {e}")
+
+    # --- 6c. SMT DIVERGENCE FILTER — dolar i złoto nie powinny iść razem ---
+    smt_warning = analysis.get('smt', 'Brak')
+    if smt_warning and smt_warning != "Brak":
+        logger.warning(f"⚠️ [MTF] {tf}: {smt_warning} — pomijam trade (SMT)")
+        return None
+
+    # --- 6d. PREMIUM/DISCOUNT FILTER — nie kupuj na premium, nie shortuj na discount ---
+    is_premium = analysis.get('is_premium', False)
+    is_discount = analysis.get('is_discount', False)
+    if direction_str == "LONG" and is_premium:
+        logger.info(f"🔍 [MTF] {tf}: LONG w strefie PREMIUM — złe R:R, pomijam")
+        return None
+    if direction_str == "SHORT" and is_discount:
+        logger.info(f"🔍 [MTF] {tf}: SHORT w strefie DISCOUNT — złe R:R, pomijam")
+        return None
+
+    # --- 6e. HTF TREND CONFIRMATION (nie handluj M5/M15 przeciw H1/H4) ---
+    if tf in ("5m", "15m"):
+        try:
+            htf_analysis = get_smc_analysis("1h")
+            if htf_analysis:
+                htf_trend = htf_analysis.get('trend', '')
+                if direction == "LONG" and htf_trend == "bear":
+                    logger.info(
+                        f"🔍 [MTF] {tf}: LONG ale H1 trend=bear — NIE handluj przeciw HTF"
+                    )
+                    return None
+                if direction == "SHORT" and htf_trend == "bull":
+                    logger.info(
+                        f"🔍 [MTF] {tf}: SHORT ale H1 trend=bull — NIE handluj przeciw HTF"
+                    )
+                    return None
+                logger.info(f"✅ [MTF] {tf}: HTF trend {htf_trend} potwierdza {direction}")
+        except Exception as e:
+            logger.debug(f"[MTF] HTF confirmation skipped: {e}")
+
+    # --- 7. SETUP WAŻNY — zwróć parametry trade'a ---
     logger.info(
         f"🎯 [MTF] ZNALEZIONO TRADE na {tf}! "
         f"{direction} @ {entry:.2f} | SL: {sl:.2f} | TP: {tp:.2f} | {logic}"
     )
+
+    # Extract SMC factors for self-learning attribution
+    factors = extract_factors(analysis, direction)
 
     return {
         "tf": tf,
@@ -205,7 +422,33 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         "price": current_price,
         "ml_info": ml_info,
         "analysis": analysis,
+        "factors": factors,
     }
+
+
+def _check_trade_cooldown(db, min_hours: float = 2.0) -> bool:
+    """
+    Sprawdza czy minął minimalny czas od ostatniego trade'a.
+    Zapobiega rapid-fire trading (np. 3 trady w 2 minuty).
+    Zwraca True jeśli można handlować, False jeśli jeszcze za wcześnie.
+    """
+    try:
+        from datetime import datetime, timedelta
+        last_trade = db._query_one(
+            "SELECT timestamp FROM trades ORDER BY id DESC LIMIT 1"
+        )
+        if last_trade and last_trade[0]:
+            last_time = datetime.strptime(last_trade[0], "%Y-%m-%d %H:%M:%S")
+            elapsed = (datetime.now() - last_time).total_seconds() / 3600
+            if elapsed < min_hours:
+                logger.info(
+                    f"⏳ [COOLDOWN] Ostatni trade {elapsed:.1f}h temu, "
+                    f"minimum {min_hours}h — pomijam"
+                )
+                return False
+    except Exception as e:
+        logger.debug(f"Cooldown check error: {e}")
+    return True
 
 
 def cascade_mtf_scan(db, balance: float = 10000, currency: str = "USD") -> dict | None:
@@ -224,6 +467,10 @@ def cascade_mtf_scan(db, balance: float = 10000, currency: str = "USD") -> dict 
     Returns:
         dict z parametrami trade'a lub None jeśli żaden TF nie dał sygnału
     """
+    # --- COOLDOWN: minimum 30min między tradami (M5/M15 dają setupy częściej) ---
+    if not _check_trade_cooldown(db, min_hours=0.5):
+        return None
+
     logger.info(f"🔎 [MTF] Start kaskady: {' → '.join(SCAN_TIMEFRAMES)}")
 
     for tf in SCAN_TIMEFRAMES:
@@ -263,6 +510,12 @@ async def scan_market_task(context):
     - Heartbeat co 30 min
     """
     try:
+        # ── Weekend guard: rynek XAU/USD zamknięty pt 22:00 → nd 23:00 CET ──
+        from src.smc_engine import is_market_open
+        if not is_market_open():
+            logger.info("📅 [SCANNER] Rynek zamknięty (weekend) — pomijam skan")
+            return
+
         # Prefetch all timeframes first (populates cache, reduces subsequent API calls)
         try:
             from src.data_sources import get_provider
@@ -282,11 +535,9 @@ async def scan_market_task(context):
             if bal and float(bal) > 0:
                 scan_balance = float(bal)
             try:
-                _row = db._query_one(
-                    "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
-                )
-                if _row and _row[0]:
-                    scan_currency = str(_row[0])
+                _curr = db.get_param("portfolio_currency_text")
+                if _curr:
+                    scan_currency = str(_curr)
             except Exception:
                 pass
         except Exception:
@@ -601,12 +852,12 @@ async def resolve_trades_task(context):
 
             if "LONG" in dir_clean:
                 if current_price >= float(tp):
-                    status = "PROFIT"
+                    status = "WIN"
                 elif current_price <= float(sl):
                     status = "LOSS"
             elif "SHORT" in dir_clean:
                 if current_price <= float(tp):
-                    status = "PROFIT"
+                    status = "WIN"
                 elif current_price >= float(sl):
                     status = "LOSS"
 
@@ -616,7 +867,7 @@ async def resolve_trades_task(context):
                     entry_f = float(entry or 0)
                     sl_f = float(sl or 0)
                     tp_f = float(tp or 0)
-                    if status == "PROFIT":
+                    if status == "WIN":
                         profit_val = round(abs(tp_f - entry_f), 2) if entry_f > 0 else 0
                     else:  # LOSS
                         profit_val = round(-abs(entry_f - sl_f), 2) if entry_f > 0 else 0
@@ -627,15 +878,14 @@ async def resolve_trades_task(context):
                 db.update_trade_profit(t_id, profit_val)
 
                 # ========== NOWE: aktualizacja statystyk sesji ==========
-                if status in ("PROFIT", "LOSS"):
-                    db.cursor.execute("SELECT pattern, session FROM trades WHERE id = ?", (t_id,))
-                    row = db.cursor.fetchone()
+                if status in ("WIN", "LOSS"):
+                    row = db._query_one("SELECT pattern, session FROM trades WHERE id = ?", (t_id,))
                     if row and row[0]:
                         pattern = row[0]
                         session = row[1] or "Unknown"
                         db.update_session_stats(pattern, session, status)
 
-                if status in ("PROFIT", "LOSS"):
+                if status in ("WIN", "LOSS"):
                     from src.self_learning import update_factor_weights
                     update_factor_weights(t_id, status)
 
@@ -647,7 +897,7 @@ async def resolve_trades_task(context):
                         incorrect = []
 
                         # SMC — zawsze używane
-                        if status == "PROFIT":
+                        if status == "WIN":
                             correct.append("smc")
                         else:
                             incorrect.append("smc")
@@ -663,13 +913,13 @@ async def resolve_trades_task(context):
                                 (ml_factors_bull and "LONG" in dir_clean) or
                                 (ml_factors_bear and "SHORT" in dir_clean)
                             )
-                            if status == "PROFIT" and ml_agreed_with_direction:
+                            if status == "WIN" and ml_agreed_with_direction:
                                 correct.append("lstm")
                                 correct.append("xgb")
                             elif status == "LOSS" and ml_agreed_with_direction:
                                 incorrect.append("lstm")
                                 incorrect.append("xgb")
-                            elif status == "PROFIT" and not ml_agreed_with_direction:
+                            elif status == "WIN" and not ml_agreed_with_direction:
                                 # ML sygnalizowało przeciwny kierunek ale trade wygrał (SMC miało rację)
                                 incorrect.append("lstm")
                                 incorrect.append("xgb")
@@ -681,10 +931,9 @@ async def resolve_trades_task(context):
 
                     # Aktualizuj statystyki reżimu
                     try:
-                        trade_row = db.cursor.execute(
+                        trow = db._query_one(
                             "SELECT session, factors FROM trades WHERE id = ?", (t_id,)
                         )
-                        trow = db.cursor.fetchone()
                         if trow:
                             import json
                             tsession = trow[0] or "Unknown"
@@ -696,14 +945,13 @@ async def resolve_trades_task(context):
                     except Exception as e:
                         logger.debug(f"Regime stats update skipped: {e}")
 
-                db.cursor.execute("SELECT pattern FROM trades WHERE id = ?", (t_id,))
-                pattern = db.cursor.fetchone()
+                pattern = db._query_one("SELECT pattern FROM trades WHERE id = ?", (t_id,))
                 pattern = pattern[0] if pattern else None
                 analysis_data = {"pattern": pattern}
                 from src.self_learning import update_pattern_weight
                 update_pattern_weight(analysis_data, status)
 
-                exit_price = float(tp) if status == "PROFIT" else float(sl)
+                exit_price = float(tp) if status == "WIN" else float(sl)
 
                 # ← ZAPISUJE POWÓD I OKOLICZNOŚCI PRZEGRANEJ
                 if status == "LOSS":
@@ -719,7 +967,7 @@ async def resolve_trades_task(context):
                     )
                     logger.info(f"📝 [RESOLVER] Zapisano okoliczności straty dla pozycji {t_id}.")
 
-                icon = "✅" if status == "PROFIT" else "❌"
+                icon = "✅" if status == "WIN" else "❌"
                 msg = (
                     f"{icon} *POZYCJA ROZSTRZYGNIĘTA!*\n"
                     f"ID: `{t_id}` | Kierunek: {direction}\n"

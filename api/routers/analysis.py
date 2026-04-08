@@ -99,10 +99,8 @@ async def quant_pro_analysis(
             _db = NewsDB()
             actual_balance = float(_db.get_param("portfolio_balance", None) or 10000)
             try:
-                _row = _db._query_one(
-                    "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
-                )
-                actual_currency = str(_row[0]) if _row and _row[0] else "USD"
+                _curr = _db.get_param("portfolio_currency_text")
+                actual_currency = str(_curr) if _curr else "USD"
             except Exception:
                 actual_currency = "USD"
         except Exception:

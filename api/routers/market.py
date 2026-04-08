@@ -198,10 +198,10 @@ def _filter_trading_candles(df, symbol: str, desired_count: int):
     """
     Filter out non-trading period candles — matches TradingView behaviour.
 
-    XAU/USD trading schedule (all times UTC):
-      Open  : Sunday  22:00  →  Friday 22:00
-      Break : every day 21:00 – 21:59  (daily settlement / rollover)
-      Closed: Saturday all day, Sunday < 22:00, Friday ≥ 22:00
+    XAU/USD trading schedule (CET/CEST — handles DST automatically):
+      Open  : Sunday  23:00 CET
+      Close : Friday  22:00 CET
+      Weekend (pt 22:00 → nd 23:00 CET): CLOSED
 
     Twelve Data still emits candles during these dead windows (with
     near-zero spread), so we filter them out by timestamp.
@@ -220,18 +220,34 @@ def _filter_trading_candles(df, symbol: str, desired_count: int):
         # Fallback: timestamps unparseable → return as-is
         return df.tail(desired_count).reset_index(drop=True)
 
-    weekday = ts.dt.weekday   # 0 = Monday … 6 = Sunday
-    hour = ts.dt.hour
-
     if 'XAU' in symbol.upper():
-        # ── XAU/USD session mask ─────────────────────────────────────────
-        is_saturday       = (weekday == 5)
-        is_sunday_closed  = (weekday == 6) & (hour < 22)
-        is_friday_closed  = (weekday == 4) & (hour >= 22)
-        is_daily_break    = (hour == 21)                       # 21:00-21:59 UTC = 23:00-23:59 CEST
+        # ── XAU/USD: convert to CET/CEST for accurate DST-aware filtering ──
+        try:
+            from zoneinfo import ZoneInfo
+            cet = ZoneInfo('Europe/Warsaw')
+        except ImportError:
+            try:
+                import pytz
+                cet = pytz.timezone('Europe/Warsaw')
+            except ImportError:
+                cet = None
 
-        is_closed = is_saturday | is_sunday_closed | is_friday_closed | is_daily_break
+        if cet is not None:
+            ts_cet = ts.dt.tz_convert(cet)
+            weekday = ts_cet.dt.weekday
+            hour = ts_cet.dt.hour
+        else:
+            # Fallback: approximate CET as UTC+1 (no DST)
+            weekday = ts.dt.weekday
+            hour = (ts.dt.hour + 1) % 24
+
+        is_saturday      = (weekday == 5)                      # Saturday — always closed
+        is_sunday_closed = (weekday == 6) & (hour < 23)        # Sunday before 23:00 CET
+        is_friday_closed = (weekday == 4) & (hour >= 22)       # Friday ≥22:00 CET
+
+        is_closed = is_saturday | is_sunday_closed | is_friday_closed
     else:
+        weekday = ts.dt.weekday
         # Generic forex: skip full weekends only
         is_closed = (weekday == 5) | (weekday == 6)
 

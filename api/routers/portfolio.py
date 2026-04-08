@@ -40,15 +40,7 @@ def _get_portfolio():
             initial = float(params.get("portfolio_initial_balance", balance) or balance)
             equity = float(params.get("portfolio_equity", balance) or balance)
             pnl = float(params.get("portfolio_pnl", 0) or 0)
-
-            # Currency stored as text
-            try:
-                row = db._query_one(
-                    "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
-                )
-                currency = str(row[0]) if row and row[0] else "PLN"
-            except Exception:
-                currency = "PLN"
+            currency = str(params.get("portfolio_currency_text", "PLN") or "PLN")
 
             return {
                 "balance": balance,
@@ -80,12 +72,8 @@ def _save_portfolio(portfolio_data):
         db.set_param("portfolio_initial_balance", float(portfolio_data["initial_balance"]))
         db.set_param("portfolio_equity", float(portfolio_data["equity"]))
         db.set_param("portfolio_pnl", float(portfolio_data["pnl"]))
-        # Waluta (text) — przechowywana jako string w osobnym param
-        db._execute(
-            "INSERT INTO dynamic_params (param_name, param_value) VALUES (?, ?) "
-            "ON CONFLICT(param_name) DO UPDATE SET param_value=excluded.param_value",
-            ("portfolio_currency_text", portfolio_data.get("currency", "PLN"))
-        )
+        # Waluta (text) — set_param automatycznie kieruje do param_text
+        db.set_param("portfolio_currency_text", portfolio_data.get("currency", "PLN"))
         logger.debug("Portfolio saved to database")
     except Exception as e:
         logger.warning(f"Could not save portfolio to database: {e}")
@@ -250,12 +238,13 @@ def add_trade(trade: TradeUpdate):
             pass
 
         db = NewsDB()
+        ts = datetime.now(timezone.utc).isoformat()
+        session = db.get_session(ts)
 
-        # Używaj _execute() który auto-commituje (działa z SQLite i Turso)
-        db._execute(
+        trade_id = db._insert_returning_id(
             """
-            INSERT INTO trades (direction, entry, sl, tp, status, timestamp, pattern)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trades (direction, entry, sl, tp, status, timestamp, pattern, lot, session)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 trade.direction,
@@ -263,17 +252,12 @@ def add_trade(trade: TradeUpdate):
                 trade.sl,
                 trade.tp,
                 "PROPOSED",
-                datetime.now(timezone.utc).isoformat(),
-                trade.logic
+                ts,
+                trade.logic,
+                trade.lot_size,
+                session,
             )
         )
-
-        # Pobierz last insert rowid w sposób kompatybilny z SQLite i Turso
-        try:
-            row = db._query_one("SELECT last_insert_rowid()")
-            trade_id = row[0] if row else 0
-        except Exception:
-            trade_id = 0
 
         logger.info(f"✅ Trade #{trade_id} added: {trade.direction} @ ${trade.entry:.2f}")
 
@@ -362,24 +346,29 @@ def quick_add_trade():
             }
 
         # Save to trades (PROPOSED — auto-resolver monitoruje)
-        db._execute(
-            "INSERT INTO trades (direction, entry, sl, tp, status, timestamp, pattern) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ts = datetime.now(timezone.utc).isoformat()
+        session = db.get_session(ts)
+        import json as _json
+        factors = trade.get('factors')
+        factors_json = _json.dumps(factors) if factors else None
+
+        trade_id = db._insert_returning_id(
+            "INSERT INTO trades (direction, entry, sl, tp, status, timestamp, pattern, lot, rsi, trend, session, factors) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 direction,
                 entry,
                 sl,
                 tp,
                 "PROPOSED",
-                datetime.now(timezone.utc).isoformat(),
-                f"[{tf_label}] {logic}"
+                ts,
+                f"[{tf_label}] {logic}",
+                lot,
+                rsi,
+                trend,
+                session,
+                factors_json,
             )
         )
-
-        try:
-            row = db._query_one("SELECT last_insert_rowid()")
-            trade_id = row[0] if row else 0
-        except Exception:
-            trade_id = 0
 
         # Save to scanner_signals (pojawi się w SignalHistory)
         rsi_val = trade.get('rsi', 50.0)

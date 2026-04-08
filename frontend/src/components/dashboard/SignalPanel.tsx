@@ -47,8 +47,8 @@ export const SignalPanel = memo(function SignalPanel() {
 
     // Stagger by 3s to let market endpoints (candles, ticker) settle first
     const initTimer = setTimeout(() => void fetchSignal(), 3000);
-    // Refresh every 90 seconds (signal data doesn't change that fast)
-    const interval = setInterval(fetchSignal, 90000);
+    // Refresh every 45 seconds
+    const interval = setInterval(fetchSignal, 45000);
     return () => { clearTimeout(initTimer); clearInterval(interval); };
   }, [setCurrentSignal]);
 

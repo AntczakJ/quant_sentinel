@@ -62,7 +62,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
       } catch { /* ignore */ }
     };
     const initTimer = setTimeout(() => void fetchWinRate(), 1500);
-    const interval = setInterval(fetchWinRate, 120000);
+    const interval = setInterval(fetchWinRate, 60000);
     return () => { clearTimeout(initTimer); clearInterval(interval); };
   }, [apiConnected]);
 

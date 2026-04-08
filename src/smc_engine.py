@@ -26,9 +26,60 @@ from src.logger import logger
 
 # ==================== SESSION / KILLZONE DETECTION ====================
 
+def _get_cet_tz():
+    """Return Europe/Warsaw (CET/CEST) tzinfo — handles DST automatically."""
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo('Europe/Warsaw')
+    except ImportError:
+        try:
+            import pytz
+            return pytz.timezone('Europe/Warsaw')
+        except ImportError:
+            # Minimal fallback: CET (UTC+1), no DST awareness
+            from datetime import timedelta, tzinfo as _tzinfo
+            class _CET(_tzinfo):
+                def utcoffset(self, dt): return timedelta(hours=1)
+                def dst(self, dt): return timedelta(0)
+                def tzname(self, dt): return "CET"
+            return _CET()
+
+_CET_TZ = _get_cet_tz()
+
+
+def is_market_open(dt_cet=None) -> bool:
+    """
+    Sprawdza czy rynek XAU/USD jest otwarty.
+
+    Godziny rynku (CET/CEST):
+      Otwarcie:   niedziela 23:00
+      Zamknięcie: piątek    22:00
+      Weekend (pt 22:00 → nd 23:00): ZAMKNIĘTY
+    """
+    if dt_cet is None:
+        dt_cet = datetime.now(_CET_TZ)
+    wd = dt_cet.weekday()   # Mon=0 … Sun=6
+    h = dt_cet.hour
+
+    if wd == 5:                        # Saturday — always closed
+        return False
+    if wd == 4 and h >= 22:            # Friday ≥22:00 — closed
+        return False
+    if wd == 6 and h < 23:             # Sunday <23:00 — closed
+        return False
+    return True
+
+
 def get_active_session(utc_hour: int = None) -> dict:
     """
-    Określa aktywną sesję tradingową i killzone na podstawie godziny UTC.
+    Określa aktywną sesję tradingową XAU/USD na podstawie czasu CET/CEST.
+    Automatycznie obsługuje zmianę czasu letniego/zimowego (DST).
+
+    Sesje (czas CET/CEST — źródło: TradingBeasts, liteforex.pl):
+      Asian  (Tokyo/Sydney):  00:00 – 08:00  (niska zmienność)
+      London (Europa):        08:00 – 17:00  (wysoka zmienność od otwarcia)
+      NY     (Ameryka):       14:00 – 23:00  (najwyższa zmienność)
+      Overlap (London+NY):    14:00 – 17:00  (max płynność — najlepszy czas)
 
     Killzones (godziny UTC):
     - Asian:   00:00-06:00 (niska zmienność na złocie)
@@ -36,44 +87,70 @@ def get_active_session(utc_hour: int = None) -> dict:
     - NY:      12:00-15:00 (najwyższa zmienność — otwarcie USA)
     - Overlap: 12:00-16:00 (London+NY — max płynność)
 
-    XAU/USD: weekend zamknięty, przerwa 23:00-00:00 UTC.
+    Rynek XAU/USD:
+      Otwarcie:   niedziela 23:00 CET
+      Zamknięcie: piątek    22:00 CET
+      Weekend (pt 22:00 → nd 23:00): ZAMKNIĘTY
     """
-    if utc_hour is None:
-        utc_hour = datetime.now(timezone.utc).hour
+    # ── Get current CET/CEST time ──
+    if utc_hour is not None:
+        # Legacy / testing: approximate conversion from UTC hour
+        utc_now = datetime.now(timezone.utc).replace(hour=utc_hour, minute=0, second=0)
+        cet_now = utc_now.astimezone(_CET_TZ)
+    else:
+        cet_now = datetime.now(_CET_TZ)
 
-    if 0 <= utc_hour < 6:
+    cet_hour = cet_now.hour
+    weekday = cet_now.weekday()  # Mon=0 … Sun=6
+
+    # ── Weekend / market closed ──
+    if not is_market_open(cet_now):
+        return {
+            'session': 'weekend',
+            'is_killzone': False,
+            'utc_hour': cet_now.astimezone(timezone.utc).hour,
+            'cet_hour': cet_hour,
+            'weekday': weekday,
+            'market_open': False,
+            'volatility_expected': 'none',
+        }
+
+    # ── Session detection (CET/CEST) ──
+    if 0 <= cet_hour < 8:
         session = 'asian'
         is_killzone = False
-    elif 6 <= utc_hour < 7:
-        session = 'london_pre'
-        is_killzone = False
-    elif 7 <= utc_hour < 10:
+    elif 8 <= cet_hour < 10:
         session = 'london'
-        is_killzone = True  # London killzone
-    elif 10 <= utc_hour < 12:
+        is_killzone = True       # London open killzone — wzrost zmienności
+    elif 10 <= cet_hour < 14:
         session = 'london'
         is_killzone = False
-    elif 12 <= utc_hour < 15:
-        session = 'new_york'
-        is_killzone = True  # NY killzone
-    elif 15 <= utc_hour < 17:
+    elif 14 <= cet_hour < 17:
+        session = 'overlap'      # London+NY overlap — max płynność
+        is_killzone = True
+    elif 17 <= cet_hour < 23:
         session = 'new_york'
         is_killzone = False
-    elif 17 <= utc_hour < 20:
-        session = 'new_york_late'
-        is_killzone = False
-    elif 20 <= utc_hour < 23:
+    else:  # 23:xx
         session = 'off_hours'
         is_killzone = False
+
+    # Volatility expectations
+    if is_killzone:
+        vol = 'high'
+    elif session in ('london', 'new_york', 'overlap'):
+        vol = 'medium'
     else:
-        session = 'off_hours'
-        is_killzone = False
+        vol = 'low'
 
     return {
         'session': session,
         'is_killzone': is_killzone,
-        'utc_hour': utc_hour,
-        'volatility_expected': 'high' if is_killzone else ('medium' if session in ('london', 'new_york') else 'low'),
+        'utc_hour': cet_now.astimezone(timezone.utc).hour,
+        'cet_hour': cet_hour,
+        'weekday': weekday,
+        'market_open': True,
+        'volatility_expected': vol,
     }
 
 
@@ -265,7 +342,9 @@ def detect_fvg(df: pd.DataFrame, atr: float = None) -> dict:
     if len(df) < 3:
         return fvg
 
-    min_gap = atr * 0.3 if atr and atr > 0 else 0  # Filtr szumu
+    # Filtr szumu: FVG musi mieć rozmiar >= 0.4 * ATR (zaostrzony z 0.3)
+    # i absolutne minimum 0.5$ (żeby nie łapać mikro-luk)
+    min_gap = max(atr * 0.4, 0.5) if atr and atr > 0 else 0.5
 
     c1_high = df['high'].iloc[-3]
     c1_low = df['low'].iloc[-3]
@@ -383,14 +462,18 @@ def find_order_blocks(df: pd.DataFrame, trend: str, max_blocks: int = 3) -> list
 
 def detect_bos(df: pd.DataFrame, swing_points: dict) -> tuple:
     """
-    Wykrywa Break of Structure (BOS).
+    Wykrywa Break of Structure (BOS) z potwierdzeniem.
+    Wymaga 2 kolejnych zamknięć powyżej/poniżej swing point (confirmation candle).
     Zwraca (bos_bullish, bos_bearish) – bool.
-    BOS bullish: zamknięcie powyżej ostatniego Swing High.
-    BOS bearish: zamknięcie poniżej ostatniego Swing Low.
     """
-    close = df['close'].iloc[-1]
-    bullish = close > swing_points['swing_high']
-    bearish = close < swing_points['swing_low']
+    if len(df) < 2:
+        return False, False
+    close_now = df['close'].iloc[-1]
+    close_prev = df['close'].iloc[-2]
+    # BOS bullish: dwa kolejne zamknięcia powyżej swing high
+    bullish = close_now > swing_points['swing_high'] and close_prev > swing_points['swing_high']
+    # BOS bearish: dwa kolejne zamknięcia poniżej swing low
+    bearish = close_now < swing_points['swing_low'] and close_prev < swing_points['swing_low']
     return bullish, bearish
 
 
@@ -564,6 +647,25 @@ def get_smc_analysis(tf: str) -> dict | None:
         if df is None or df.empty:
             logger.warning(f"Brak danych XAU/USD z DataProvider dla {tf}")
             return None
+
+        # 1b. WALIDACJA DANYCH OHLC — odrzuć uszkodzone świece
+        ohlc_cols = ['open', 'high', 'low', 'close']
+        if not all(c in df.columns for c in ohlc_cols):
+            logger.warning(f"Brak kolumn OHLC w danych {tf}")
+            return None
+        # Usuń świece z ujemnymi cenami lub high < low
+        bad_mask = (
+            (df['high'] < df['low']) |
+            (df[ohlc_cols] <= 0).any(axis=1) |
+            df[ohlc_cols].isna().any(axis=1)
+        )
+        if bad_mask.any():
+            n_bad = bad_mask.sum()
+            logger.warning(f"⚠️ Usunięto {n_bad} uszkodzonych świec z danych {tf}")
+            df = df[~bad_mask].reset_index(drop=True)
+            if len(df) < 30:
+                logger.warning(f"Za mało danych po walidacji ({len(df)} < 30) dla {tf}")
+                return None
 
 
         # 2. POBIERANIE HISTORYCZNEGO USD/JPY
@@ -790,13 +892,13 @@ def get_mtf_confluence(symbol: str = "XAU/USD") -> dict:
         w = tf_weights.get(tf, 0.2)
         tf_signal = {"trend": data.get("trend"), "rsi": data.get("rsi"), "weight": w}
 
-        # Trend
+        # Trend (najważniejszy sygnał)
         if data.get("trend") == "bull":
             bull_score += w * 30
         else:
             bear_score += w * 30
 
-        # Liquidity Grab + MSS
+        # Liquidity Grab + MSS (premium setup)
         if data.get("liquidity_grab") and data.get("mss"):
             if data.get("liquidity_grab_dir") == "bullish":
                 bull_score += w * 40
@@ -809,17 +911,45 @@ def get_mtf_confluence(symbol: str = "XAU/USD") -> dict:
         elif data.get("fvg_type") == "bearish":
             bear_score += w * 15
 
-        # BOS
+        # BOS (z potwierdzeniem — wymaga 2 świec)
         if data.get("bos_bullish"):
-            bull_score += w * 10
+            bull_score += w * 12
         if data.get("bos_bearish"):
-            bear_score += w * 10
+            bear_score += w * 12
+
+        # CHoCH — zmiana charakteru (silny sygnał odwrócenia)
+        if data.get("choch_bullish"):
+            bull_score += w * 18
+        if data.get("choch_bearish"):
+            bear_score += w * 18
+
+        # RSI Divergence — silne sygnały kontrtrendowe
+        if data.get("rsi_div_bull"):
+            bull_score += w * 20
+        if data.get("rsi_div_bear"):
+            bear_score += w * 20
 
         # Candlestick patterns
         if data.get("engulfing") == "bullish":
-            bull_score += w * 5
+            bull_score += w * 8
         elif data.get("engulfing") == "bearish":
-            bear_score += w * 5
+            bear_score += w * 8
+        if data.get("pin_bar") == "bullish":
+            bull_score += w * 6
+        elif data.get("pin_bar") == "bearish":
+            bear_score += w * 6
+
+        # Ichimoku cloud
+        if data.get("ichimoku_above_cloud"):
+            bull_score += w * 10
+        if data.get("ichimoku_below_cloud"):
+            bear_score += w * 10
+
+        # DBR/RBD
+        if data.get("dbr_rbd_type") == "DBR":
+            bull_score += w * 25
+        elif data.get("dbr_rbd_type") == "RBD":
+            bear_score += w * 25
 
         tf_breakdown[tf] = tf_signal
 

@@ -61,8 +61,8 @@ export const ModelStats = memo(function ModelStats() {
 
     void fetchStats();
 
-    // Refresh every 120 seconds (model stats barely change)
-    const interval = setInterval(fetchStats, 120000);
+    // Refresh every 90 seconds (model stats barely change)
+    const interval = setInterval(fetchStats, 90000);
     return () => clearInterval(interval);
   }, [setModelsStats, apiConnected]);
 

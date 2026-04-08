@@ -73,11 +73,7 @@ def get_portfolio_balance_display() -> str:
         portfolio_balance = db_local.get_param("portfolio_balance", None)
         if portfolio_balance is not None:
             try:
-                db_local.cursor.execute(
-                    "SELECT param_value FROM dynamic_params WHERE param_name = 'portfolio_currency_text'"
-                )
-                row = db_local.cursor.fetchone()
-                currency = str(row[0]) if row and row[0] else "PLN"
+                currency = str(db_local.get_param("portfolio_currency_text", "PLN") or "PLN")
             except Exception:
                 currency = "PLN"
             return f"{float(portfolio_balance):.2f} {currency}"
@@ -169,11 +165,7 @@ async def cap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.set_param("portfolio_initial_balance", amount)
         db.set_param("portfolio_equity", amount)
         db.set_param("portfolio_pnl", 0.0)
-        db._execute(
-            "INSERT INTO dynamic_params (param_name, param_value) VALUES (?, ?) "
-            "ON CONFLICT(param_name) DO UPDATE SET param_value=excluded.param_value",
-            ("portfolio_currency_text", currency)
-        )
+        db.set_param("portfolio_currency_text", currency)
         await update.message.reply_text(
             f"✅ *Portfel ustawiony!*\n💰 Kapitał: `{amount} {currency}`\n"
             f"_Zsynchronizowano z panelem web._",
@@ -211,7 +203,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     win_rate = (profit / total * 100) if total else 0
     history_text = ""
     for h in history:
-        icon = "⚪" if h[2] == 'OPEN' else ("✅" if h[2] == 'PROFIT' else "❌")
+        icon = "⚪" if h[2] == 'OPEN' else ("✅" if h[2] in ('WIN', 'PROFIT') else "❌")
         time_str = h[0][11:16] if h[0] else "??:??"
         history_text += f"{icon} `{time_str}` | {h[1]}\n"
     msg = (f"📊 *STATYSTYKI QUANT SENTINEL*\n━━━━━━━━━━━━━━\n"
@@ -323,8 +315,7 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Błąd agenta: {e}")
 
 async def portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db.cursor.execute("SELECT timestamp, profit FROM trades WHERE status IN ('PROFIT','LOSS') AND profit IS NOT NULL ORDER BY timestamp ASC")
-    rows = db.cursor.fetchall()
+    rows = db._query("SELECT timestamp, profit FROM trades WHERE status IN ('WIN','PROFIT','LOSS') AND profit IS NOT NULL ORDER BY timestamp ASC")
     if not rows:
         await update.message.reply_text("Brak danych do wygenerowania portfela.")
         return

@@ -61,13 +61,20 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     # Session awareness — widen SL during killzones, skip off-hours
     session = analysis_data.get('session', 'unknown')
     is_killzone = analysis_data.get('is_killzone', False)
-    sl_multiplier = 1.2 if is_killzone else 1.0  # Killzone = wyższa zmienność → szerszy SL
+    sl_multiplier = 1.3 if is_killzone else 1.0  # Killzone = wyższa zmienność → szerszy SL
 
-    # Pobranie dynamicznych parametrów
+    # --- FILTR SESJI: skip Asian session (zbyt niska zmienność → noise stops) ---
+    if session == 'asian':
+        return {"direction": "CZEKAJ", "reason": "Sesja azjatycka — zbyt niska zmienność na XAU/USD"}
+
+    # Pobranie dynamicznych parametrów (zamiast hardcoded)
     from src.database import NewsDB
     db = NewsDB()
     risk_percent = db.get_param("risk_percent", 1.0)
     min_tp_distance_mult = db.get_param("min_tp_distance_mult", 1.0)
+    sl_atr_mult = db.get_param("sl_atr_multiplier", 1.5)
+    sl_min_distance = db.get_param("sl_min_distance", 4.0)
+    tp_to_sl_ratio = db.get_param("tp_to_sl_ratio", 2.5)
 
     # ========== 🤖 ENSEMBLE ML INTEGRATION ==========
     ensemble_result = None
@@ -144,13 +151,17 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
             # SMC i ML się zgadzają - dodaj confidence boost
             logic += f" [ML: {ensemble_result['confidence']:.0%}✅]"
         else:
-            # SMC i ML się NIE zgadzają - zmniejsz pewność
-            logger.warning(f"⚠️ SMC ({direction}) vs ML ({ml_signal}) KONFLIKT")
+            # SMC i ML się NIE zgadzają
+            logger.warning(f"⚠️ SMC ({direction}) vs ML ({ml_signal}) KONFLIKT (confidence: {ensemble_result['confidence']:.0%})")
             logic += f" [ML: {ensemble_result['confidence']:.0%}⚠️]"
 
-            # Jeśli ML jest pewny ale SMC mówi inaczej - możliwe ostrzeżenie
-            if ensemble_result['confidence'] > 0.7:
-                logger.info(f"💡 ML ma wysoką pewność ({ensemble_result['confidence']:.0%}) dla {ml_signal}, ale SMC mówi {direction}")
+            # BLOKADA: Jeśli ML ma wysoką pewność i mówi inaczej niż SMC — nie otwieraj trade'a
+            if ensemble_result['confidence'] > 0.55:
+                return {
+                    "direction": "CZEKAJ",
+                    "reason": f"ML ({ml_signal}, {ensemble_result['confidence']:.0%}) konflikt z SMC ({direction}) — czekamy",
+                    "ensemble_data": ensemble_result
+                }
 
     # Filtrowanie makro
     if macro_regime == "czerwony" and direction == "LONG":
@@ -167,39 +178,50 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         }
 
     # --- 2. SL i TP ---
+    # SL oparty na ATR zamiast stałego 2.0$ — zapobiega wyrzucaniu przez szum rynkowy
+    # Parametry z bazy: sl_atr_mult (def 1.5), sl_min_distance (def 4.0)
+    sl_distance = max(atr * sl_atr_mult, sl_min_distance) * sl_multiplier
+
     if direction == "LONG":
-        if grab and grab_dir == "bullish":
-            sl = round(swing_low - 1.0 * sl_multiplier, 2)
+        if grab and grab_dir == "bullish" and swing_low:
+            # Grab setup: SL pod swing low z buforem
+            sl = round(swing_low - max(atr * 0.3, 1.0), 2)
+            # Upewnij się że SL nie jest za ciasny nawet przy grab
+            if entry - sl < sl_distance * 0.7:
+                sl = round(entry - sl_distance, 2)
         else:
-            sl = round(entry - 2.0 * sl_multiplier, 2)
+            sl = round(entry - sl_distance, 2)
 
-        if fvg_type == "bullish" and fvg_upper and fvg_upper > entry:
+        # TP: cel bazowany na strukturze rynkowej
+        tp_distance = sl_distance * tp_to_sl_ratio
+        if fvg_type == "bullish" and fvg_upper and fvg_upper > entry + sl_distance:
             tp = round(fvg_upper, 2)
+        elif swing_high and swing_high > entry + sl_distance:
+            tp = round(swing_high, 2)
         else:
-            if swing_high and swing_high > entry:
-                tp = round(swing_high + 2.0, 2)
-            else:
-                tp = round(entry + max(atr, 2.0), 2)
+            tp = round(entry + tp_distance, 2)
 
-        if tp <= entry:
-            tp = round(entry + max(atr, 2.0), 2)
+        if tp <= entry + sl_distance:
+            tp = round(entry + tp_distance, 2)
 
     else:  # SHORT
-        if grab and grab_dir == "bearish":
-            sl = round(swing_high + 1.0 * sl_multiplier, 2)
+        if grab and grab_dir == "bearish" and swing_high:
+            sl = round(swing_high + max(atr * 0.3, 1.0), 2)
+            if sl - entry < sl_distance * 0.7:
+                sl = round(entry + sl_distance, 2)
         else:
-            sl = round(entry + 2.0 * sl_multiplier, 2)
+            sl = round(entry + sl_distance, 2)
 
-        if fvg_type == "bearish" and fvg_lower and fvg_lower < entry:
+        tp_distance = sl_distance * 2.5
+        if fvg_type == "bearish" and fvg_lower and fvg_lower < entry - sl_distance:
             tp = round(fvg_lower, 2)
+        elif swing_low and swing_low < entry - sl_distance:
+            tp = round(swing_low, 2)
         else:
-            if swing_low and swing_low < entry:
-                tp = round(swing_low - 2.0, 2)
-            else:
-                tp = round(entry - max(atr, 2.0), 2)
+            tp = round(entry - tp_distance, 2)
 
-        if tp >= entry:
-            tp = round(entry - max(atr, 2.0), 2)
+        if tp >= entry - sl_distance:
+            tp = round(entry - tp_distance, 2)
 
     # --- 3. Waluta i kapitał ---
     balance_in_usd = balance

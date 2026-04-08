@@ -50,7 +50,7 @@ export const SignalHistory = memo(function SignalHistory() {
 
     // Stagger by 2s to avoid request burst on page load
     const initTimer = setTimeout(() => void fetchData(), 2000);
-    const interval = setInterval(fetchData, 90000);
+    const interval = setInterval(fetchData, 45000);
     return () => { clearTimeout(initTimer); clearInterval(interval); };
   }, [apiConnected]);
 
