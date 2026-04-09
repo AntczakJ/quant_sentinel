@@ -13,8 +13,8 @@ export default function ChartPage() {
       {/* Chart: full-width, break out of container padding */}
       <div className="-mx-4 lg:-mx-6 -mt-4 lg:-mt-6">
         <div
-          className="flex flex-col bg-[#131722]"
-          style={{ height: 'calc(100vh - 110px)', minHeight: '500px' }}
+          className="flex flex-col"
+          style={{ background: 'var(--chart-bg)', height: 'calc(100vh - 110px)', minHeight: '500px' }}
         >
           <CandlestickChart />
         </div>

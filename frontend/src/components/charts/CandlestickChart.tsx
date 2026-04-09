@@ -20,6 +20,7 @@
 
 import { useEffect, useRef, useState, useCallback, useDeferredValue, memo, startTransition } from 'react';
 import { useToast } from '../ui/Toast';
+import { useTheme } from '../../hooks/useTheme';
 import {
   createChart,
   CrosshairMode,
@@ -74,31 +75,38 @@ async function setCachedCandles(interval: string, candles: Candle[]): Promise<vo
 /*  COLOR PALETTE (matches CSS vars / TradingView dark theme)                */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
-const COLORS = {
-  bg: '#131722',
-  gridLines: '#1e222d',
-  text: '#787b86',
-  crosshair: '#758696',
-  candleUp: '#26a69a',
-  candleDown: '#ef5350',
-  wickUp: '#26a69a',
-  wickDown: '#ef5350',
-  volumeUp: 'rgba(38,166,154,0.28)',
-  volumeDown: 'rgba(239,83,80,0.22)',
-  ema21: '#f0b90b',
-  bbUpper: 'rgba(33,150,243,0.45)',
-  bbMiddle: 'rgba(33,150,243,0.70)',
-  bbLower: 'rgba(33,150,243,0.45)',
-  rsiLine: '#7e57c2',
-  rsiOverbought: 'rgba(239,83,80,0.35)',
-  rsiOversold: 'rgba(38,166,154,0.35)',
-  priceLine: '#d1d4dc',
-  slLine: '#ef5350',
-  tpLine: '#26a69a',
-  entryLine: '#2196f3',
-  eqLine: '#f0b90b',
-  border: '#2a2e39',
-} as const;
+function getChartColors() {
+  const style = getComputedStyle(document.documentElement);
+  const isLight = document.documentElement.classList.contains('light');
+  return {
+    bg: style.getPropertyValue('--chart-bg').trim() || (isLight ? '#ffffff' : '#0c111b'),
+    gridLines: style.getPropertyValue('--chart-grid').trim() || (isLight ? '#f1f5f9' : '#1e293b'),
+    text: style.getPropertyValue('--chart-text').trim() || (isLight ? '#64748b' : '#94a3b8'),
+    crosshair: style.getPropertyValue('--chart-crosshair').trim() || (isLight ? '#94a3b8' : '#64748b'),
+    border: style.getPropertyValue('--chart-border').trim() || (isLight ? '#e2e8f0' : '#293548'),
+    candleUp: '#26a69a',
+    candleDown: '#ef5350',
+    wickUp: '#26a69a',
+    wickDown: '#ef5350',
+    volumeUp: 'rgba(38,166,154,0.28)',
+    volumeDown: 'rgba(239,83,80,0.22)',
+    ema21: '#f0b90b',
+    bbUpper: 'rgba(33,150,243,0.45)',
+    bbMiddle: 'rgba(33,150,243,0.70)',
+    bbLower: 'rgba(33,150,243,0.45)',
+    rsiLine: '#7e57c2',
+    rsiOverbought: 'rgba(239,83,80,0.35)',
+    rsiOversold: 'rgba(38,166,154,0.35)',
+    priceLine: isLight ? '#334155' : '#d1d4dc',
+    slLine: '#ef5350',
+    tpLine: '#26a69a',
+    entryLine: '#2196f3',
+    eqLine: '#f0b90b',
+  };
+}
+
+// Default colors (used during initial render)
+const COLORS = getChartColors();
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /*  OHLCV LEGEND (top-left overlay like TradingView)                         */
@@ -114,15 +122,15 @@ const OHLCVLegend = memo(function OHLCVLegend({ data, interval }: { data: Legend
   const col = up ? 'text-[#26a69a]' : 'text-[#ef5350]';
   return (
     <div className="absolute top-1 left-12 z-20 flex items-center gap-2 text-[11px] font-sans pointer-events-none select-none">
-      <span className="text-[#d1d4dc] font-semibold text-[12px]">XAU/USD</span>
-      <span className="text-[#787b86]">·</span>
-      <span className="text-[#787b86] font-medium">{interval}</span>
-      <span className="text-[#787b86] ml-1">O</span><span className={col}>{data.o.toFixed(2)}</span>
-      <span className="text-[#787b86]">H</span><span className={col}>{data.h.toFixed(2)}</span>
-      <span className="text-[#787b86]">L</span><span className={col}>{data.l.toFixed(2)}</span>
-      <span className="text-[#787b86]">C</span><span className={col}>{data.c.toFixed(2)}</span>
+      <span className="text-[var(--color-text-primary)] font-semibold text-[12px]">XAU/USD</span>
+      <span className="text-[var(--chart-text)]">·</span>
+      <span className="text-[var(--chart-text)] font-medium">{interval}</span>
+      <span className="text-[var(--chart-text)] ml-1">O</span><span className={col}>{data.o.toFixed(2)}</span>
+      <span className="text-[var(--chart-text)]">H</span><span className={col}>{data.h.toFixed(2)}</span>
+      <span className="text-[var(--chart-text)]">L</span><span className={col}>{data.l.toFixed(2)}</span>
+      <span className="text-[var(--chart-text)]">C</span><span className={col}>{data.c.toFixed(2)}</span>
       <span className={`ml-1 ${col} font-medium`}>{data.change >= 0 ? '+' : ''}{data.change.toFixed(2)}%</span>
-      {data.v > 0 && <span className="text-[#787b86] ml-1">Vol {data.v.toLocaleString()}</span>}
+      {data.v > 0 && <span className="text-[var(--chart-text)] ml-1">Vol {data.v.toLocaleString()}</span>}
     </div>
   );
 });
@@ -142,7 +150,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
   drawingCount: number; onClearDrawings: () => void;
 }) {
   return (
-    <div className="flex items-center gap-0.5 px-2 py-1 bg-[#131722] border-b border-[#1e222d]">
+    <div className="flex items-center gap-0.5 px-2 py-1 bg-[var(--chart-bg)] border-b border-[var(--chart-border)]">
       {INTERVALS.map((tf) => (
         <button
           key={tf}
@@ -150,13 +158,13 @@ const IntervalToolbar = memo(function IntervalToolbar({
           className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all duration-150 ${
             selected === tf
               ? 'bg-[#2962ff]/15 text-[#2962ff]'
-              : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
+              : 'text-[var(--chart-text)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-secondary)]'
           }`}
         >
           {tf}
         </button>
       ))}
-      <div className="w-px h-4 bg-[#1e222d] mx-1.5" />
+      <div className="w-px h-4 bg-[var(--color-secondary)] mx-1.5" />
       <div className="flex-1" />
       {drawingCount > 0 && (
         <button
@@ -173,7 +181,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
         className={`p-1.5 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1 ${
           smcVisible
             ? 'bg-[#f0b90b]/12 text-[#f0b90b] hover:bg-[#f0b90b]/20'
-            : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
+            : 'text-[var(--chart-text)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-secondary)]'
         }`}
         title={smcVisible ? 'Ukryj SMC overlay' : 'Pokaż SMC overlay (FVG, OB, S/D, EQ)'}
       >
@@ -183,7 +191,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
       <button
         onClick={onRefresh}
         disabled={refreshing}
-        className="p-1.5 rounded-md text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d] transition-all duration-150 disabled:opacity-40"
+        className="p-1.5 rounded-md text-[var(--chart-text)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-secondary)] transition-all duration-150 disabled:opacity-40"
         title="Refresh"
       >
         <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
@@ -198,6 +206,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
 
 export function CandlestickChart() {
   const toast = useToast();
+  const { isDark } = useTheme();
   const { selectedInterval, setSelectedInterval } = useTradingStore();
   const { compute: computeIndicators } = useIndicatorWorker();
 
@@ -843,6 +852,19 @@ export function CandlestickChart() {
     };
   }, [fetchData]);
 
+  /* ── Update chart colors on theme change ──────────────────────────────── */
+  useEffect(() => {
+    if (!mainChartRef.current || !rsiChartRef.current) return;
+    const c = getChartColors();
+    const layout = { background: { color: c.bg }, textColor: c.text };
+    const grid = {
+      vertLines: { color: c.gridLines, style: 4 as const },
+      horzLines: { color: c.gridLines, style: 4 as const },
+    };
+    mainChartRef.current.applyOptions({ layout, grid, rightPriceScale: { borderColor: c.border }, timeScale: { borderColor: c.border } });
+    rsiChartRef.current.applyOptions({ layout, grid, rightPriceScale: { borderColor: c.border }, timeScale: { borderColor: c.border } });
+  }, [isDark]);
+
   /* ── Toggle SMC overlay without refetching data ───────────────────────── */
   useEffect(() => {
     if (!smcOverlayRef.current || !rawCandlesRef.current.length) {return;}
@@ -892,19 +914,19 @@ export function CandlestickChart() {
 
         <OHLCVLegend data={deferredLegend} interval={selectedInterval} />
         {refreshing && (
-          <div className="absolute top-1 right-2 z-20 flex items-center gap-1 text-[10px] text-[#787b86]">
+          <div className="absolute top-1 right-2 z-20 flex items-center gap-1 text-[10px] text-[var(--chart-text)]">
             <RefreshCw size={9} className="animate-spin" /> updating…
           </div>
         )}
         {/* Loading / error overlays – container always in DOM so refs attach on first render */}
         {loading && isFirstLoad.current && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#131722]/80 text-[#787b86] text-sm gap-2">
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--chart-bg)]/80 text-[var(--chart-text)] text-sm gap-2">
             <RefreshCw size={14} className="animate-spin" />
             Loading chart…
           </div>
         )}
         {error && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#131722]/80 text-[#ef5350] text-xs gap-2">
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--chart-bg)]/80 text-[#ef5350] text-xs gap-2">
             <AlertCircle size={16} /> {error}
           </div>
         )}
@@ -948,7 +970,7 @@ export function CandlestickChart() {
               autoFocus
               type="text"
               placeholder="Enter text..."
-              className="bg-[#2a2e39] border border-[#2962ff]/60 text-[#d1d4dc] text-xs px-2 py-1 rounded outline-none w-40 shadow-lg"
+              className="bg-[var(--color-secondary)] border border-[#2962ff]/60 text-[var(--color-text-primary)] text-xs px-2 py-1 rounded outline-none w-40 shadow-lg"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   handleTextSubmit((e.target as HTMLInputElement).value);
@@ -970,8 +992,8 @@ export function CandlestickChart() {
       </div>
 
       {/* RSI sub-chart */}
-      <div className="relative shrink-0 border-t border-[#2a2e39]">
-        <span className="absolute top-0.5 left-2 z-20 text-[10px] text-[#787b86] font-sans pointer-events-none">
+      <div className="relative shrink-0 border-t border-[var(--chart-border)]">
+        <span className="absolute top-0.5 left-2 z-20 text-[10px] text-[var(--chart-text)] font-sans pointer-events-none">
           RSI(14)
         </span>
         <div ref={rsiContainerRef} className="w-full" style={{ height: 120 }} />
