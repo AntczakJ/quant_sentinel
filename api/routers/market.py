@@ -5,8 +5,16 @@ api/routers/market.py - Market data endpoints
 import sys
 import os
 import asyncio
+from enum import Enum
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
+
+
+class TimeframeEnum(str, Enum):
+    M5 = "5m"
+    M15 = "15m"
+    H1 = "1h"
+    H4 = "4h"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -273,7 +281,7 @@ def _filter_trading_candles(df, symbol: str, desired_count: int):
 )
 async def get_candles(
     symbol: str = Query("XAU/USD", description="Trading symbol (use XAU/USD for gold)"),
-    interval: str = Query("15m", description="Candle interval (5m, 15m, 1h, 4h)"),
+    interval: TimeframeEnum = Query(TimeframeEnum.M15, description="Candle interval (5m, 15m, 1h, 4h)"),
     limit: int = Query(200, ge=1, le=500, description="Number of candles")
 ):
     """
@@ -514,7 +522,7 @@ async def get_ticker(symbol: str = Query("XAU/USD", description="Trading symbol 
 )
 async def get_indicators(
     symbol: str = Query("XAU/USD", description="Trading symbol (use XAU/USD for gold)"),
-    interval: str = Query("15m", description="Candle interval")
+    interval: TimeframeEnum = Query(TimeframeEnum.M15, description="Candle interval")
 ):
     """
     Get technical indicators for a symbol.
@@ -638,7 +646,7 @@ async def get_market_status():
 @router.get("/volume-profile", summary="Get Volume Profile data")
 async def get_volume_profile(
     symbol: str = Query("XAU/USD", description="Symbol"),
-    interval: str = Query("15m", description="Interval"),
+    interval: TimeframeEnum = Query(TimeframeEnum.M15, description="Interval"),
     limit: int = Query(100, description="Number of candles"),
 ):
     """

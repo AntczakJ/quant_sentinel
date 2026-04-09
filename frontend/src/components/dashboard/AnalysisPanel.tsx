@@ -6,6 +6,7 @@ import { useEffect, useState, useRef } from 'react';
 import { AlertCircle, RefreshCw, Zap, Clock, BarChart2 } from 'lucide-react';
 import { analysisAPI } from '../../api/client';
 import { MarkdownText } from '../ui/MarkdownText';
+import { useToast } from '../ui/Toast';
 
 interface AnalysisData {
   timeframe: string;
@@ -88,6 +89,7 @@ function MtfWidget({ data }: { data: MtfConfluence }) {
 }
 
 export function AnalysisPanel() {
+  const toast = useToast();
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [mtfData, setMtfData] = useState<MtfConfluence | null>(null);
   const [loading, setLoading] = useState(false);
@@ -120,7 +122,7 @@ export function AnalysisPanel() {
           ? 'Analysis timeout — backend is processing. Try again in a moment.'
           : 'Failed to fetch analysis';
       if (isFirstLoad.current) {setError(msg);}
-      console.error(err);
+      toast.error(msg);
     } finally {
       setLoading(false);
       setRefreshing(false);

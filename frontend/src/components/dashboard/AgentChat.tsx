@@ -177,12 +177,12 @@ export function AgentChat() {
           <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">
             AI Agent
           </span>
-          {agentAvailable === false && (
+          {!agentAvailable && (
             <span className="text-xs text-accent-red bg-red-900/20 px-2 py-0.5 rounded">
               Offline
             </span>
           )}
-          {agentAvailable === true && threadId && (
+          {agentAvailable && threadId && (
             <span className="text-xs text-accent-green bg-green-900/20 px-2 py-0.5 rounded">
               Pamięć aktywna
             </span>
@@ -290,14 +290,14 @@ export function AgentChat() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={agentAvailable === false ? 'Agent offline — sprawdź API' : 'Zapytaj agenta... (Enter = wyślij)'}
-          disabled={loading || agentAvailable === false}
+          placeholder={!agentAvailable ? 'Agent offline — sprawdź API' : 'Zapytaj agenta... (Enter = wyślij)'}
+          disabled={loading || !agentAvailable}
           rows={2}
           className="flex-1 bg-dark-secondary border border-dark-secondary focus:border-accent-green/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 resize-none transition-colors outline-none disabled:opacity-40"
         />
         <button
           onClick={() => void sendMessage(input)}
-          disabled={loading || !input.trim() || agentAvailable === false}
+          disabled={loading || !input.trim() || !agentAvailable}
           className="self-end px-3 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white rounded-lg transition-colors"
         >
           <Send size={16} />

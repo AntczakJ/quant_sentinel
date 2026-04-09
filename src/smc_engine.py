@@ -178,6 +178,45 @@ def get_usdjpy_history(tf: str, length: int = 30) -> tuple:
         return [], 0
 
 
+def get_macro_quotes() -> dict:
+    """
+    Fetch macro indicators for regime detection via Twelve Data ETF proxies.
+
+    Symbols (1 credit each, cached by data provider):
+      - UUP  (Invesco DB USD Index Bull ETF) — dollar strength proxy
+      - TLT  (iShares 20+ Year Treasury Bond ETF) — INVERSE yield proxy
+             TLT goes DOWN when yields go UP, so high TLT = low yields = gold bullish
+      - VIXY (ProShares VIX Short-Term Futures ETF) — volatility/fear proxy
+
+    Returns dict with raw prices. Caller interprets direction.
+    Falls back gracefully if any symbol unavailable.
+    """
+    result = {"uup": None, "tlt": None, "vixy": None}
+
+    # Map: Twelve Data symbol → result key
+    symbols = {
+        "UUP": "uup",    # Dollar strength ETF (up = strong dollar)
+        "TLT": "tlt",    # Treasury bond ETF (up = low yields = gold bullish)
+        "VIXY": "vixy",  # VIX ETF proxy (up = high fear = gold bullish)
+    }
+
+    try:
+        provider = _get_data_provider()
+
+        for td_symbol, key in symbols.items():
+            try:
+                data = provider.get_current_price(td_symbol)
+                if data and 'price' in data:
+                    result[key] = float(data['price'])
+            except (AttributeError, TypeError, ValueError):
+                pass
+
+    except (ImportError, AttributeError) as e:
+        logger.debug(f"Macro quotes fetch skipped: {e}")
+
+    return result
+
+
 def calculate_atr(df: pd.DataFrame, length: int = 14) -> float:
     """Oblicza ATR na podstawie danych OHLC. Zapisuje kolumnę 'tr' w df."""
     # True Range
@@ -195,18 +234,150 @@ def calculate_atr(df: pd.DataFrame, length: int = 14) -> float:
 
 def get_macro_regime(usdjpy_prices: list, current_usdjpy: float, atr: float, atr_mean: float) -> dict:
     """
-    Określa reżim makro na podstawie Z-score USD/JPY i porównania ATR z jego średnią.
+    Multi-indicator macro regime detection.
+
+    Uses up to 5 independent signals (require 2+ to agree for regime flip):
+      1. USD/JPY Z-score (dollar strength proxy)
+      2. ATR regime (volatility — high vol favors gold)
+      3. DXY (Dollar Index) — broad dollar strength
+      4. US10Y (Treasury Yield) — inverse gold correlation
+      5. VIX (Fear Index) — risk-off favors gold
+
+    Regimes:
+      "zielony"   (green)  = bullish for gold (weak USD, high vol, low yields)
+      "czerwony"  (red)    = bearish for gold (strong USD, low vol, high yields)
+      "neutralny" (neutral) = mixed signals
     """
+    signals = {}
+
+    # --- Signal 1: USD/JPY Z-score (inverse correlation with gold) ---
+    usdjpy_zscore = 0.0
     if len(usdjpy_prices) >= 20:
         mean = np.mean(usdjpy_prices[-20:])
         std = np.std(usdjpy_prices[-20:])
-        zscore = (current_usdjpy - mean) / std if std != 0 else 0
-    else:
-        zscore = 0
+        usdjpy_zscore = (current_usdjpy - mean) / std if std > 0 else 0
+        if usdjpy_zscore < -1.0:
+            signals["usdjpy"] = -1  # weak dollar → gold bullish
+        elif usdjpy_zscore > 1.0:
+            signals["usdjpy"] = 1   # strong dollar → gold bearish
+        else:
+            signals["usdjpy"] = 0
 
-    if zscore < -1 and atr > atr_mean:
+    # --- Signal 2: Volatility regime (ATR vs mean) ---
+    atr_ratio = atr / atr_mean if atr_mean > 0 else 1.0
+    if atr_ratio > 1.2:
+        signals["volatility"] = -1   # high vol → gold rises (safe haven)
+    elif atr_ratio < 0.8:
+        signals["volatility"] = 1    # low vol → gold consolidates
+    else:
+        signals["volatility"] = 0
+
+    # --- Signals 3-5: ETF proxies from Twelve Data ---
+    macro_quotes = get_macro_quotes()
+
+    # UUP (Dollar Bull ETF): UUP up = strong dollar = bearish gold
+    uup = macro_quotes.get("uup")
+    if uup is not None:
+        # UUP typical range 25-30. Above 28 = strong $, below 26 = weak $
+        if uup > 28.0:
+            signals["dollar"] = 1     # strong dollar → bearish gold
+        elif uup < 26.0:
+            signals["dollar"] = -1    # weak dollar → bullish gold
+        else:
+            signals["dollar"] = 0
+
+    # TLT (Treasury Bond ETF — INVERSE yield proxy):
+    #   TLT UP = yields DOWN = low opportunity cost = gold BULLISH
+    #   TLT DOWN = yields UP = high opportunity cost = gold BEARISH
+    tlt = macro_quotes.get("tlt")
+    if tlt is not None:
+        # TLT typical range 80-110. Above 95 = low yields = gold bullish
+        if tlt > 95.0:
+            signals["yields"] = -1   # low yields → bullish gold
+        elif tlt < 85.0:
+            signals["yields"] = 1    # high yields → bearish gold
+        else:
+            signals["yields"] = 0
+
+    # VIXY (VIX ETF proxy): VIXY up = high fear = risk-off = gold BULLISH
+    vixy = macro_quotes.get("vixy")
+    if vixy is not None:
+        # VIXY typical range 15-60. Above 35 = high fear, below 20 = complacency
+        if vixy > 35.0:
+            signals["fear"] = -1    # high fear → risk-off → gold bullish
+        elif vixy < 20.0:
+            signals["fear"] = 1     # low fear → risk-on → gold bearish
+        else:
+            signals["fear"] = 0
+
+    # --- Signal 6: COT (Commitment of Traders) — weekly, contrarian ---
+    try:
+        from src.cot_data import get_gold_cot_signal
+        cot = get_gold_cot_signal()
+        if cot and cot.get("signal") is not None:
+            signals["cot"] = cot["signal"]
+    except (ImportError, AttributeError):
+        pass
+
+    # --- Signal 7: FRED real yields — gold's #1 predictor (correlation -0.82) ---
+    try:
+        from src.macro_data import get_fred_data
+        fred = get_fred_data()
+        fred_signal = fred.get("composite_signal", 0)
+        if fred_signal != 0:
+            signals["real_yields"] = fred_signal
+    except (ImportError, AttributeError):
+        pass
+
+    # --- Signal 8: Retail sentiment — contrarian (Myfxbook) ---
+    try:
+        from src.macro_data import get_retail_sentiment
+        retail = get_retail_sentiment()
+        retail_signal = retail.get("signal", 0)
+        if retail_signal != 0:
+            signals["retail_sentiment"] = retail_signal
+    except (ImportError, AttributeError):
+        pass
+
+    # --- Signal 9: Seasonality — month + day-of-week historical bias ---
+    try:
+        from src.macro_data import get_seasonality_signal
+        season = get_seasonality_signal()
+        season_signal = season.get("combined_signal", 0)
+        if season_signal != 0:
+            signals["seasonality"] = season_signal
+    except (ImportError, AttributeError):
+        pass
+
+    # --- Signal 10: Finnhub news sentiment — real-time headlines ---
+    try:
+        from src.news_feed import get_gold_news_signal
+        news = get_gold_news_signal()
+        news_signal = news.get("signal", 0)
+        if news_signal != 0:
+            signals["news"] = news_signal
+    except (ImportError, AttributeError):
+        pass
+
+    # --- Signal 11: Geopolitical Risk Index (GPR) ---
+    try:
+        from src.gpr_index import get_gpr_signal
+        gpr = get_gpr_signal()
+        gpr_signal = gpr.get("signal", 0)
+        if gpr_signal != 0:
+            signals["geopolitical"] = gpr_signal
+    except (ImportError, AttributeError):
+        pass
+
+    # --- Combine: require 2+ signals to agree for regime flip ---
+    signal_values = list(signals.values())
+    bullish_count = sum(1 for s in signal_values if s == -1)
+    bearish_count = sum(1 for s in signal_values if s == 1)
+    total_signals = len(signal_values)
+
+    if bullish_count >= 2 and bullish_count > bearish_count:
         regime = "zielony"
-    elif zscore > 1 and atr < atr_mean:
+    elif bearish_count >= 2 and bearish_count > bullish_count:
         regime = "czerwony"
     else:
         regime = "neutralny"
@@ -214,9 +385,17 @@ def get_macro_regime(usdjpy_prices: list, current_usdjpy: float, atr: float, atr
     return {
         "regime": regime,
         "usdjpy": current_usdjpy,
-        "usdjpy_zscore": round(zscore, 2),
+        "usdjpy_zscore": round(usdjpy_zscore, 2),
         "atr": atr,
-        "atr_mean": round(atr_mean, 2)
+        "atr_mean": round(atr_mean, 2),
+        "atr_ratio": round(atr_ratio, 2),
+        "uup": uup,
+        "tlt": tlt,
+        "vixy": vixy,
+        "signals": signals,
+        "bullish_count": bullish_count,
+        "bearish_count": bearish_count,
+        "total_signals": total_signals,
     }
 
 
@@ -297,35 +476,58 @@ def detect_market_structure_shift(df: pd.DataFrame, swing_points: dict, liquidit
 
 def detect_order_block(df: pd.DataFrame, trend: str) -> float:
     """
-    Ulepszona detekcja Order Block.
-    Dla trendu bull: ostatnia świeca spadkowa przed silną świecą wzrostową (body > 1.5 * avg_body).
-    Dla trendu bear: ostatnia świeca wzrostowa przed silną świecą spadkową.
-    Sprawdza też, czy OB nie został już „zmitigowany" (cena przeszła przez niego).
-    Zwraca cenę OB (low dla bull, high dla bear).
+    Enhanced Order Block detection with volume weighting and time decay.
+
+    For bull: last bearish candle before a strong bullish candle (body > 1.5 * avg).
+    For bear: last bullish candle before a strong bearish candle.
+    Checks mitigation (price swept through OB).
+
+    Scoring: volume_weight * freshness_decay → picks highest-scoring OB.
+    Returns OB price (low for bull, high for bear).
     """
     body = abs(df['close'] - df['open'])
     avg_body = body.tail(20).mean()
     ob_price = df['close'].iloc[-1]  # fallback
-    impulse_mult = 1.5  # Silniejszy filtr — wymaga 1.5x średniego body
+    impulse_mult = 1.5
 
-    for i in range(len(df)-2, max(0, len(df)-30), -1):
+    has_volume = 'volume' in df.columns
+    avg_volume = df['volume'].tail(20).mean() if has_volume else 1.0
+    n = len(df)
+    best_score = -1.0
+
+    for i in range(n - 2, max(0, n - 30), -1):
+        candidate = None
         if trend == "bull":
-            if df['close'].iloc[i] < df['open'].iloc[i] and body.iloc[i+1] > avg_body * impulse_mult:
-                if df['close'].iloc[i+1] > df['open'].iloc[i+1]:
+            if df['close'].iloc[i] < df['open'].iloc[i] and body.iloc[i + 1] > avg_body * impulse_mult:
+                if df['close'].iloc[i + 1] > df['open'].iloc[i + 1]:
                     candidate = df['low'].iloc[i]
-                    # Sprawdź, czy OB nie został zmitigowany (cena spadła poniżej)
-                    mitigated = any(df['low'].iloc[j] < candidate for j in range(i+2, len(df)))
-                    if not mitigated:
-                        ob_price = candidate
-                        break
+                    mitigated = any(df['low'].iloc[j] < candidate for j in range(i + 2, n))
+                    if mitigated:
+                        candidate = None
         else:
-            if df['close'].iloc[i] > df['open'].iloc[i] and body.iloc[i+1] > avg_body * impulse_mult:
-                if df['close'].iloc[i+1] < df['open'].iloc[i+1]:
+            if df['close'].iloc[i] > df['open'].iloc[i] and body.iloc[i + 1] > avg_body * impulse_mult:
+                if df['close'].iloc[i + 1] < df['open'].iloc[i + 1]:
                     candidate = df['high'].iloc[i]
-                    mitigated = any(df['high'].iloc[j] > candidate for j in range(i+2, len(df)))
-                    if not mitigated:
-                        ob_price = candidate
-                        break
+                    mitigated = any(df['high'].iloc[j] > candidate for j in range(i + 2, n))
+                    if mitigated:
+                        candidate = None
+
+        if candidate is not None:
+            # Volume weight: higher volume at OB = stronger level
+            vol_weight = (df['volume'].iloc[i] / avg_volume) if has_volume and avg_volume > 0 else 1.0
+            vol_weight = min(vol_weight, 3.0)  # cap at 3x
+
+            # Time decay: fresher OB = more relevant (exponential decay)
+            bars_ago = n - 1 - i
+            decay_rate = 0.05  # ~60% weight at 10 bars ago, ~36% at 20 bars
+            freshness = np.exp(-decay_rate * bars_ago)
+
+            score = vol_weight * freshness
+
+            if score > best_score:
+                best_score = score
+                ob_price = candidate
+
     return round(ob_price, 2)
 
 
@@ -438,29 +640,46 @@ def get_exchange_rate(base: str = "USD", to: str = "PLN") -> float | None:
 
 def find_order_blocks(df: pd.DataFrame, trend: str, max_blocks: int = 3) -> list:
     """
-    Wyszukuje kilka ostatnich Order Blocków (OB) dla danego trendu.
-    Zwraca listę słowników: [{'price': float, 'type': 'bullish'/'bearish'}, ...]
+    Wyszukuje Order Blocki z volume weighting i time decay.
+    Sortuje po score (volume * freshness) — najsilniejsze pierwsze.
+    Zwraca listę: [{'price': float, 'type': str, 'score': float, 'bars_ago': int}, ...]
     """
     body = abs(df['close'] - df['open'])
     avg_body = body.tail(20).mean()
-    blocks = []
+    has_volume = 'volume' in df.columns
+    avg_volume = df['volume'].tail(20).mean() if has_volume else 1.0
+    n = len(df)
+    candidates = []
 
-    for i in range(len(df)-2, max(0, len(df)-50), -1):
-        if len(blocks) >= max_blocks:
-            break
+    for i in range(n - 2, max(0, n - 50), -1):
+        ob_price = None
+        ob_type = None
         if trend == "bull":
-            # Szukamy świecy spadkowej (close < open) przed silną wzrostową
-            if df['close'].iloc[i] < df['open'].iloc[i] and body.iloc[i+1] > avg_body:
-                if df['close'].iloc[i+1] > df['open'].iloc[i+1]:
+            if df['close'].iloc[i] < df['open'].iloc[i] and body.iloc[i + 1] > avg_body:
+                if df['close'].iloc[i + 1] > df['open'].iloc[i + 1]:
                     ob_price = df['low'].iloc[i]
-                    blocks.append({'price': round(ob_price, 2), 'type': 'bullish'})
+                    ob_type = 'bullish'
         else:
-            # Szukamy świecy wzrostowej przed silną spadkową
-            if df['close'].iloc[i] > df['open'].iloc[i] and body.iloc[i+1] > avg_body:
-                if df['close'].iloc[i+1] < df['open'].iloc[i+1]:
+            if df['close'].iloc[i] > df['open'].iloc[i] and body.iloc[i + 1] > avg_body:
+                if df['close'].iloc[i + 1] < df['open'].iloc[i + 1]:
                     ob_price = df['high'].iloc[i]
-                    blocks.append({'price': round(ob_price, 2), 'type': 'bearish'})
-    return blocks
+                    ob_type = 'bearish'
+
+        if ob_price is not None:
+            bars_ago = n - 1 - i
+            vol_weight = min((df['volume'].iloc[i] / avg_volume) if has_volume and avg_volume > 0 else 1.0, 3.0)
+            freshness = np.exp(-0.05 * bars_ago)
+            score = vol_weight * freshness
+            candidates.append({
+                'price': round(ob_price, 2),
+                'type': ob_type,
+                'score': round(score, 3),
+                'bars_ago': bars_ago,
+            })
+
+    # Sort by score (strongest first) and return top N
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    return candidates[:max_blocks]
 
 
 def detect_bos(df: pd.DataFrame, swing_points: dict) -> tuple:
@@ -792,6 +1011,13 @@ def get_smc_analysis(tf: str) -> dict | None:
             "usdjpy_zscore": macro["usdjpy_zscore"],
             "atr": macro["atr"],
             "atr_mean": macro["atr_mean"],
+            "atr_ratio": macro.get("atr_ratio", 1.0),
+            "uup": macro.get("uup"),
+            "tlt": macro.get("tlt"),
+            "vixy": macro.get("vixy"),
+            "macro_signals": macro.get("signals", {}),
+            "macro_bullish_count": macro.get("bullish_count", 0),
+            "macro_bearish_count": macro.get("bearish_count", 0),
             "fvg_type": fvg["type"],
             "fvg_upper": fvg["upper"],
             "fvg_lower": fvg["lower"],
@@ -830,6 +1056,7 @@ def get_smc_analysis(tf: str) -> dict | None:
             'session': session_info['session'],
             'is_killzone': session_info['is_killzone'],
             'volatility_expected': session_info['volatility_expected'],
+            'session_info': session_info,  # full session dict for score_setup_quality
         }
 
     except Exception as e:
@@ -858,7 +1085,7 @@ def get_mtf_confluence(symbol: str = "XAU/USD") -> dict:
         try:
             provider = _get_data_provider()
             provider.prefetch_all_timeframes(symbol)
-        except Exception:
+        except (ImportError, AttributeError):
             pass
 
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -1097,17 +1324,33 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         score += 6
         factors_detail['ichimoku'] = 6
 
-    # Makro regime alignment (max 8 pkt)
+    # Makro regime alignment (max 12 pkt — scales with signal count)
     macro = analysis.get('macro_regime', 'neutralny')
+    macro_bullish = analysis.get('macro_bullish_count', 0)
+    macro_bearish = analysis.get('macro_bearish_count', 0)
     if (direction == "LONG" and macro == "zielony") or \
        (direction == "SHORT" and macro == "czerwony"):
-        score += 8
-        factors_detail['macro'] = 8
+        # Scale bonus by how many macro signals agree (2=base, 3-5=stronger)
+        aligned_count = macro_bullish if direction == "LONG" else macro_bearish
+        macro_pts = min(4 + aligned_count * 2, 12)  # 4+2n, max 12
+        score += macro_pts
+        factors_detail['macro'] = macro_pts
+        factors_detail['macro_signals_aligned'] = aligned_count
 
-    # Killzone bonus (max 4 pkt)
+    # Session-aware scoring
+    session_name = analysis.get('session', 'unknown')
     if analysis.get('is_killzone'):
+        # Killzone (London open / NY overlap) — highest probability setups
+        score += 8
+        factors_detail['killzone'] = 8
+    elif session_name == 'overlap':
+        # London+NY overlap — good liquidity even outside killzone
         score += 4
-        factors_detail['killzone'] = 4
+        factors_detail['session_overlap'] = 4
+    elif session_name == 'asian':
+        # Asian session — low vol, higher failure rate for breakouts
+        score -= 3
+        factors_detail['session_asian_penalty'] = -3
 
     # --- DYNAMICZNA KOREKTA Z BAZY (historyczna skuteczność grade'a) ---
     try:
@@ -1126,13 +1369,47 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
                 penalty = min(10, (0.5 - stats['win_rate']) * 40)
                 score -= penalty
                 factors_detail['history_penalty'] = round(-penalty, 1)
-    except Exception:
+    except (TypeError, KeyError, AttributeError, ImportError):
         pass
+
+    # --- PENALTIES (reduce score for risky conditions) ---
+
+    # Penalty: entry far from nearest OB (weak support/resistance)
+    if ob_price and price and abs(price - ob_price) > 0:
+        atr_val = analysis.get('atr', 5.0)
+        ob_distance_atr = abs(price - ob_price) / atr_val if atr_val > 0 else 0
+        if ob_distance_atr > 2.0:
+            penalty = min(8, (ob_distance_atr - 2.0) * 4)
+            score -= penalty
+            factors_detail['ob_distance_penalty'] = round(-penalty, 1)
+
+    # Penalty: RSI extreme against direction (likely reversal zone)
+    if direction == "LONG" and rsi > 75:
+        score -= 8
+        factors_detail['rsi_extreme_penalty'] = -8
+    elif direction == "SHORT" and rsi < 25:
+        score -= 8
+        factors_detail['rsi_extreme_penalty'] = -8
+
+    # Penalty: opposing macro regime (scales with signal count)
+    if (direction == "LONG" and macro == "czerwony") or \
+       (direction == "SHORT" and macro == "zielony"):
+        opposing_count = macro_bearish if direction == "LONG" else macro_bullish
+        macro_penalty = min(4 + opposing_count * 2, 14)  # 4+2n, max 14
+        score -= macro_penalty
+        factors_detail['macro_opposing_penalty'] = -macro_penalty
+
+    # Penalty: off-hours / low liquidity session
+    session_info = analysis.get('session_info', {})
+    if session_info.get('volatility_expected') == 'low' or \
+       session_info.get('session') in ('off_hours',):
+        score -= 5
+        factors_detail['low_liquidity_penalty'] = -5
 
     # Clamp score to 0-100
     score = max(0, min(100, score))
 
-    # --- GRADE ASSIGNMENT ---
+    # --- GRADE ASSIGNMENT (tightened thresholds) ---
     if score >= 75:
         grade = "A+"
         risk_mult = 1.5
@@ -1141,9 +1418,9 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         grade = "A"
         risk_mult = 1.0
         target_rr = 2.5
-    elif score >= 35:
+    elif score >= 40:
         grade = "B"
-        risk_mult = 0.7
+        risk_mult = 0.5
         target_rr = 2.0
     else:
         grade = "C"

@@ -52,12 +52,13 @@ def test_individual_models():
     # Test DQN
     logger.info("\n🤖 Testing DQN...")
     close_prices = df['close'].values[-20:]
-    dqn_action = predict_dqn_action(close_prices, balance=1.0, position=0)
-    if dqn_action is not None:
+    dqn_result = predict_dqn_action(close_prices, balance=1.0, position=0)
+    if dqn_result is not None:
+        action = dqn_result.get('action', 0) if isinstance(dqn_result, dict) else dqn_result
         action_names = {0: "HOLD", 1: "BUY", 2: "SELL"}
-        logger.info(f"✅ DQN Action: {action_names.get(dqn_action, 'UNKNOWN')} ({dqn_action})")
+        logger.info(f"DQN Action: {action_names.get(action, 'UNKNOWN')} ({dqn_result})")
     else:
-        logger.warning("⚠️ DQN not available (expected if model not trained)")
+        logger.warning("DQN not available (expected if model not trained)")
 
 
 def test_ensemble():

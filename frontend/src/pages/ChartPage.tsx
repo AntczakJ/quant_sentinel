@@ -1,5 +1,5 @@
 /**
- * pages/ChartPage.tsx — Primary trading view: Chart + Signal sidebar + Portfolio
+ * pages/ChartPage.tsx — Primary trading view: Chart (full-width) + Signal/Portfolio panels below
  * This is the heaviest page (chart + drawings + SMC overlay), loaded first.
  */
 
@@ -9,21 +9,32 @@ import { PortfolioStats } from '../components/dashboard/PortfolioStats';
 
 export default function ChartPage() {
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        <div className="lg:col-span-3 card p-3 flex flex-col" style={{ height: '750px' }}>
+    <div className="space-y-0">
+      {/* Chart: full-width, break out of container padding */}
+      <div className="-mx-4 lg:-mx-6 -mt-4 lg:-mt-6">
+        <div
+          className="flex flex-col bg-[#131722]"
+          style={{ height: 'calc(100vh - 110px)', minHeight: '500px' }}
+        >
           <CandlestickChart />
         </div>
+      </div>
 
-        <div className="flex flex-col gap-4">
-          <div className="card">
-            <h2 className="section-title mb-3">Signals</h2>
-            <SignalPanel />
+      {/* Signal & Portfolio panels below chart */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+        <div className="card-elevated">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-1 h-4 rounded-full bg-accent-blue" />
+            <h2 className="section-title mb-0">Signals</h2>
           </div>
-          <div className="card">
-            <h2 className="section-title mb-3">Portfolio</h2>
-            <PortfolioStats />
+          <SignalPanel />
+        </div>
+        <div className="card-elevated">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-1 h-4 rounded-full bg-accent-green" />
+            <h2 className="section-title mb-0">Portfolio</h2>
           </div>
+          <PortfolioStats />
         </div>
       </div>
     </div>

@@ -49,8 +49,26 @@ async def lifespan(app: FastAPI):
     Heavy model loading runs in a background thread so uvicorn starts
     accepting HTTP / WebSocket connections immediately.
     """
-    # Startup — mark server as starting, yield quickly
-    logger.info("🚀 Starting QUANT SENTINEL API...")
+    # Startup — validate config, then start
+    logger.info("Starting QUANT SENTINEL API...")
+    try:
+        from src.config import validate_startup_config
+        validate_startup_config()
+    except (ImportError, AttributeError):
+        pass
+
+    # Database: enable WAL mode + startup backup + users table
+    try:
+        from src.db_backup import enable_wal_mode, create_backup
+        enable_wal_mode()
+        create_backup(reason="startup")
+    except (ImportError, AttributeError):
+        pass
+    try:
+        from src.auth import create_users_table
+        create_users_table()
+    except (ImportError, AttributeError):
+        pass
 
     async def _load_models():
         """Load ML models off the event-loop thread (import + init + load)."""
@@ -104,18 +122,41 @@ async def lifespan(app: FastAPI):
     scanner_task = asyncio.create_task(_background_scanner())
     prices_task = asyncio.create_task(_broadcast_prices_task())
     resolver_task = asyncio.create_task(_auto_resolve_trades())
-    logger.info("📡 Background tasks started (scanner 15min | prices 5s | resolver 5min)")
+    monitor_task = asyncio.create_task(_monitoring_loop())
+    logger.info("Background tasks started (scanner 15min | prices 5s | resolver 5min | monitor 1h)")
 
     yield
 
-    # Shutdown — cancel all background tasks
-    for task in (model_task, scanner_task, prices_task, resolver_task):
+    # ── Graceful shutdown with drain period ──
+    logger.info("Shutdown initiated — draining pending operations (30s timeout)...")
+
+    # 1. Close all WebSocket connections gracefully
+    try:
+        await connection_manager.close_all()
+    except Exception:
+        pass
+
+    # 2. Cancel background tasks with drain timeout
+    tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task]
+    for task in tasks:
         task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
-    logger.info("🛑 Shutting down QUANT SENTINEL API...")
+
+    # Wait up to 30s for tasks to finish current work
+    done, pending = await asyncio.wait(tasks, timeout=30.0, return_when=asyncio.ALL_COMPLETED)
+    if pending:
+        logger.warning(f"{len(pending)} task(s) did not finish within 30s — force cancelling")
+        for task in pending:
+            task.cancel()
+
+    # 3. Flush database
+    try:
+        from src.database import NewsDB
+        db = NewsDB()
+        db.conn.commit()
+    except Exception:
+        pass
+
+    logger.info("QUANT SENTINEL API shutdown complete")
 
 
 async def _background_scanner():
@@ -303,7 +344,7 @@ async def _broadcast_prices_task():
                             "change_pct": float(ticker.get("change_pct", 0)),
                             "high_24h": float(ticker["high_24h"]) if ticker.get("high_24h") else None,
                             "low_24h": float(ticker["low_24h"]) if ticker.get("low_24h") else None,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         },
                         "prices",
                     )
@@ -460,6 +501,10 @@ app = FastAPI(
 )
 
 # Middleware
+from api.middleware.rate_limit import RateLimitMiddleware
+from api.middleware.jwt_auth import JwtAuthMiddleware
+app.add_middleware(JwtAuthMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=512)  # Compress responses > 512 bytes
 app.add_middleware(
     CORSMiddleware,
@@ -531,8 +576,72 @@ async def etag_cache_middleware(request: Request, call_next):
 app.connection_manager = connection_manager
 app.state.app_state = app_state
 
+async def _monitoring_loop():
+    """
+    Background monitoring: drift checks, daily summaries, health alerts.
+    Runs every hour. Daily summary at 22:00 UTC (end of NY session).
+    """
+    await asyncio.sleep(120)  # 2 min initial delay (let other tasks warm up)
+    last_daily_date = None
+    last_weekly_weekday = None
+
+    while True:
+        try:
+            now = datetime.datetime.now(datetime.timezone.utc)
+
+            # Daily summary + report at 22:00 UTC (once per day)
+            if now.hour == 22 and last_daily_date != now.date():
+                try:
+                    from src.monitoring import send_daily_summary
+                    await asyncio.to_thread(send_daily_summary)
+                    last_daily_date = now.date()
+                except (ImportError, AttributeError) as e:
+                    logger.debug(f"Daily summary skipped: {e}")
+
+                # Generate persistent daily report
+                try:
+                    from src.compliance import generate_daily_report
+                    await asyncio.to_thread(generate_daily_report)
+                except (ImportError, AttributeError):
+                    pass
+
+                # Data retention (monthly, on 1st of month)
+                if now.day == 1:
+                    try:
+                        from src.compliance import archive_old_data
+                        await asyncio.to_thread(archive_old_data)
+                    except (ImportError, AttributeError):
+                        pass
+
+            # Weekly report on Sunday
+            if now.weekday() == 6 and now.hour == 20 and last_weekly_weekday != now.isocalendar()[1]:
+                try:
+                    from src.monitoring import send_weekly_report
+                    await asyncio.to_thread(send_weekly_report)
+                    last_weekly_weekday = now.isocalendar()[1]
+                except (ImportError, AttributeError) as e:
+                    logger.debug(f"Weekly report skipped: {e}")
+
+            # Model drift check every 6 hours
+            if now.hour % 6 == 0 and now.minute < 5:
+                try:
+                    from src.monitoring import check_and_alert_drift
+                    await asyncio.to_thread(check_and_alert_drift)
+                except (ImportError, AttributeError) as e:
+                    logger.debug(f"Drift check skipped: {e}")
+
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.debug(f"Monitoring loop error: {e}")
+
+        await asyncio.sleep(3600)  # check every hour
+
+
+import datetime
+
 # Include routers
-from api.routers import market, signals, portfolio, models, training, analysis, agent
+from api.routers import market, signals, portfolio, models, training, analysis, agent, risk, export, auth
 
 app.include_router(market.router, prefix="/api/market", tags=["Market Data"])
 app.include_router(signals.router, prefix="/api/signals", tags=["Trading Signals"])
@@ -541,6 +650,72 @@ app.include_router(models.router, prefix="/api/models", tags=["ML Models"])
 app.include_router(training.router, prefix="/api/training", tags=["Training"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["Analysis & Bot Features"])
 app.include_router(agent.router, prefix="/api/agent", tags=["AI Agent"])
+app.include_router(risk.router, prefix="/api/risk", tags=["Risk Management"])
+app.include_router(export.router, prefix="/api/export", tags=["Data Export"])
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+
+
+@app.get("/api/metrics", tags=["System"])
+async def get_metrics():
+    """System metrics: trades, latency, portfolio, model health."""
+    try:
+        from src.metrics import get_all_metrics
+        return get_all_metrics()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/news/similar", tags=["System"])
+async def find_similar(headline: str = ""):
+    """Find similar historical headlines and their gold impact."""
+    if not headline:
+        return {"error": "Provide ?headline=your+headline+here"}
+    try:
+        from src.news_similarity import find_similar_news
+        return await asyncio.to_thread(find_similar_news, headline)
+    except Exception as e:
+        return {"error": str(e), "signal": 0}
+
+
+@app.get("/api/events", tags=["System"])
+async def get_events():
+    """Historical gold reaction to CPI, FOMC, NFP events."""
+    try:
+        from src.event_reactions import get_all_event_biases
+        return await asyncio.to_thread(get_all_event_biases)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/news", tags=["System"])
+async def get_news():
+    """Gold-relevant news with sentiment classification."""
+    try:
+        from src.news_feed import get_gold_news_signal
+        return await asyncio.to_thread(get_gold_news_signal)
+    except Exception as e:
+        return {"error": str(e), "signal": 0}
+
+
+@app.get("/api/macro", tags=["System"])
+async def get_macro():
+    """Full macro signal: FRED real yields, retail sentiment, seasonality, COT."""
+    try:
+        from src.macro_data import get_full_macro_signal
+        return await asyncio.to_thread(get_full_macro_signal)
+    except Exception as e:
+        return {"error": str(e), "composite_signal": 0}
+
+
+@app.get("/api/health/detailed", tags=["System"])
+async def get_detailed_health():
+    """Comprehensive health check: database, models, risk manager, data provider."""
+    try:
+        from src.monitoring import get_system_health
+        return await asyncio.to_thread(get_system_health)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 # WebSocket endpoints
 @app.websocket("/ws/prices")
@@ -582,7 +757,7 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "models_loaded": app_state["models_loaded"],
     }
 
@@ -615,7 +790,7 @@ async def health_check_detailed():
 
     return {
         "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "uptime": uptime_str,
         "uptime_seconds": round(uptime_seconds, 1),
         "models_loaded": app_state["models_loaded"],
@@ -639,6 +814,26 @@ async def root():
         "docs": "/docs",
         "status": "running",
     }
+
+
+# ── Serve frontend static files (production: built SPA from frontend/dist) ──
+_frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
+if os.path.isdir(_frontend_dist):
+    from fastapi.responses import FileResponse
+
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="static-assets")
+
+    # SPA fallback: serve index.html for all non-API routes
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        """Serve React SPA — all non-API routes get index.html."""
+        file_path = os.path.join(_frontend_dist, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(_frontend_dist, "index.html"))
+
+    logger.info(f"Frontend SPA served from {_frontend_dist}")
 
 
 if __name__ == "__main__":

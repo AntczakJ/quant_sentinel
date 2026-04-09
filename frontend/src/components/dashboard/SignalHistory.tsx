@@ -7,6 +7,7 @@ import { signalsAPI } from '../../api/client';
 import { useTradingStore } from '../../store/tradingStore';
 import { History, TrendingUp, TrendingDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { useToast } from '../ui/Toast';
 
 interface ScannerSignal {
   signal_id?: string;
@@ -23,6 +24,7 @@ interface ScannerSignal {
 const fmt = (v: number | undefined | null, d = 2) => (v != null ? v.toFixed(d) : '—');
 
 export const SignalHistory = memo(function SignalHistory() {
+  const toast = useToast();
   const [signals, setSignals] = useState<ScannerSignal[]>([]);
   const [stats, setStats] = useState({ total: 0, wins: 0, losses: 0, win_rate: 0 });
   const [loading, setLoading] = useState(true);
@@ -41,7 +43,7 @@ export const SignalHistory = memo(function SignalHistory() {
         setSignals(scannerData);
         setStats(statsData);
       } catch (err) {
-        console.error('Error fetching scanner history:', err);
+        toast.error('Failed to load signal history');
         setError('Failed to load history');
       } finally {
         setLoading(false);

@@ -1,7 +1,11 @@
 """
-feature_engineering.py — Advanced feature engineering for trading signals.
+feature_engineering.py — LEGACY: Additional feature engineering.
 
-This module provides:
+DEPRECATED: Core features are in compute.py (compute_features / FEATURE_COLS).
+This module provides extra experimental features not used in production ML models.
+Kept for research and test_ensemble_integration.py.
+
+Extra features provided:
 - Wavelet transforms for volatility analysis
 - Williams %R indicator
 - CCI (Commodity Channel Index)

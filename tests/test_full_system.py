@@ -123,7 +123,7 @@ def test_frontend_files() -> int:
     # Test CandlestickChart content
     chart_file = frontend_path / "charts/CandlestickChart.tsx"
     if chart_file.exists():
-        content = chart_file.read_text()
+        content = chart_file.read_text(encoding='utf-8')
         if "LineChart" in content and "BarChart" in content:
             log_test("PASS", "CandlestickChart uses Recharts components")
             passed += 1

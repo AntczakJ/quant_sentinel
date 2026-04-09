@@ -8,9 +8,17 @@ import os
 import asyncio
 import re
 import time
+from enum import Enum
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
+
+
+class TimeframeEnum(str, Enum):
+    M5 = "5m"
+    M15 = "15m"
+    H1 = "1h"
+    H4 = "4h"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -39,7 +47,7 @@ _AI_TIMEOUT = 15  # Max seconds to wait for OpenAI response
     description="Comprehensive SMC + AI + ML Ensemble analysis for XAU/USD"
 )
 async def quant_pro_analysis(
-    tf: str = Query("15m", description="Timeframe: 5m, 15m, 1h, 4h"),
+    tf: TimeframeEnum = Query(TimeframeEnum.M15, description="Timeframe: 5m, 15m, 1h, 4h"),
     force: bool = Query(False, description="Force refresh — skip cache")
 ):
     """
@@ -192,7 +200,7 @@ async def quant_pro_analysis(
     description="Get predictions from all ML models (LSTM, XGBoost, DQN) with voting ensemble"
 )
 def get_ml_ensemble_predictions(
-    tf: str = Query("15m", description="Timeframe: 5m, 15m, 1h, 4h")
+    tf: TimeframeEnum = Query(TimeframeEnum.M15, description="Timeframe: 5m, 15m, 1h, 4h")
 ):
     """
     Get detailed ML ensemble predictions including individual model scores.

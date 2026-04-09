@@ -29,21 +29,68 @@ def update_pattern_weight(analysis_data: dict, outcome: str):
         db.update_pattern_stats(pattern, outcome)
 
 
+def get_time_weighted_win_rate(pattern: str, decay_days: float = 30.0) -> dict:
+    """
+    Compute time-weighted win rate for a pattern.
+
+    Recent trades weighted exponentially more than old ones:
+      weight = exp(-age_days / decay_days)
+
+    30-day decay = recent trades get ~10x weight vs 2-month-old trades.
+    Returns: {'win_rate': float, 'count': int, 'effective_n': float}
+    """
+    db = NewsDB()
+    try:
+        rows = db._query(
+            "SELECT status, timestamp FROM trades WHERE pattern = ? AND status IN ('WIN', 'LOSS') "
+            "ORDER BY timestamp DESC LIMIT 100",
+            (pattern,)
+        )
+        if not rows or len(rows) < 5:
+            return {'win_rate': 0.5, 'count': len(rows or []), 'effective_n': 0}
+
+        import datetime
+        now = datetime.datetime.now()
+        weighted_wins = 0.0
+        weighted_total = 0.0
+
+        for status, ts in rows:
+            try:
+                trade_time = datetime.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                age_days = (now - trade_time).total_seconds() / 86400
+                weight = 2.718 ** (-age_days / decay_days)  # exp decay
+            except (ValueError, TypeError):
+                weight = 0.1
+
+            weighted_total += weight
+            if status == 'WIN':
+                weighted_wins += weight
+
+        wr = weighted_wins / weighted_total if weighted_total > 0 else 0.5
+        return {'win_rate': round(wr, 3), 'count': len(rows), 'effective_n': round(weighted_total, 1)}
+
+    except (AttributeError, TypeError) as e:
+        logger.debug(f"Time-weighted stats failed: {e}")
+        return {'win_rate': 0.5, 'count': 0, 'effective_n': 0}
+
+
 def get_pattern_adjustment(analysis_data: dict) -> float:
     """
-    Zwraca współczynnik korekty (0.5-1.5) na podstawie historycznej win rate wzorca.
+    Zwraca współczynnik korekty (0.5-1.5) na podstawie time-weighted win rate wzorca.
     Kontekstowy: uwzględnia sesję, godzinę i reżim makro.
     """
     db = NewsDB()
     pattern = analysis_data.get('pattern')
     if not pattern:
         return 1.0
-    stats = db.get_pattern_stats(pattern)
-    if stats['count'] < 5:
-        return 1.0  # za mało danych
 
-    # Bazowy współczynnik z globalnego WR
-    adj = stats['win_rate'] * 1.5
+    # Use time-weighted win rate (recent trades matter more)
+    tw_stats = get_time_weighted_win_rate(pattern)
+    if tw_stats['count'] < 5:
+        return 1.0
+
+    # Bazowy współczynnik z time-weighted WR
+    adj = tw_stats['win_rate'] * 1.5
 
     # --- KOREKTA KONTEKSTOWA: sesja ---
     try:
@@ -203,7 +250,7 @@ def run_learning_cycle():
             ORDER BY timestamp ASC
         """)
 
-        if len(_bayes_trades) >= 5:
+        if len(_bayes_trades) >= 20:
             # Pre-compute vectors
             _b_entries   = np.array([t[1] for t in _bayes_trades], dtype=np.float64)
             _b_sls       = np.array([t[2] for t in _bayes_trades], dtype=np.float64)
@@ -212,14 +259,21 @@ def run_learning_cycle():
             _b_dists     = np.abs(_b_entries - _b_sls)
             _b_tp_dists  = np.abs(_b_entries - _b_tps)
 
+            # Split: 70% train, 30% holdout for out-of-sample validation
+            n_total = len(_bayes_trades)
+            n_train = int(n_total * 0.7)
+            train_dists, holdout_dists = _b_dists[:n_train], _b_dists[n_train:]
+            train_tp, holdout_tp = _b_tp_dists[:n_train], _b_tp_dists[n_train:]
+            train_profit, holdout_profit = _b_is_profit[:n_train], _b_is_profit[n_train:]
+
             def objective(params):
                 risk = params.get('risk_percent', 1.0)
                 min_tp_mult = params.get('min_tp_distance_mult', 1.0)
                 target_rr = params.get('target_rr', 2.5)
 
-                # Numba JIT: equity sim with drawdown tracking
+                # Optimize on TRAIN set only
                 equity, max_drawdown = _equity_sim_with_drawdown_numba(
-                    _b_dists, _b_tp_dists, _b_is_profit,
+                    train_dists, train_tp, train_profit,
                     risk, min_tp_mult, target_rr, 10000.0
                 )
 
@@ -235,14 +289,34 @@ def run_learning_cycle():
                 'sl_min_distance': (3.0, 8.0),
                 'tp_to_sl_ratio': (2.0, 4.0),
             }
-            opt = BayesianOptimizer(bounds, objective, n_init=5, n_iter=15)
+            opt = BayesianOptimizer(bounds, objective, n_init=10, n_iter=40)
             best_params, best_score = opt.optimize()
-            db = NewsDB()
-            for name, val in best_params.items():
-                db.set_param(name, val)
-            logger.info(f"Bayesian optimization finished: {best_params} -> {best_score:.2f}")
+
+            # Validate on HOLDOUT set before applying
+            holdout_equity, holdout_dd = _equity_sim_with_drawdown_numba(
+                holdout_dists, holdout_tp, holdout_profit,
+                best_params.get('risk_percent', 1.0),
+                best_params.get('min_tp_distance_mult', 1.0),
+                best_params.get('target_rr', 2.5),
+                10000.0
+            )
+            holdout_profitable = holdout_equity > 10000.0
+
+            if holdout_profitable:
+                db = NewsDB()
+                for name, val in best_params.items():
+                    db.set_param(name, val)
+                logger.info(
+                    f"Bayesian optimization APPLIED: {best_params} "
+                    f"(train={best_score:.0f}, holdout={holdout_equity:.0f}, holdout_dd={holdout_dd:.1%})"
+                )
+            else:
+                logger.warning(
+                    f"Bayesian optimization REJECTED — holdout unprofitable "
+                    f"(equity={holdout_equity:.0f}, dd={holdout_dd:.1%}). Keeping current params."
+                )
         else:
-            logger.info("Bayesian optimization skipped: < 5 trades")
+            logger.info(f"Bayesian optimization skipped: {len(_bayes_trades)} trades < 20 minimum")
 
 
 async def auto_analyze_and_learn(context):
@@ -506,9 +580,9 @@ async def auto_analyze_and_learn(context):
     except Exception as e:
         try:
             job_logger.error(f"❌ [AUTO-LEARN] Błąd: {e}")
-        except:
-            # Fallback jeśli logger nie dostępny
-            print(f"❌ [AUTO-LEARN] Błąd: {e}")
+        except (AttributeError, TypeError, NameError):
+            import sys
+            sys.stderr.write(f"[AUTO-LEARN] Error: {e}\n")
 
 
 def classify_loss(trade_id: int) -> str:
@@ -617,34 +691,47 @@ def check_loss_pattern_match(analysis_data: dict, direction: str) -> dict | None
 
 def update_factor_weights(trade_id, outcome):
     """
-    Aktualizuje wagi czynników na podstawie wyniku transakcji.
-    Działa jak gradient bandit + epsilon-greedy (tylko dla obecnych czynników).
+    Update factor weights using Thompson Sampling (Beta-Bernoulli bandit).
+
+    Each factor tracks (alpha, beta) = (wins, losses) when present in a trade.
+    Weight = sample from Beta(alpha, beta) — naturally balances explore/exploit.
+
+    Benefits over ε-greedy:
+      - No arbitrary epsilon parameter
+      - Under-tested factors explored more (wide Beta distribution)
+      - Well-tested factors converge to true value (narrow Beta)
+      - No oscillation from fixed learning rate
     """
     db = NewsDB()
     factors = db.get_trade_factors(trade_id)
     if not factors:
         return
 
-    learning_rate = 0.05
-    epsilon = 0.1  # szansa na losową zmianę
+    is_win = outcome in ("WIN", "PROFIT")
+
     for factor, present in factors.items():
         if not present:
-            continue  # Pomijaj czynniki które nie wystąpiły w transakcji
+            continue
 
-        weight_name = f"weight_{factor}"
-        current_weight = db.get_param(weight_name, 1.0)
+        # Load Beta distribution parameters (alpha=wins+1, beta=losses+1)
+        alpha_key = f"factor_alpha_{factor}"
+        beta_key = f"factor_beta_{factor}"
+        alpha = float(db.get_param(alpha_key, 1.0))  # Prior: Beta(1,1) = uniform
+        beta_val = float(db.get_param(beta_key, 1.0))
 
-        # Eksploracja: losowa zmiana z prawdopodobieństwem epsilon (tylko dla aktywnych czynników)
-        if random.random() < epsilon:
-            delta = random.uniform(-0.05, 0.05)
-            new_weight = current_weight + delta
+        # Update posterior
+        if is_win:
+            alpha += 1.0
         else:
-            # Wykorzystanie: gradient
-            if outcome in ("WIN", "PROFIT"):
-                new_weight = current_weight + learning_rate
-            else:
-                new_weight = current_weight - learning_rate
+            beta_val += 1.0
 
-        # Ograniczenie zakresu
-        new_weight = max(0.5, min(3.0, new_weight))
-        db.set_param(weight_name, new_weight)
+        db.set_param(alpha_key, alpha)
+        db.set_param(beta_key, beta_val)
+
+        # Sample weight from posterior Beta distribution
+        sampled_weight = random.betavariate(max(alpha, 0.1), max(beta_val, 0.1))
+
+        # Map [0,1] Beta sample to weight range [0.5, 3.0]
+        weight = 0.5 + sampled_weight * 2.5
+        weight_name = f"weight_{factor}"
+        db.set_param(weight_name, round(weight, 3))

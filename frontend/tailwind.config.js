@@ -7,13 +7,13 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Clean dark theme
-        'dark-bg': '#0b0e14',
-        'dark-surface': '#111622',
+        // Modern dark theme — deeper, richer tones
+        'dark-bg': '#0a0d12',
+        'dark-surface': '#0f1318',
         'dark-secondary': '#1a2030',
-        'dark-tertiary': '#141b28',
+        'dark-tertiary': '#141920',
 
-        // Accent colors — standard Tailwind-grade
+        // Accent colors
         'accent-green': '#22c55e',
         'accent-green-dark': '#16a34a',
         'accent-red': '#ef4444',
@@ -38,10 +38,15 @@ export default {
         '2xl': ['1.5rem', { lineHeight: '2rem' }],
         '3xl': ['1.875rem', { lineHeight: '2.25rem' }],
       },
+      borderRadius: {
+        'xl': '0.875rem',
+        '2xl': '1rem',
+      },
       boxShadow: {
         'glow': '0 0 8px rgba(34, 197, 94, 0.15)',
         'glow-red': '0 0 8px rgba(239, 68, 68, 0.15)',
         'glow-blue': '0 0 8px rgba(59, 130, 246, 0.15)',
+        'panel': '0 4px 24px rgba(0, 0, 0, 0.2)',
       },
     },
   },

@@ -62,9 +62,16 @@ persistent_cache/
 # data/sentinel.db        → ŚLEDZONE w git (potrzebne do treningu)
 # data/test_sentinel.db   → ŚLEDZONE (testy)
 data/sentinel_backup_*.db
+data/backups/
 data/*.db.bak
 data/*.db-wal
 data/*.db-shm
+data/cot_cache.pkl
+data/fred_cache.pkl
+data/sentiment_cache.pkl
+data/gpr_cache.pkl
+data/event_reactions_cache.pkl
+data/news_faiss_index.pkl
 
 # ── MODELE ML — WSZYSTKIE ŚLEDZONE ────────────────────────────
 # models/lstm.h5, lstm.keras, lstm_scaler.pkl,
@@ -111,6 +118,16 @@ Desktop.ini
 # ── MENEDŻERY PAKIETÓW ────────────────────────────────────────
 pip-log.txt
 pip-delete-this-directory.txt
+
+# ── PLIKI CACHE RUNTIME (regenerowane automatycznie) ──────────
+models/calibration_params.pkl
+models/test/
+models/decompose_scaler.pkl
+.coverage
+htmlcov/
+
+# ── CLAUDE CODE (osobne per-urządzenie) ──────────────────────
+.claude/
 
 # ── RAPORTY TYMCZASOWE ────────────────────────────────────────
 *.tmp

@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback, useDeferredValue, memo, startTransition } from 'react';
+import { useToast } from '../ui/Toast';
 import {
   createChart,
   CrosshairMode,
@@ -141,26 +142,26 @@ const IntervalToolbar = memo(function IntervalToolbar({
   drawingCount: number; onClearDrawings: () => void;
 }) {
   return (
-    <div className="flex items-center gap-0.5 px-1 py-0.5 bg-[#131722] border-b border-[#2a2e39]">
+    <div className="flex items-center gap-0.5 px-2 py-1 bg-[#131722] border-b border-[#1e222d]">
       {INTERVALS.map((tf) => (
         <button
           key={tf}
           onClick={() => onSelect(tf)}
-          className={`px-3 py-1.5 rounded text-[11px] font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all duration-150 ${
             selected === tf
-              ? 'bg-[#2962ff]/20 text-[#2962ff]'
-              : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
+              ? 'bg-[#2962ff]/15 text-[#2962ff]'
+              : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
           }`}
         >
           {tf}
         </button>
       ))}
-      <div className="w-px h-5 bg-[#2a2e39] mx-1" />
+      <div className="w-px h-4 bg-[#1e222d] mx-1.5" />
       <div className="flex-1" />
       {drawingCount > 0 && (
         <button
           onClick={onClearDrawings}
-          className="p-1.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 bg-[#ef5350]/10 text-[#ef5350] hover:bg-[#ef5350]/20"
+          className="p-1.5 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1 bg-[#ef5350]/10 text-[#ef5350] hover:bg-[#ef5350]/20"
           title={`Clear all ${drawingCount} drawings`}
         >
           <Trash2 size={11} />
@@ -169,10 +170,10 @@ const IntervalToolbar = memo(function IntervalToolbar({
       )}
       <button
         onClick={onToggleSmc}
-        className={`p-1.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
+        className={`p-1.5 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1 ${
           smcVisible
-            ? 'bg-[#f0b90b]/15 text-[#f0b90b] hover:bg-[#f0b90b]/25'
-            : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39]'
+            ? 'bg-[#f0b90b]/12 text-[#f0b90b] hover:bg-[#f0b90b]/20'
+            : 'text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d]'
         }`}
         title={smcVisible ? 'Ukryj SMC overlay' : 'Pokaż SMC overlay (FVG, OB, S/D, EQ)'}
       >
@@ -182,7 +183,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
       <button
         onClick={onRefresh}
         disabled={refreshing}
-        className="p-1.5 rounded text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#2a2e39] transition-colors disabled:opacity-40"
+        className="p-1.5 rounded-md text-[#787b86] hover:text-[#d1d4dc] hover:bg-[#1e222d] transition-all duration-150 disabled:opacity-40"
         title="Refresh"
       >
         <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
@@ -196,6 +197,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 export function CandlestickChart() {
+  const toast = useToast();
   const { selectedInterval, setSelectedInterval } = useTradingStore();
   const { compute: computeIndicators } = useIndicatorWorker();
 
@@ -798,10 +800,13 @@ export function CandlestickChart() {
         }
       }, isFirstLoad.current ? 3000 : 500);
 
-      // ── Fit content on first load ──
+      // ── Scroll to latest candle on first load (show last ~80 bars) ──
       if (isFirstLoad.current) {
-        mainChartRef.current?.timeScale().fitContent();
-        rsiChartRef.current?.timeScale().fitContent();
+        const totalBars = candleSd.length;
+        const barsToShow = Math.min(80, totalBars);
+        const range = { from: totalBars - barsToShow, to: totalBars + 5 };
+        mainChartRef.current?.timeScale().setVisibleLogicalRange(range);
+        rsiChartRef.current?.timeScale().setVisibleLogicalRange(range);
       }
 
       // ── Set last candle as legend ──
@@ -816,8 +821,10 @@ export function CandlestickChart() {
 
       isFirstLoad.current = false;
     } catch (err) {
-      console.error('Chart data error:', err);
-      if (isFirstLoad.current) {setError('Failed to load chart data');}
+      if (isFirstLoad.current) {
+        setError('Failed to load chart data');
+        toast.error('Chart data unavailable');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);

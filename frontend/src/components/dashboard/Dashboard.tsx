@@ -9,7 +9,7 @@ export function Dashboard() {
   return (
     <div className="min-h-screen bg-dark-bg text-gray-200 font-sans flex flex-col">
       <Header />
-      <main className="flex-1 w-full px-4 py-4 lg:px-6 lg:py-6 max-w-[1600px] mx-auto">
+      <main className="flex-1 w-full px-4 py-4 lg:px-6 lg:py-6">
         <Outlet />
       </main>
     </div>

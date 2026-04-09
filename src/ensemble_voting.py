@@ -1,11 +1,14 @@
 """
-ensemble_voting.py — Ensemble voting system combining XGBoost, LSTM, and DQN.
+ensemble_voting.py — LEGACY: Simple ensemble voting.
 
-This module provides:
-- Weighted voting based on model confidence
-- Model stacking for improved predictions
-- Confidence calibration
-- Ensemble performance tracking
+DEPRECATED: Use ensemble_models.py instead — it provides:
+- Dynamic weights from database (self-learning)
+- Regime-dependent weight adjustment
+- Platt Scaling calibration
+- Model agreement filter
+- Signal confirmation pipeline
+
+This module is kept for backwards compatibility with test_ensemble_integration.py.
 """
 
 import numpy as np
@@ -157,60 +160,7 @@ class EnsembleVoter:
         }
 
 
-class EnsembleStacking:
-    """
-    Meta-learner approach: use model predictions as features for a meta-model.
-    """
-
-    def __init__(self):
-        """Initialize ensemble stacking."""
-        self.meta_model = None
-        self.training_data = []
-        logger.info("Ensemble Stacking initialized")
-
-    def add_training_sample(self, xgb_pred, lstm_pred, dqn_action, actual_direction):
-        """Record training sample for meta-model."""
-        self.training_data.append({
-            'xgb': xgb_pred,
-            'lstm': lstm_pred,
-            'dqn': dqn_action,
-            'actual': actual_direction
-        })
-
-    def train_meta_model(self):
-        """Train meta-model on collected data."""
-        if len(self.training_data) < 10:
-            logger.warning("Not enough training data for meta-model")
-            return False
-
-        from sklearn.linear_model import LogisticRegression
-
-        X = np.array([[d['xgb'], d['lstm'], d['dqn']] for d in self.training_data])
-        y = np.array([d['actual'] for d in self.training_data])
-
-        self.meta_model = LogisticRegression()
-        self.meta_model.fit(X, y)
-
-        accuracy = self.meta_model.score(X, y)
-        logger.info(f"Meta-model trained, accuracy: {accuracy:.2%}")
-        return True
-
-    def predict(self, xgb_pred, lstm_pred, dqn_action):
-        """Use meta-model for final prediction."""
-        if self.meta_model is None:
-            return None
-
-        X = np.array([[xgb_pred, lstm_pred, dqn_action]])
-        confidence = self.meta_model.predict_proba(X)[0]
-        direction = self.meta_model.predict(X)[0]
-
-        return {
-            'direction': direction,
-            'confidence': float(confidence[direction]) if direction in [0, 1] else 0.5
-        }
-
-
 # Global ensemble voter instance
 ensemble_voter = EnsembleVoter(xgb_weight=0.4, lstm_weight=0.35, dqn_weight=0.25)
-ensemble_stacking = EnsembleStacking()
+ensemble_stacking = None  # Removed: unused EnsembleStacking class
 

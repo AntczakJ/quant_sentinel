@@ -8,6 +8,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { Dashboard } from './components/dashboard';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { ToastProvider } from './components/ui/Toast';
 import { useTradingStore } from './store/tradingStore';
 import { marketAPI, portfolioAPI, modelsAPI, healthAPI } from './api/client';
 import { useCachedFetch } from './hooks/useApiCache';
@@ -142,9 +143,11 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <div className="min-h-screen bg-dark-bg text-gray-200 font-sans">
-          <AppContent />
-        </div>
+        <ToastProvider>
+          <div className="min-h-screen bg-dark-bg text-gray-200 font-sans">
+            <AppContent />
+          </div>
+        </ToastProvider>
       </BrowserRouter>
     </QueryClientProvider>
   );
