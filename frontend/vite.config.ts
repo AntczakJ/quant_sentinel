@@ -114,20 +114,19 @@ export default defineConfig(({ mode }) => ({
 
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor': [
-            'react',
-            'react-dom',
-            'react-router-dom',
-            '@tanstack/react-query',
-            'axios',
-            'zustand'
-          ],
-          'charts': [
-            'lightweight-charts'
-          ],
-          // lucide-react: let Vite tree-shake per-page (only ~15 icons used)
+        manualChunks(id: string) {
+          if (id.includes('node_modules')) {
+            if (id.includes('react') || id.includes('react-dom') ||
+                id.includes('react-router') || id.includes('@tanstack/react-query') ||
+                id.includes('axios') || id.includes('zustand')) {
+              return 'vendor';
+            }
+            if (id.includes('lightweight-charts')) {
+              return 'charts';
+            }
+          }
         },
+        // lucide-react: let Vite tree-shake per-page (only ~15 icons used)
         chunkFileNames: 'chunks/[name]-[hash].js',
         entryFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash].[ext]'

@@ -105,8 +105,17 @@ def enable_wal_mode():
       - Readers don't block writers (and vice versa)
       - Better performance for mixed read/write workloads
       - Crash recovery via WAL journal
+
+    NOTE: Skipped in Docker containers — WAL doesn't work reliably
+    with Docker bind mounts on Windows (known SQLite limitation).
     """
     if DB_PATH.startswith("libsql://"):
+        return
+
+    # Skip WAL in Docker (bind mount compatibility issue)
+    import os
+    if os.path.exists("/.dockerenv"):
+        logger.info("[DB] Docker detected — using default journal mode (not WAL)")
         return
 
     try:
