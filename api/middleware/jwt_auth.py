@@ -51,7 +51,7 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
             try:
-                from src.auth import decode_token, get_user_by_id
+                from src.core.auth import decode_token, get_user_by_id
                 payload = decode_token(token)
                 if payload:
                     user = get_user_by_id(payload["user_id"])
@@ -65,7 +65,7 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
                 # Check if it's a user API key (starts with qs_)
                 if api_key.startswith("qs_"):
                     try:
-                        from src.auth import get_user_by_api_key
+                        from src.core.auth import get_user_by_api_key
                         user = get_user_by_api_key(api_key)
                     except (ImportError, AttributeError):
                         pass

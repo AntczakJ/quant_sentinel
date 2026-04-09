@@ -21,7 +21,7 @@ import time
 import requests
 import json
 
-from src.logger import logger
+from src.core.logger import logger
 
 
 def install_requirements():
@@ -64,8 +64,8 @@ def alert_start():
     # Czekamy na zainicjalizowanie bota przed wysłaniem powiadomienia
     time.sleep(5)
 
-    from src.config import TOKEN, CHAT_ID
-    from src.interface import main_menu
+    from src.core.config import TOKEN, CHAT_ID
+    from src.integrations.interface import main_menu
 
     if TOKEN and CHAT_ID:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"

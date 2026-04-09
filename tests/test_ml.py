@@ -7,8 +7,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
-    from src.ml_models import ml
-    from src.rl_agent import DQNAgent
+    from src.ml.ml_models import ml
+    from src.ml.rl_agent import DQNAgent
 
     print("Testing Machine Learning...")
 

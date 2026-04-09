@@ -26,12 +26,12 @@ class TestPlattScaler:
     """Test Platt Scaling sigmoid calibration."""
 
     def test_uncalibrated_returns_input(self):
-        from src.model_calibration import PlattScaler
+        from src.ml.model_calibration import PlattScaler
         s = PlattScaler()
         assert s.transform(0.7) == 0.7  # no-op when not fitted
 
     def test_fit_and_transform(self):
-        from src.model_calibration import PlattScaler
+        from src.ml.model_calibration import PlattScaler
         s = PlattScaler()
         preds = np.array([0.1, 0.2, 0.3, 0.7, 0.8, 0.9] * 10)
         labels = np.array([0, 0, 0, 1, 1, 1] * 10)
@@ -42,7 +42,7 @@ class TestPlattScaler:
         assert 0.0 < result < 1.0
 
     def test_serialization(self):
-        from src.model_calibration import PlattScaler
+        from src.ml.model_calibration import PlattScaler
         s = PlattScaler()
         s.a = 2.5
         s.b = -1.0
@@ -58,12 +58,12 @@ class TestModelCalibrator:
     """Test calibrator singleton."""
 
     def test_calibrate_unknown_model_returns_input(self):
-        from src.model_calibration import get_calibrator
+        from src.ml.model_calibration import get_calibrator
         cal = get_calibrator()
         assert cal.calibrate("nonexistent", 0.75) == 0.75
 
     def test_get_status(self):
-        from src.model_calibration import get_calibrator
+        from src.ml.model_calibration import get_calibrator
         cal = get_calibrator()
         status = cal.get_status()
         assert isinstance(status, dict)
@@ -77,12 +77,12 @@ class TestABTesting:
     """Test A/B parameter testing framework."""
 
     def test_initial_state_inactive(self):
-        from src.ab_testing import ABTestManager
+        from src.learning.ab_testing import ABTestManager
         ab = ABTestManager()
         assert ab.is_active is False
 
     def test_propose_and_discard(self):
-        from src.ab_testing import ABTestManager
+        from src.learning.ab_testing import ABTestManager
         ab = ABTestManager()
         ab.propose_params({"risk_percent": 1.5}, reason="unit test")
         assert ab.is_active is True
@@ -90,7 +90,7 @@ class TestABTesting:
         assert ab.is_active is False
 
     def test_evaluate_needs_more_trades(self):
-        from src.ab_testing import ABTestManager
+        from src.learning.ab_testing import ABTestManager
         ab = ABTestManager()
         ab.propose_params({"risk_percent": 1.5}, reason="unit test")
         result = ab.evaluate()
@@ -98,7 +98,7 @@ class TestABTesting:
         ab.discard()  # cleanup
 
     def test_record_outcome(self):
-        from src.ab_testing import ABTestManager
+        from src.learning.ab_testing import ABTestManager
         ab = ABTestManager()
         ab.propose_params({"risk_percent": 1.5})
         ab.record_outcome("WIN")
@@ -108,7 +108,7 @@ class TestABTesting:
         ab.discard()
 
     def test_z_score_calculation(self):
-        from src.ab_testing import ABTestManager
+        from src.learning.ab_testing import ABTestManager
         z = ABTestManager._two_proportion_z(50, 100, 60, 100)
         assert isinstance(z, float)
         assert z > 0  # 60% vs 50% should give positive z
@@ -122,14 +122,14 @@ class TestMetrics:
     """Test in-process metrics collection."""
 
     def test_counter_increment(self):
-        from src.metrics import _Counter
+        from src.ops.metrics import _Counter
         c = _Counter()
         c.inc()
         c.inc(5)
         assert c.value == 6
 
     def test_gauge_set(self):
-        from src.metrics import _Gauge
+        from src.ops.metrics import _Gauge
         g = _Gauge()
         g.set(42.5)
         assert g.value == 42.5
@@ -137,7 +137,7 @@ class TestMetrics:
         assert g.value == 40.0
 
     def test_histogram_observe(self):
-        from src.metrics import _Histogram
+        from src.ops.metrics import _Histogram
         h = _Histogram()
         for v in [1.0, 2.0, 3.0, 4.0, 5.0]:
             h.observe(v)
@@ -148,7 +148,7 @@ class TestMetrics:
 
     def test_timer_context(self):
         import time
-        from src.metrics import TimerContext, _Histogram
+        from src.ops.metrics import TimerContext, _Histogram
         h = _Histogram()
         with TimerContext(h):
             time.sleep(0.01)
@@ -156,7 +156,7 @@ class TestMetrics:
         assert h.avg > 0
 
     def test_get_all_metrics(self):
-        from src.metrics import get_all_metrics
+        from src.ops.metrics import get_all_metrics
         m = get_all_metrics()
         assert "trading" in m
         assert "api" in m
@@ -172,7 +172,7 @@ class TestDatabaseBackup:
     """Test SQLite backup automation."""
 
     def test_create_backup(self):
-        from src.db_backup import create_backup
+        from src.ops.db_backup import create_backup
         path = create_backup(reason="test")
         if path:  # may be empty if using Turso
             assert os.path.exists(path)
@@ -181,12 +181,12 @@ class TestDatabaseBackup:
             os.remove(path)
 
     def test_backup_list(self):
-        from src.db_backup import get_backup_list
+        from src.ops.db_backup import get_backup_list
         backups = get_backup_list()
         assert isinstance(backups, list)
 
     def test_wal_mode(self):
-        from src.db_backup import enable_wal_mode
+        from src.ops.db_backup import enable_wal_mode
         # Should not raise
         enable_wal_mode()
 
@@ -199,20 +199,20 @@ class TestModelMonitoring:
     """Test drift detection and accuracy tracking."""
 
     def test_psi_identical_distributions(self):
-        from src.model_monitor import compute_psi
+        from src.ml.model_monitor import compute_psi
         ref = np.random.uniform(0, 1, 100)
         psi = compute_psi(ref, ref)
         assert psi < 0.01  # identical distributions = near-zero PSI
 
     def test_psi_different_distributions(self):
-        from src.model_monitor import compute_psi
+        from src.ml.model_monitor import compute_psi
         ref = np.random.uniform(0, 0.5, 100)
         cur = np.random.uniform(0.5, 1.0, 100)
         psi = compute_psi(ref, cur)
         assert psi > 0.1  # very different = high PSI
 
     def test_rolling_accuracy_returns_dict(self):
-        from src.model_monitor import compute_rolling_accuracy
+        from src.ml.model_monitor import compute_rolling_accuracy
         result = compute_rolling_accuracy()
         assert isinstance(result, dict)
         assert "lstm" in result
@@ -220,6 +220,6 @@ class TestModelMonitoring:
         assert "n" in result
 
     def test_run_drift_check(self):
-        from src.model_monitor import run_drift_check
+        from src.ml.model_monitor import run_drift_check
         alerts = run_drift_check()
         assert isinstance(alerts, list)

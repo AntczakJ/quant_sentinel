@@ -14,8 +14,8 @@ import os
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from src.rl_agent import TradingEnv, DQNAgent
-from src.logger import logger
+from src.ml.rl_agent import TradingEnv, DQNAgent
+from src.core.logger import logger
 
 # Ustawienia trenowania
 EPISODES = 300          # więcej epizodów dla lepszej zbieżności
@@ -155,7 +155,7 @@ def main():
 
     # 8. Zapisz metryki do bazy
     try:
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         db.set_param("rl_best_reward", best_reward)
         db.set_param("rl_best_win_rate", best_win_rate)

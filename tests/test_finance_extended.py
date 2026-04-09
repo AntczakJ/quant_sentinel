@@ -28,19 +28,19 @@ class TestCalculatePosition:
         return base
 
     def test_long_returns_correct_direction(self):
-        from src.finance import calculate_position
+        from src.trading.finance import calculate_position
         import pandas as pd
         result = calculate_position(self._make_analysis(trend="bull"), 10000, "USD", "", df=pd.DataFrame())
         assert result.get('direction') in ('LONG', 'CZEKAJ')
 
     def test_short_returns_correct_direction(self):
-        from src.finance import calculate_position
+        from src.trading.finance import calculate_position
         import pandas as pd
         result = calculate_position(self._make_analysis(trend="bear"), 10000, "USD", "", df=pd.DataFrame())
         assert result.get('direction') in ('SHORT', 'CZEKAJ')
 
     def test_long_sl_below_entry(self):
-        from src.finance import calculate_position
+        from src.trading.finance import calculate_position
         import pandas as pd
         result = calculate_position(self._make_analysis(trend="bull"), 10000, "USD", "", df=pd.DataFrame())
         if result.get('direction') == 'LONG':
@@ -48,7 +48,7 @@ class TestCalculatePosition:
             assert result['tp'] > result['entry'], "LONG TP must be above entry"
 
     def test_short_sl_above_entry(self):
-        from src.finance import calculate_position
+        from src.trading.finance import calculate_position
         import pandas as pd
         result = calculate_position(self._make_analysis(trend="bear"), 10000, "USD", "", df=pd.DataFrame())
         if result.get('direction') == 'SHORT':
@@ -56,7 +56,7 @@ class TestCalculatePosition:
             assert result['tp'] < result['entry'], "SHORT TP must be below entry"
 
     def test_lot_size_positive(self):
-        from src.finance import calculate_position
+        from src.trading.finance import calculate_position
         import pandas as pd
         result = calculate_position(self._make_analysis(), 10000, "USD", "", df=pd.DataFrame())
         if result.get('direction') != 'CZEKAJ':
@@ -64,7 +64,7 @@ class TestCalculatePosition:
             assert result['lot'] >= 0.01
 
     def test_rr_ratio_minimum(self):
-        from src.finance import calculate_position
+        from src.trading.finance import calculate_position
         import pandas as pd
         result = calculate_position(self._make_analysis(), 10000, "USD", "", df=pd.DataFrame())
         if result.get('direction') == 'LONG':
@@ -72,7 +72,7 @@ class TestCalculatePosition:
             assert rr >= 1.9, f"R:R {rr:.1f} below minimum 2.0"
 
     def test_asian_session_rejected(self):
-        from src.finance import calculate_position
+        from src.trading.finance import calculate_position
         import pandas as pd
         analysis = self._make_analysis()
         analysis['session_info'] = {'session': 'asian'}

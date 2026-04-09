@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
-    from src.cache import cached_with_key
+    from src.core.cache import cached_with_key
     import time
 
     print("Testing cache system...")

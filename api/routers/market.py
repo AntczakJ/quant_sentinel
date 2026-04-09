@@ -18,8 +18,8 @@ class TimeframeEnum(str, Enum):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.logger import logger
-from src.data_sources import get_provider
+from src.core.logger import logger
+from src.data.data_sources import get_provider
 from api.schemas.models import CandleResponse, TickerResponse, IndicatorResponse, Candle
 
 router = APIRouter()
@@ -661,7 +661,7 @@ async def get_volume_profile(
         return cached_vp["data"]
 
     try:
-        from src.indicators import volume_profile as calc_vp
+        from src.analysis.indicators import volume_profile as calc_vp
 
         # Try to reuse candle cache first (0 credits)
         candle_key = f"{symbol}_{interval}_{limit}"

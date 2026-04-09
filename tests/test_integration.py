@@ -7,11 +7,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
-    from src.database import NewsDB
-    from src.cache import cached_with_key
-    from src.smc_engine import get_smc_analysis
-    from src.finance import calculate_position
-    from src.ai_engine import ask_ai_gold
+    from src.core.database import NewsDB
+    from src.core.cache import cached_with_key
+    from src.trading.smc_engine import get_smc_analysis
+    from src.trading.finance import calculate_position
+    from src.integrations.ai_engine import ask_ai_gold
 
     print("Testing integration...")
 
@@ -56,7 +56,7 @@ def main():
 
     # Test 4: Full pipeline
     try:
-        from src.config import USER_PREFS
+        from src.core.config import USER_PREFS
         smc_data = get_smc_analysis(USER_PREFS['tf'])
         if smc_data:
             position = calculate_position(smc_data, 10000, USER_PREFS['currency'], "key")

@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.logger import logger
+from src.core.logger import logger
 
 router = APIRouter()
 
@@ -49,7 +49,7 @@ async def export_trades(
     Export complete trade history with all fields.
     Supports CSV download or JSON response.
     """
-    from src.database import NewsDB
+    from src.core.database import NewsDB
     db = NewsDB()
 
     where = ""
@@ -87,7 +87,7 @@ async def export_equity(
     format: str = Query("csv", description="Export format: csv or json"),
 ):
     """Export equity curve computed from trade history."""
-    from src.database import NewsDB
+    from src.core.database import NewsDB
     db = NewsDB()
 
     rows = db._query("""
@@ -129,7 +129,7 @@ async def export_signals(
     limit: int = Query(500, ge=1, le=5000, description="Max rows"),
 ):
     """Export scanner signal history."""
-    from src.database import NewsDB
+    from src.core.database import NewsDB
     db = NewsDB()
 
     rows = db._query("""
@@ -156,7 +156,7 @@ async def export_audit(
     format: str = Query("json", description="Export format: json or csv"),
 ):
     """Export tamper-proof audit trail with hash chain."""
-    from src.database import NewsDB
+    from src.core.database import NewsDB
     db = NewsDB()
 
     if trade_id > 0:
@@ -186,21 +186,21 @@ async def export_audit(
 @router.get("/audit/verify", summary="Verify audit chain integrity")
 async def verify_audit():
     """Verify tamper-proof hash chain. Returns True if no records were modified."""
-    from src.compliance import verify_audit_chain
+    from src.ops.compliance import verify_audit_chain
     return verify_audit_chain()
 
 
 @router.get("/execution-quality", summary="Trade execution quality report")
 async def execution_quality(days: int = Query(30, ge=1, le=365)):
     """Analyze fill rate, slippage, win rate by grade over last N days."""
-    from src.compliance import get_execution_quality_report
+    from src.ops.compliance import get_execution_quality_report
     return get_execution_quality_report(days)
 
 
 @router.get("/daily-report", summary="Get daily P&L report")
 async def daily_report(date: str = Query(None, description="Date (YYYY-MM-DD), default=today")):
     """Retrieve or generate daily P&L report for a specific date."""
-    from src.compliance import generate_daily_report, get_daily_report
+    from src.ops.compliance import generate_daily_report, get_daily_report
 
     if date is None:
         date = datetime.now().strftime("%Y-%m-%d")

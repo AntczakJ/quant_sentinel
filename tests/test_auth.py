@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 class TestPasswordHashing:
     def test_hash_and_verify(self):
-        from src.auth import hash_password, verify_password
+        from src.core.auth import hash_password, verify_password
         pw = "test_password_123"
         hashed = hash_password(pw)
         assert hashed != pw
@@ -19,7 +19,7 @@ class TestPasswordHashing:
         assert verify_password("wrong_password", hashed) is False
 
     def test_different_hashes_for_same_password(self):
-        from src.auth import hash_password
+        from src.core.auth import hash_password
         h1 = hash_password("same_password")
         h2 = hash_password("same_password")
         assert h1 != h2  # bcrypt uses random salt
@@ -27,7 +27,7 @@ class TestPasswordHashing:
 
 class TestJWT:
     def test_create_and_decode_token(self):
-        from src.auth import create_token, decode_token
+        from src.core.auth import create_token, decode_token
         token = create_token(user_id=1, username="testuser", role="trader")
         assert isinstance(token, str)
         payload = decode_token(token)
@@ -37,12 +37,12 @@ class TestJWT:
         assert payload["role"] == "trader"
 
     def test_invalid_token_returns_none(self):
-        from src.auth import decode_token
+        from src.core.auth import decode_token
         assert decode_token("invalid.token.here") is None
         assert decode_token("") is None
 
     def test_api_key_generation(self):
-        from src.auth import generate_api_key
+        from src.core.auth import generate_api_key
         key = generate_api_key()
         assert key.startswith("qs_")
         assert len(key) > 20
@@ -50,7 +50,7 @@ class TestJWT:
 
 class TestUserRegistration:
     def test_register_and_login(self):
-        from src.auth import create_users_table, register_user, login_user
+        from src.core.auth import create_users_table, register_user, login_user
         import random
         create_users_table()
 
@@ -70,7 +70,7 @@ class TestUserRegistration:
         assert login_user(username, "wrong_pass") is None
 
     def test_duplicate_username_raises(self):
-        from src.auth import create_users_table, register_user
+        from src.core.auth import create_users_table, register_user
         import random
         create_users_table()
 
@@ -80,7 +80,7 @@ class TestUserRegistration:
             register_user(username, "pass456")
 
     def test_get_user_by_api_key(self):
-        from src.auth import create_users_table, register_user, get_user_by_api_key
+        from src.core.auth import create_users_table, register_user, get_user_by_api_key
         import random
         create_users_table()
 

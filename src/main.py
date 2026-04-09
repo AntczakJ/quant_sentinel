@@ -19,28 +19,28 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from telegram.error import BadRequest
 from telegram.request import HTTPXRequest
 
-from src.logger import logger
-from src.config import TOKEN, USER_PREFS, CHAT_ID, TD_API_KEY, \
+from src.core.logger import logger
+from src.core.config import TOKEN, USER_PREFS, CHAT_ID, TD_API_KEY, \
     ENABLE_ML, ENABLE_RL, ENABLE_ADVANCED_INDICATORS, ENABLE_PATTERNS
-from src.interface import main_menu, tf_menu
-from src.smc_engine import get_smc_analysis
-from src.finance import calculate_position
-from src.scanner import scan_market_task, resolve_trades_task
-from src.ai_engine import ask_ai_gold
-from src.database import NewsDB
-from src.sentiment import get_sentiment_data
-from src.news import get_latest_news, get_economic_calendar
-from src.self_learning import auto_analyze_and_learn, run_learning_cycle
-from src.openai_agent import get_agent, ask_agent_with_memory
+from src.integrations.interface import main_menu, tf_menu
+from src.trading.smc_engine import get_smc_analysis
+from src.trading.finance import calculate_position
+from src.trading.scanner import scan_market_task, resolve_trades_task
+from src.integrations.ai_engine import ask_ai_gold
+from src.core.database import NewsDB
+from src.data.sentiment import get_sentiment_data
+from src.data.news import get_latest_news, get_economic_calendar
+from src.learning.self_learning import auto_analyze_and_learn, run_learning_cycle
+from src.integrations.openai_agent import get_agent, ask_agent_with_memory
 
 from flask import Flask, request as flask_request
 
 # Import nowych modułów
-from src.data_sources import get_provider
-from src.indicators import ichimoku, volume_profile
-from src.candlestick_patterns import engulfing, pin_bar, inside_bar
-from src.ml_models import ml
-from src.rl_agent import DQNAgent
+from src.data.data_sources import get_provider
+from src.analysis.indicators import ichimoku, volume_profile
+from src.analysis.candlestick_patterns import engulfing, pin_bar, inside_bar
+from src.ml.ml_models import ml
+from src.ml.rl_agent import DQNAgent
 
 
 # =============================================================================
@@ -86,7 +86,7 @@ def get_portfolio_balance_display() -> str:
 # =============================================================================
 logger.info("🚀 Przygotowuję silniki AI (to może potrwać chwilę)...")
 try:
-    from src.sentiment import _get_ai_instance
+    from src.data.sentiment import _get_ai_instance
     _get_ai_instance()
     logger.info("✅ Systemy AI gotowe do pracy.")
 except Exception as e:
@@ -237,7 +237,7 @@ async def set_param_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def backtest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ Uruchamiam backtest (może potrwać chwilę)...")
-    from src.self_learning import optimize_parameters
+    from src.learning.self_learning import optimize_parameters
     await asyncio.to_thread(optimize_parameters)
     best_risk = db.get_param('risk_percent', '?')
     best_mult = db.get_param('min_tp_distance_mult', '?')

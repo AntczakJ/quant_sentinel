@@ -30,7 +30,7 @@ def check(name, ok):
 
 # 1. Polaczenie
 print("\n[1] Polaczenie")
-from src.database import NewsDB, _using_sqlite, DATABASE_URL
+from src.core.database import NewsDB, _using_sqlite, DATABASE_URL
 check(f"DATABASE_URL = {DATABASE_URL}", "sentinel.db" in DATABASE_URL)
 check(f"SQLite mode = {_using_sqlite}", _using_sqlite == True)
 db = NewsDB()
@@ -127,7 +127,7 @@ check("is_news_processed", db.is_news_processed("_test_hash_local") == True)
 # 14. Self-learning integration
 print("\n[14] Self-learning")
 try:
-    from src.self_learning import get_pattern_adjustment
+    from src.learning.self_learning import get_pattern_adjustment
     adj = get_pattern_adjustment({"pattern": "_NONEXISTENT"})
     check(f"get_pattern_adjustment() = {adj}", adj == 1.0)
 except Exception as e:
@@ -136,7 +136,7 @@ except Exception as e:
 # 15. Ensemble weights
 print("\n[15] Ensemble weights (DB)")
 try:
-    from src.ensemble_models import _load_dynamic_weights
+    from src.ml.ensemble_models import _load_dynamic_weights
     w = _load_dynamic_weights()
     check(f"ensemble weights: {w}", sum(w.values()) > 0.99)
 except Exception as e:

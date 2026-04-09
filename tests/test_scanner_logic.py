@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 class TestAdaptiveCooldown:
     def test_cooldown_varies_by_session(self):
-        from src.scanner import _get_adaptive_cooldown_hours
+        from src.trading.scanner import _get_adaptive_cooldown_hours
 
         class MockDB:
             def _query(self, *a, **kw): return []
@@ -24,7 +24,7 @@ class TestAdaptiveCooldown:
 
 class TestSessionDetection:
     def test_get_session_from_timestamp(self):
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         assert db.get_session("2026-04-09 03:00:00") == "asian"
         assert db.get_session("2026-04-09 09:00:00") == "london"
@@ -33,7 +33,7 @@ class TestSessionDetection:
         assert db.get_session("2026-04-09 23:30:00") == "off_hours"
 
     def test_get_active_session(self):
-        from src.smc_engine import get_active_session
+        from src.trading.smc_engine import get_active_session
         session = get_active_session()
         assert "session" in session
         assert "is_killzone" in session
@@ -42,7 +42,7 @@ class TestSessionDetection:
 
 class TestSessionWinRate:
     def test_returns_dict(self):
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         result = db.get_session_win_rate("london")
         assert isinstance(result, dict)
@@ -50,7 +50,7 @@ class TestSessionWinRate:
         assert "sufficient_data" in result
 
     def test_all_session_performance(self):
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         result = db.get_all_session_performance(min_trades=1)
         assert isinstance(result, list)
@@ -58,6 +58,6 @@ class TestSessionWinRate:
 
 class TestMarketOpen:
     def test_is_market_open_returns_bool(self):
-        from src.smc_engine import is_market_open
+        from src.trading.smc_engine import is_market_open
         result = is_market_open()
         assert isinstance(result, bool)

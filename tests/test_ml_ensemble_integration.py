@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
 import numpy as np
-from src.logger import logger
-from src.ensemble_models import (
+from src.core.logger import logger
+from src.ml.ensemble_models import (
     get_ensemble_prediction,
     predict_lstm_direction,
     predict_xgb_direction,

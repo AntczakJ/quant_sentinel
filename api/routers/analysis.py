@@ -22,13 +22,13 @@ class TimeframeEnum(str, Enum):
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.logger import logger
-from src.smc_engine import get_smc_analysis
-from src.openai_agent import ask_agent_with_memory
-from src.finance import calculate_position
-from src.data_sources import get_provider
-from src.config import USER_PREFS
-from src.database import NewsDB
+from src.core.logger import logger
+from src.trading.smc_engine import get_smc_analysis
+from src.integrations.openai_agent import ask_agent_with_memory
+from src.trading.finance import calculate_position
+from src.data.data_sources import get_provider
+from src.core.config import USER_PREFS
+from src.core.database import NewsDB
 
 router = APIRouter()
 
@@ -206,7 +206,7 @@ def get_ml_ensemble_predictions(
     Get detailed ML ensemble predictions including individual model scores.
     """
     try:
-        from src.ensemble_models import get_ensemble_prediction
+        from src.ml.ensemble_models import get_ensemble_prediction
 
         provider = get_provider()
         analysis = get_smc_analysis(tf)
@@ -273,7 +273,7 @@ def get_sentiment_analysis():
     Get market sentiment from AI analysis
     """
     try:
-        from src.sentiment import get_sentiment_data
+        from src.data.sentiment import get_sentiment_data
 
         sentiment = get_sentiment_data()
 
@@ -297,7 +297,7 @@ def get_news_analysis():
     Get latest news and economic calendar
     """
     try:
-        from src.news import get_latest_news, get_economic_calendar
+        from src.data.news import get_latest_news, get_economic_calendar
 
         news = get_latest_news()
         calendar = get_economic_calendar()
@@ -509,7 +509,7 @@ async def mtf_confluence_analysis():
     Zwraca konfluencję multi-timeframe: bull/bear score, per-TF breakdown, sesja.
     """
     try:
-        from src.smc_engine import get_mtf_confluence
+        from src.trading.smc_engine import get_mtf_confluence
         result = await asyncio.to_thread(get_mtf_confluence, "XAU/USD")
         return result
     except Exception as e:
@@ -536,7 +536,7 @@ async def current_session():
     """
     Zwraca aktualną sesję (Asian/London/NY), killzone status, oczekiwaną zmienność.
     """
-    from src.smc_engine import get_active_session
+    from src.trading.smc_engine import get_active_session
     return get_active_session()
 
 

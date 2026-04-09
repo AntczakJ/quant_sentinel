@@ -16,8 +16,8 @@ from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.logger import logger
-from src.database import NewsDB
+from src.core.logger import logger
+from src.core.database import NewsDB
 from api.schemas.models import PortfolioStatus, PortfolioHistory
 
 router = APIRouter()
@@ -185,7 +185,7 @@ def update_balance(update: BalanceUpdate):
 def get_current_price():
     """Get current XAU/USD price from Twelve Data"""
     try:
-        from src.data_sources import get_provider
+        from src.data.data_sources import get_provider
         provider = get_provider()
         ticker = provider.get_current_price('XAU/USD')
 
@@ -286,7 +286,7 @@ def quick_add_trade():
     Jeśli na jakimkolwiek TF znajdzie setup, stawia trade.
     """
     try:
-        from src.scanner import cascade_mtf_scan
+        from src.trading.scanner import cascade_mtf_scan
 
         # Odczytaj aktualny balans portfela z bazy
         portfolio = _get_portfolio()

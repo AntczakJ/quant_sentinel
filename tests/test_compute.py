@@ -26,7 +26,7 @@ def _make_sample_df(n=200):
 
 class TestFeatureComputation:
     def test_compute_features_returns_dataframe(self):
-        from src.compute import compute_features, FEATURE_COLS
+        from src.analysis.compute import compute_features, FEATURE_COLS
         df = _make_sample_df()
         features = compute_features(df)
         assert isinstance(features, pd.DataFrame)
@@ -34,11 +34,11 @@ class TestFeatureComputation:
             assert col in features.columns, f"Missing feature: {col}"
 
     def test_feature_count(self):
-        from src.compute import FEATURE_COLS
+        from src.analysis.compute import FEATURE_COLS
         assert len(FEATURE_COLS) == 31
 
     def test_compute_target(self):
-        from src.compute import compute_features, compute_target
+        from src.analysis.compute import compute_features, compute_target
         df = _make_sample_df()
         features = compute_features(df)
         target = compute_target(features)
@@ -48,7 +48,7 @@ class TestFeatureComputation:
 
 class TestDecomposition:
     def test_decompose_shape_preserved(self):
-        from src.decompose_model import _decompose_features
+        from src.ml.decompose_model import _decompose_features
         data = np.random.randn(100, 10)
         trend, seasonal, residual = _decompose_features(data)
         assert trend.shape == data.shape
@@ -56,7 +56,7 @@ class TestDecomposition:
         assert residual.shape == data.shape
 
     def test_decompose_sums_approximately(self):
-        from src.decompose_model import _decompose_features
+        from src.ml.decompose_model import _decompose_features
         data = np.random.randn(100, 5)
         trend, seasonal, residual = _decompose_features(data)
         # trend + seasonal should approximate original
@@ -70,19 +70,19 @@ class TestDecomposition:
 
 class TestCandlestickPatterns:
     def test_engulfing(self):
-        from src.candlestick_patterns import engulfing
+        from src.analysis.candlestick_patterns import engulfing
         df = _make_sample_df(50)
         result = engulfing(df)
         assert result in ('bullish', 'bearish', False)
 
     def test_pin_bar(self):
-        from src.candlestick_patterns import pin_bar
+        from src.analysis.candlestick_patterns import pin_bar
         df = _make_sample_df(50)
         result = pin_bar(df)
         assert result in ('bullish', 'bearish', False)
 
     def test_inside_bar(self):
-        from src.candlestick_patterns import inside_bar
+        from src.analysis.candlestick_patterns import inside_bar
         df = _make_sample_df(50)
         result = inside_bar(df)
         assert result in (True, False)  # accepts both Python bool and numpy bool

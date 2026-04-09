@@ -16,9 +16,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.ensemble_voting import EnsembleVoter, ensemble_stacking
-from src.feature_engineering import add_advanced_features
-from src.logger import logger
+from src.ml.ensemble_voting import EnsembleVoter, ensemble_stacking
+from src.analysis.feature_engineering import add_advanced_features
+from src.core.logger import logger
 
 def test_ensemble_voter_basic():
     """Test basic ensemble voting"""
