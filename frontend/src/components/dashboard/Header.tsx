@@ -4,7 +4,8 @@
 
 import { useEffect, useState, memo } from 'react';
 import { NavLink } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot } from 'lucide-react';
+import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon } from 'lucide-react';
+import { useTheme } from '../../hooks/useTheme';
 import { useTradingStore } from '../../store/tradingStore';
 import { ScrollProgressBar } from './ScrollProgressBar';
 import { ConnectionStatus } from '../ui/ConnectionStatus';
@@ -66,6 +67,7 @@ const NAV_ITEMS = [
 ] as const;
 
 export function Header() {
+  const { toggle: toggleTheme, isDark } = useTheme();
   const { ticker, apiConnected } = useTradingStore();
   const [prevPrice, setPrevPrice] = useState<number | null>(null);
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
@@ -95,8 +97,8 @@ export function Header() {
 
   if (!ticker) {
     return (
-      <header className="sticky top-0 z-50 bg-[#0f1318]/95 backdrop-blur-md border-b border-[#1e2736]">
-        <div className="px-6 py-3 text-center text-gray-500 text-sm">Loading...</div>
+      <header className="sticky top-0 z-50 backdrop-blur-md border-b" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
+        <div className="px-6 py-3 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>Loading...</div>
       </header>
     );
   }
@@ -104,17 +106,17 @@ export function Header() {
   const isPositive = ticker.change >= 0;
 
   return (
-    <header className="sticky top-0 z-50 bg-[#0f1318]/95 backdrop-blur-md border-b border-[#1e2736]">
+    <header className="sticky top-0 z-50 backdrop-blur-md border-b" style={{ background: `color-mix(in srgb, var(--color-surface) 95%, transparent)`, borderColor: 'var(--color-border)' }}>
       {/* Single row: logo + nav + price + session + status */}
       <div className="px-4 lg:px-6 py-0 flex items-center gap-2 lg:gap-4">
         {/* Logo */}
         <div className="flex items-center gap-1.5 min-w-max py-2.5">
-          <span className="text-sm font-bold text-white tracking-wider">QUANT</span>
-          <span className="text-sm font-bold text-green-400 tracking-wider">SENTINEL</span>
+          <span className="text-sm font-bold tracking-wider" style={{ color: 'var(--color-text-primary)' }}>QUANT</span>
+          <span className="text-sm font-bold tracking-wider" style={{ color: 'var(--color-accent-green)' }}>SENTINEL</span>
         </div>
 
         {/* Subtle separator */}
-        <div className="hidden md:block w-px h-6 bg-[#1e2736]" />
+        <div className="hidden md:block w-px h-6" style={{ background: 'var(--color-border)' }} />
 
         {/* Navigation — inline with header */}
         <nav className="flex items-center gap-0.5 overflow-x-auto scrollbar-none">
@@ -128,10 +130,14 @@ export function Header() {
               className={({ isActive }) =>
                 `flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium rounded-md transition-all duration-150 whitespace-nowrap ${
                   isActive
-                    ? 'text-white bg-[#1a2030]'
-                    : 'text-gray-500 hover:text-gray-300 hover:bg-[#141920]'
+                    ? 'font-semibold'
+                    : 'opacity-50 hover:opacity-80'
                 }`
               }
+              style={({ isActive }) => ({
+                color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                background: isActive ? 'var(--color-secondary)' : 'transparent',
+              })}
             >
               <Icon size={12} />
               <span className="hidden sm:inline">{label}</span>
@@ -145,7 +151,7 @@ export function Header() {
         {/* Price — compact, right-aligned */}
         <div className={`flex items-center gap-3 transition-colors duration-200 ${priceFlash === 'up' ? 'text-green-400' : priceFlash === 'down' ? 'text-red-400' : ''}`}>
           <div className="text-right">
-            <div className="text-lg font-bold font-mono text-white leading-tight">
+            <div className="text-lg font-bold font-mono leading-tight" style={{ color: 'var(--color-text-primary)' }}>
               ${ticker.price.toFixed(2)}
             </div>
             <div className={`flex items-center justify-end gap-1 text-[10px] font-medium leading-tight ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
@@ -159,6 +165,16 @@ export function Header() {
 
         {/* Session badge */}
         {sessionInfo && <SessionBadge session={sessionInfo} />}
+
+        {/* Theme toggle */}
+        <button
+          onClick={toggleTheme}
+          className="p-1.5 rounded-md transition-colors"
+          style={{ color: 'var(--color-text-muted)' }}
+          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {isDark ? <Sun size={14} /> : <Moon size={14} />}
+        </button>
 
         {/* Status */}
         <div className="min-w-max">
