@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
-    from src.smc_engine import get_smc_analysis, detect_fvg, detect_dbr_rbd
+    from src.trading.smc_engine import get_smc_analysis, detect_fvg, detect_dbr_rbd
     import pandas as pd
 
     print("Testing SMC Engine...")

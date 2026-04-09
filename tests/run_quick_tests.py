@@ -21,12 +21,12 @@ print("-"*80)
 
 imports_to_test = [
     ("telegram", "from telegram import Update, InputMediaPhoto"),
-    ("config", "from src.config import TOKEN, CHAT_ID, LAST_STATUS_LOCK"),
-    ("logger", "from src.logger import logger"),
-    ("database", "from src.database import NewsDB"),
-    ("cache", "from src.cache import cached_with_key"),
-    ("smc_engine", "from src.smc_engine import get_smc_analysis"),
-    ("finance", "from src.finance import calculate_position"),
+    ("config", "from src.core.config import TOKEN, CHAT_ID, LAST_STATUS_LOCK"),
+    ("logger", "from src.core.logger import logger"),
+    ("database", "from src.core.database import NewsDB"),
+    ("cache", "from src.core.cache import cached_with_key"),
+    ("smc_engine", "from src.trading.smc_engine import get_smc_analysis"),
+    ("finance", "from src.trading.finance import calculate_position"),
 ]
 
 import_count = 0
@@ -48,7 +48,7 @@ print("\n[TEST 2] Konfiguracja...")
 print("-"*80)
 
 try:
-    from src.config import USER_PREFS, LAST_STATUS, LAST_STATUS_LOCK
+    from src.core.config import USER_PREFS, LAST_STATUS, LAST_STATUS_LOCK
     import threading
 
     config_tests = 0
@@ -88,7 +88,7 @@ print("\n[TEST 3] Baza danych...")
 print("-"*80)
 
 try:
-    from src.database import NewsDB
+    from src.core.database import NewsDB
 
     db = NewsDB()
     db_tests = 0
@@ -145,7 +145,7 @@ print("\n[TEST 4] Cache...")
 print("-"*80)
 
 try:
-    from src.cache import cached_with_key
+    from src.core.cache import cached_with_key
     import time
 
     cache_tests = 0
@@ -204,7 +204,7 @@ print("\n[TEST 5] SMC Engine...")
 print("-"*80)
 
 try:
-    from src.smc_engine import get_smc_analysis
+    from src.trading.smc_engine import get_smc_analysis
 
     smc_tests = 0
     total_smc = 1
@@ -233,7 +233,7 @@ print("\n[TEST 6] Finance...")
 print("-"*80)
 
 try:
-    from src.finance import calculate_position
+    from src.trading.finance import calculate_position
 
     fin_tests = 0
     total_fin = 1

@@ -20,14 +20,14 @@ class TestKellyCriterion:
     """Test Fractional Kelly position sizing."""
 
     def test_kelly_returns_valid_risk_percent(self):
-        from src.risk_manager import RiskManager
+        from src.trading.risk_manager import RiskManager
         rm = RiskManager()
         result = rm.compute_kelly_risk_percent(default_risk=1.0)
         # Should return a value in valid range [0.25, 3.0] or default 1.0
         assert 0.25 <= result <= 3.0
 
     def test_kelly_clamps_to_range(self):
-        from src.risk_manager import RiskManager
+        from src.trading.risk_manager import RiskManager
         rm = RiskManager()
         result = rm.compute_kelly_risk_percent(default_risk=1.0)
         assert 0.25 <= result <= 3.0
@@ -37,7 +37,7 @@ class TestCircuitBreakers:
     """Test drawdown and consecutive loss circuit breakers."""
 
     def test_can_trade_when_not_halted(self):
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         rm._halted = False
         rm._last_cooldown_until = None
@@ -46,7 +46,7 @@ class TestCircuitBreakers:
         assert reason == "OK"
 
     def test_blocked_when_halted(self):
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         rm.halt("test halt")
         can, reason = rm.check_circuit_breakers(10000)
@@ -55,7 +55,7 @@ class TestCircuitBreakers:
         rm.resume()  # cleanup
 
     def test_daily_risk_multiplier_normal(self):
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         mult = rm.get_daily_risk_multiplier(10000)
         assert 0.0 <= mult <= 1.0
@@ -65,21 +65,21 @@ class TestSlippageModel:
     """Test session-aware spread model."""
 
     def test_spread_returns_float(self):
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         spread = rm.get_spread_buffer()
         assert isinstance(spread, float)
         assert spread >= 0
 
     def test_spread_varies_by_session(self):
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         asian = rm.get_spread_buffer("asian")
         ny = rm.get_spread_buffer("new_york")
         assert asian < ny  # Asian has tighter spreads
 
     def test_slippage_adjustment(self):
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         entry, sl, tp = rm.adjust_for_slippage(2000.0, 1990.0, 2020.0, "LONG", "london")
         assert entry > 2000.0  # buy higher due to spread
@@ -91,7 +91,7 @@ class TestPortfolioHeat:
     """Test aggregate risk tracking."""
 
     def test_portfolio_heat_returns_tuple(self):
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         can, heat = rm.check_portfolio_heat(10000, 50)
         assert isinstance(can, bool)
@@ -103,7 +103,7 @@ class TestKillSwitch:
     """Test halt/resume mechanism."""
 
     def test_halt_and_resume(self):
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         rm.halt("unit test")
         assert rm.is_halted is True
@@ -111,7 +111,7 @@ class TestKillSwitch:
         assert rm.is_halted is False
 
     def test_get_status(self):
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         status = rm.get_status()
         assert "halted" in status

@@ -29,37 +29,37 @@ print("=" * 60)
 print("\n[TEST 1] Importy nowych modułów")
 print("-" * 60)
 try:
-    from src.rl_agent import TradingEnv, DQNAgent
+    from src.ml.rl_agent import TradingEnv, DQNAgent
     check("rl_agent (TradingEnv, DQNAgent)", True)
 except Exception as e:
     check(f"rl_agent: {e}", False)
 
 try:
-    from src.backtest import evaluate_predictions, compute_equity_metrics, run_full_backtest
+    from src.analysis.backtest import evaluate_predictions, compute_equity_metrics, run_full_backtest
     check("backtest", True)
 except Exception as e:
     check(f"backtest: {e}", False)
 
 try:
-    from src.ml_models import ml, FEATURE_COLS
+    from src.ml.ml_models import ml, FEATURE_COLS
     check(f"ml_models ({len(FEATURE_COLS)} features)", True)
 except Exception as e:
     check(f"ml_models: {e}", False)
 
 try:
-    from src.ensemble_models import get_ensemble_prediction, predict_dqn_action, update_ensemble_weights
+    from src.ml.ensemble_models import get_ensemble_prediction, predict_dqn_action, update_ensemble_weights
     check("ensemble_models", True)
 except Exception as e:
     check(f"ensemble_models: {e}", False)
 
 try:
-    from src.self_learning import run_learning_cycle, update_factor_weights, get_pattern_adjustment
+    from src.learning.self_learning import run_learning_cycle, update_factor_weights, get_pattern_adjustment
     check("self_learning", True)
 except Exception as e:
     check(f"self_learning: {e}", False)
 
 try:
-    from src.bayesian_opt import BayesianOptimizer
+    from src.learning.bayesian_opt import BayesianOptimizer
     check("bayesian_opt", True)
 except Exception as e:
     check(f"bayesian_opt: {e}", False)
@@ -197,7 +197,7 @@ else:
 # ==== TEST 6: Database consistency ====
 print("\n[TEST 6] Database consistency")
 print("-" * 60)
-from src.database import NewsDB
+from src.core.database import NewsDB
 db = NewsDB()
 
 # Test set_param / get_param round-trip
@@ -278,7 +278,7 @@ except Exception as e:
 print("\n[TEST 8] Ensemble dynamic weights")
 print("-" * 60)
 try:
-    from src.ensemble_models import _load_dynamic_weights
+    from src.ml.ensemble_models import _load_dynamic_weights
     weights = _load_dynamic_weights()
     check(f"weights loaded: {weights}", sum(weights.values()) > 0.99)
     check("has smc weight", 'smc' in weights)

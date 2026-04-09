@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.logger import logger
+from src.core.logger import logger
 from api.schemas.models import SignalResponse, SignalHistoryItem
 
 router = APIRouter()
@@ -83,7 +83,7 @@ def get_current_signal():
 
         # Try to get latest signal from database first
         try:
-            from src.database import NewsDB
+            from src.core.database import NewsDB
             db = NewsDB()
             latest_db_signal = db.get_latest_scanner_signal()
 
@@ -161,7 +161,7 @@ def get_current_signal():
 def get_signal_history(limit: int = 50):
     """Get historical signals from scanner and trades"""
     try:
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         from datetime import datetime, timezone
 
         db = NewsDB()
@@ -314,7 +314,7 @@ def get_consensus():
 def get_signal_stats():
     """Get signal statistics from trades table"""
     try:
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         # Count both WIN and PROFIT as wins (scanner uses PROFIT, API resolver uses WIN)
         row = db._query_one(
@@ -345,7 +345,7 @@ def get_scanner_signals(limit: int = 30):
     These are richer than the generic /history endpoint.
     """
     try:
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         try:
             db_signals = db.get_all_scanner_signals(limit=limit)

@@ -351,7 +351,7 @@ def test_integration() -> int:
 
     # Test database connection
     try:
-        from src.database import Database
+        from src.core.database import Database
         db = Database()
         log_test("PASS", "Database module loads")
         passed += 1
@@ -360,7 +360,7 @@ def test_integration() -> int:
 
     # Test configuration loading
     try:
-        from src.config import Config
+        from src.core.config import Config
         log_test("PASS", "Configuration module loads")
         passed += 1
     except Exception as e:
@@ -368,7 +368,7 @@ def test_integration() -> int:
 
     # Test logger
     try:
-        from src.logger import logger
+        from src.core.logger import logger
         logger.info("Test log message")
         log_test("PASS", "Logger module works")
         passed += 1

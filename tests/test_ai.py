@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
-    from src.ai_engine import ask_ai_gold, OPENAI_KEY, client
+    from src.integrations.ai_engine import ask_ai_gold, OPENAI_KEY, client
 
     print("Testing AI Engine...")
 

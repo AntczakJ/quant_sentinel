@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     import time
-    from src.smc_engine import get_smc_analysis
+    from src.trading.smc_engine import get_smc_analysis
     import psutil
 
     print("Testing performance...")
@@ -64,7 +64,7 @@ def main():
     # Test 4: Response time
     try:
         start = time.time()
-        from src.finance import calculate_position
+        from src.trading.finance import calculate_position
         result = calculate_position(
             {'price': 2545.50, 'trend': 'bull', 'atr': 15.0, 'macro_regime': 'zielony'},
             10000, "USD", "key"

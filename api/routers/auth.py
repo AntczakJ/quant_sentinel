@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.logger import logger
+from src.core.logger import logger
 
 router = APIRouter()
 
@@ -38,7 +38,7 @@ async def register(req: RegisterRequest):
     Returns JWT token + API key for programmatic access.
     """
     try:
-        from src.auth import register_user, create_users_table
+        from src.core.auth import register_user, create_users_table
         create_users_table()
         result = register_user(
             username=req.username,
@@ -61,7 +61,7 @@ async def login(req: LoginRequest):
     Returns JWT token valid for 7 days.
     """
     try:
-        from src.auth import login_user, create_users_table
+        from src.core.auth import login_user, create_users_table
         create_users_table()
         result = login_user(req.username, req.password)
         if result is None:

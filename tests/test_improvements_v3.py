@@ -108,9 +108,9 @@ def sample_analysis():
 def db():
     """Fresh test database fixture."""
     # Reset the initialization flag so tables are created fresh
-    import src.database as db_mod
+    import src.core.database as db_mod
     db_mod._db_initialized = False
-    from src.database import NewsDB
+    from src.core.database import NewsDB
     return NewsDB()
 
 
@@ -123,7 +123,7 @@ class TestSMCEngine:
 
     def test_no_raw_requests_import(self):
         """Verify smc_engine.py no longer imports requests directly."""
-        import src.smc_engine as smc
+        import src.trading.smc_engine as smc
         # The module should use _get_data_provider() instead of raw requests
         assert hasattr(smc, '_get_data_provider'), "_get_data_provider helper missing"
         # Check that request_with_retry is gone
@@ -136,7 +136,7 @@ class TestSMCEngine:
             mock_instance.get_exchange_rate.return_value = 4.05
             mock_provider.return_value = mock_instance
 
-            from src.smc_engine import get_exchange_rate
+            from src.trading.smc_engine import get_exchange_rate
             result = get_exchange_rate("USD", "PLN")
 
             mock_instance.get_exchange_rate.assert_called_once_with("USD", "PLN")
@@ -150,7 +150,7 @@ class TestSMCEngine:
             mock_instance.get_candles.return_value = mock_df
             mock_provider.return_value = mock_instance
 
-            from src.smc_engine import get_usdjpy_history
+            from src.trading.smc_engine import get_usdjpy_history
             prices, current = get_usdjpy_history("15m", 30)
 
             assert len(prices) == 3
@@ -169,7 +169,7 @@ class TestSMCEngine:
     def test_no_double_decorator(self):
         """Verify the double @cached_with_key decorator bug is fixed."""
         import inspect
-        from src.smc_engine import get_smc_analysis
+        from src.trading.smc_engine import get_smc_analysis
         source = inspect.getsource(get_smc_analysis)
         # Should NOT have _smc_cache_key reference
         assert '_smc_cache_key' not in source, "Orphan _smc_cache_key decorator still present"
@@ -184,7 +184,7 @@ class TestDataSources:
 
     def test_provider_singleton(self):
         """Verify get_provider returns singleton."""
-        from src.data_sources import get_provider, _provider_cache
+        from src.data.data_sources import get_provider, _provider_cache
         # Clear cache first
         _provider_cache.clear()
 
@@ -195,13 +195,13 @@ class TestDataSources:
 
     def test_live_price_store_exists(self):
         """Verify module-level live price store for WebSocket."""
-        from src.data_sources import _live_prices, _live_price_lock
+        from src.data.data_sources import _live_prices, _live_price_lock
         assert isinstance(_live_prices, dict)
         assert _live_price_lock is not None
 
     def test_get_current_price_checks_ws_first(self):
         """Verify get_current_price checks WebSocket before REST."""
-        import src.data_sources as ds
+        import src.data.data_sources as ds
         import time
 
         # Simulate WebSocket price
@@ -224,14 +224,14 @@ class TestDataSources:
 
     def test_provider_has_prefetch_method(self):
         """Verify prefetch_all_timeframes method exists."""
-        from src.data_sources import TwelveDataProvider
+        from src.data.data_sources import TwelveDataProvider
         provider = TwelveDataProvider('test_key')
         assert hasattr(provider, 'prefetch_all_timeframes')
         assert callable(provider.prefetch_all_timeframes)
 
     def test_provider_has_ws_stream_method(self):
         """Verify start_price_stream method exists."""
-        from src.data_sources import TwelveDataProvider
+        from src.data.data_sources import TwelveDataProvider
         provider = TwelveDataProvider('test_key')
         assert hasattr(provider, 'start_price_stream')
         assert callable(provider.start_price_stream)
@@ -246,7 +246,7 @@ class TestMLModels:
 
     def test_feature_cols_expanded(self):
         """Verify FEATURE_COLS has the new expanded features."""
-        from src.ml_models import FEATURE_COLS
+        from src.ml.ml_models import FEATURE_COLS
         new_features = ['williams_r', 'cci', 'ema_distance', 'ichimoku_signal',
                        'engulfing_score', 'pin_bar_score', 'ret_10',
                        'body_ratio', 'upper_shadow_ratio', 'lower_shadow_ratio']
@@ -255,7 +255,7 @@ class TestMLModels:
 
     def test_features_generation(self, sample_df):
         """Verify _features generates all expected columns."""
-        from src.ml_models import MLPredictor, FEATURE_COLS
+        from src.ml.ml_models import MLPredictor, FEATURE_COLS
         predictor = MLPredictor()
         features = predictor._features(sample_df)
 
@@ -264,7 +264,7 @@ class TestMLModels:
 
     def test_features_no_nan_in_output(self, sample_df):
         """Verify _features drops NaN properly."""
-        from src.ml_models import MLPredictor, FEATURE_COLS
+        from src.ml.ml_models import MLPredictor, FEATURE_COLS
         predictor = MLPredictor()
         features = predictor._features(sample_df)
         # After dropna, should have no NaN in feature columns
@@ -272,7 +272,7 @@ class TestMLModels:
 
     def test_xgb_walk_forward_structure(self, sample_df):
         """Verify XGBoost training uses walk-forward (not random split)."""
-        from src.ml_models import MLPredictor
+        from src.ml.ml_models import MLPredictor
         predictor = MLPredictor(model_dir='models/test')
 
         # Mock DB to avoid side effects (NewsDB is imported inside train_xgb)
@@ -293,7 +293,7 @@ class TestEnsemble:
 
     def test_dynamic_weights_loading(self):
         """Verify _load_dynamic_weights returns valid weights."""
-        from src.ensemble_models import _load_dynamic_weights
+        from src.ml.ensemble_models import _load_dynamic_weights
         weights = _load_dynamic_weights()
         assert isinstance(weights, dict)
         assert 'smc' in weights
@@ -305,17 +305,17 @@ class TestEnsemble:
 
     def test_update_ensemble_weights_function_exists(self):
         """Verify update_ensemble_weights is importable."""
-        from src.ensemble_models import update_ensemble_weights
+        from src.ml.ensemble_models import update_ensemble_weights
         assert callable(update_ensemble_weights)
 
     def test_persist_prediction_function_exists(self):
         """Verify _persist_prediction is importable."""
-        from src.ensemble_models import _persist_prediction
+        from src.ml.ensemble_models import _persist_prediction
         assert callable(_persist_prediction)
 
     def test_fallback_ensemble_result(self):
         """Verify fallback result structure."""
-        from src.ensemble_models import _fallback_ensemble_result
+        from src.ml.ensemble_models import _fallback_ensemble_result
         result = _fallback_ensemble_result()
         assert result['final_score'] == 0.5
         assert result['ensemble_signal'] == 'CZEKAJ'
@@ -394,12 +394,12 @@ class TestSelfLearning:
 
     def test_expanded_factors_in_auto_learn(self):
         """Verify new factors are recognized in update_factor_weights."""
-        from src.self_learning import update_factor_weights
+        from src.learning.self_learning import update_factor_weights
         assert callable(update_factor_weights)
 
     def test_pattern_adjustment(self, db):
         """Test pattern weight adjustment."""
-        from src.self_learning import get_pattern_adjustment
+        from src.learning.self_learning import get_pattern_adjustment
         # No data yet — should return 1.0
         adj = get_pattern_adjustment({"pattern": "TEST_PATTERN"})
         assert adj == 1.0
@@ -414,7 +414,7 @@ class TestOpenAIAgent:
 
     def test_agent_tools_schema_has_new_tools(self):
         """Verify new tools are in AGENT_TOOLS_SCHEMA."""
-        from src.openai_agent import AGENT_TOOLS_SCHEMA
+        from src.integrations.openai_agent import AGENT_TOOLS_SCHEMA
         tool_names = [t['name'] for t in AGENT_TOOLS_SCHEMA]
         assert 'get_loss_analysis' in tool_names
         assert 'get_multi_tf_analysis' in tool_names
@@ -423,7 +423,7 @@ class TestOpenAIAgent:
     def test_agent_dispatch_new_tools(self):
         """Verify new tools are in dispatcher."""
         with patch('src.openai_agent.OPENAI_KEY', 'test_key'):
-            from src.openai_agent import QuantSentinelAgent
+            from src.integrations.openai_agent import QuantSentinelAgent
             with patch.object(QuantSentinelAgent, '__init__', lambda self: None):
                 agent = QuantSentinelAgent()
                 agent.client = MagicMock()
@@ -438,7 +438,7 @@ class TestOpenAIAgent:
 
     def test_agent_instructions_reference_new_tools(self):
         """Verify AGENT_INSTRUCTIONS mention new tools."""
-        from src.openai_agent import AGENT_INSTRUCTIONS
+        from src.integrations.openai_agent import AGENT_INSTRUCTIONS
         assert 'get_multi_tf_analysis' in AGENT_INSTRUCTIONS
         assert 'get_loss_analysis' in AGENT_INSTRUCTIONS
         assert 'get_news_sentiment' in AGENT_INSTRUCTIONS
@@ -455,7 +455,7 @@ class TestFinance:
 
     def test_calculate_position_with_new_fields(self, sample_analysis):
         """Test calculate_position works with new SMC fields."""
-        from src.finance import calculate_position
+        from src.trading.finance import calculate_position
 
         with patch('src.data_sources.get_provider') as mock_prov:
             mock_instance = MagicMock()
@@ -482,8 +482,8 @@ class TestIntegrationSmoke:
 
     def test_full_signal_pipeline(self, sample_analysis, sample_df, db):
         """Test: SMC → calculate_position → ensemble → log_trade."""
-        from src.finance import calculate_position
-        from src.ensemble_models import get_ensemble_prediction
+        from src.trading.finance import calculate_position
+        from src.ml.ensemble_models import get_ensemble_prediction
 
         # 1. Mock data provider
         with patch('src.data_sources.get_provider') as mock_prov, \
@@ -534,7 +534,7 @@ class TestIntegrationSmoke:
 
     def test_candlestick_patterns_module(self, sample_df):
         """Verify candlestick patterns work on sample data."""
-        from src.candlestick_patterns import engulfing, pin_bar, inside_bar
+        from src.analysis.candlestick_patterns import engulfing, pin_bar, inside_bar
 
         eng = engulfing(sample_df)
         assert eng in ('bullish', 'bearish', False)
@@ -547,7 +547,7 @@ class TestIntegrationSmoke:
 
     def test_indicators_module(self, sample_df):
         """Verify ichimoku and volume_profile work on sample data."""
-        from src.indicators import ichimoku, volume_profile
+        from src.analysis.indicators import ichimoku, volume_profile
 
         ichi = ichimoku(sample_df)
         assert 'tenkan_sen' in ichi.columns

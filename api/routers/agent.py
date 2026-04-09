@@ -42,7 +42,7 @@ class ThreadResponse(BaseModel):
 
 def _get_agent():
     """Pobiera agenta lub rzuca 503 jeśli niedostępny."""
-    from src.openai_agent import get_agent
+    from src.integrations.openai_agent import get_agent
     agent = get_agent()
     if not agent:
         raise HTTPException(
@@ -99,7 +99,7 @@ async def get_thread_history(thread_id: str, limit: int = 20):
 @router.get("/info", summary="Informacje o agencie")
 async def get_agent_info():
     """Zwraca informacje o agencie: nazwę, model, dostępność i listę narzędzi."""
-    from src.openai_agent import get_agent, AGENT_NAME, AGENT_MODEL, AGENT_TOOLS_SCHEMA
+    from src.integrations.openai_agent import get_agent, AGENT_NAME, AGENT_MODEL, AGENT_TOOLS_SCHEMA
     agent = get_agent()
     return {
         "name":      AGENT_NAME,
@@ -116,6 +116,6 @@ async def get_agent_config():
     Eksportuje pełną konfigurację agenta (instructions + tools JSON)
     gotową do wklejenia w platform.openai.com/agent-builder.
     """
-    from src.openai_agent import export_agent_config
+    from src.integrations.openai_agent import export_agent_config
     return export_agent_config()
 

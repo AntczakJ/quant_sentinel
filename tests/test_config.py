@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
-    from src.config import USER_PREFS, LAST_STATUS, LAST_STATUS_LOCK, TOKEN, CHAT_ID
+    from src.core.config import USER_PREFS, LAST_STATUS, LAST_STATUS_LOCK, TOKEN, CHAT_ID
     import threading
 
     print("Testing configuration...")

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.logger import logger
+from src.core.logger import logger
 from api.schemas.models import ModelStats, AllModelsStats
 
 router = APIRouter()
@@ -125,8 +125,8 @@ async def get_model_monitoring():
     calibration status. Returns alerts if thresholds breached.
     """
     try:
-        from src.model_monitor import check_prediction_drift, compute_rolling_accuracy
-        from src.model_calibration import get_calibrator
+        from src.ml.model_monitor import check_prediction_drift, compute_rolling_accuracy
+        from src.ml.model_calibration import get_calibrator
 
         drift = check_prediction_drift()
         accuracy = compute_rolling_accuracy()

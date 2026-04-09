@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 class TestNewsFeed:
     def test_gold_keyword_detection(self):
-        from src.news_feed import _is_gold_relevant
+        from src.data.news_feed import _is_gold_relevant
         assert _is_gold_relevant("Gold surges amid inflation fears") is True
         assert _is_gold_relevant("Fed raises interest rates") is True
         assert _is_gold_relevant("Apple reports quarterly earnings") is False
@@ -19,7 +19,7 @@ class TestNewsFeed:
         assert _is_gold_relevant("Dollar strengthens against euro") is True
 
     def test_headline_classification(self):
-        from src.news_feed import _classify_headline
+        from src.data.news_feed import _classify_headline
         bullish = _classify_headline("Gold surges as safe haven demand rises amid war")
         assert bullish["score"] > 0
         assert bullish["impact"] == "high"
@@ -31,7 +31,7 @@ class TestNewsFeed:
         assert neutral["impact"] == "low"
 
     def test_get_gold_news_signal(self):
-        from src.news_feed import get_gold_news_signal
+        from src.data.news_feed import get_gold_news_signal
         result = get_gold_news_signal()
         assert isinstance(result, dict)
         assert "signal" in result
@@ -41,13 +41,13 @@ class TestNewsFeed:
 
 class TestNewsSimilarity:
     def test_find_similar_returns_dict(self):
-        from src.news_similarity import find_similar_news
+        from src.data.news_similarity import find_similar_news
         result = find_similar_news("Federal Reserve holds interest rates steady")
         assert isinstance(result, dict)
         assert "signal" in result
 
     def test_build_index(self):
-        from src.news_similarity import build_index_from_finnhub
+        from src.data.news_similarity import build_index_from_finnhub
         count = build_index_from_finnhub()
         assert isinstance(count, int)
         assert count >= 0

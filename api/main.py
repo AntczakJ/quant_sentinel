@@ -30,7 +30,7 @@ _uvicorn_logger.addFilter(
     })()
 )
 
-from src.logger import logger
+from src.core.logger import logger
 from api.websocket.manager import ConnectionManager
 
 # Initialize global objects
@@ -52,20 +52,20 @@ async def lifespan(app: FastAPI):
     # Startup — validate config, then start
     logger.info("Starting QUANT SENTINEL API...")
     try:
-        from src.config import validate_startup_config
+        from src.core.config import validate_startup_config
         validate_startup_config()
     except (ImportError, AttributeError):
         pass
 
     # Database: enable WAL mode + startup backup + users table
     try:
-        from src.db_backup import enable_wal_mode, create_backup
+        from src.ops.db_backup import enable_wal_mode, create_backup
         enable_wal_mode()
         create_backup(reason="startup")
     except (ImportError, AttributeError):
         pass
     try:
-        from src.auth import create_users_table
+        from src.core.auth import create_users_table
         create_users_table()
     except (ImportError, AttributeError):
         pass
@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
         """Load ML models off the event-loop thread (import + init + load)."""
         def _sync_load():
             """Runs entirely in a worker thread — keeps the event loop free."""
-            from src.rl_agent import DQNAgent  # triggers TF/Keras import
+            from src.ml.rl_agent import DQNAgent  # triggers TF/Keras import
             rl_agent = DQNAgent(state_size=22, action_size=3)
             model_path = "models/rl_agent.keras"
             if os.path.exists(model_path):
@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
     # Start model loading + background tasks (all non-blocking)
     # Backfill missing trade profits (one-time migration)
     try:
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         _db = NewsDB()
         _backfilled = _db.backfill_trade_profits()
         if _backfilled > 0:
@@ -150,7 +150,7 @@ async def lifespan(app: FastAPI):
 
     # 3. Flush database
     try:
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         db.conn.commit()
     except Exception:
@@ -180,7 +180,7 @@ async def _background_scanner():
 
     while True:
         try:
-            from src.database import NewsDB
+            from src.core.database import NewsDB
             from src.api_optimizer import get_rate_limiter as _get_rl
 
             logger.info("📡 [BG Scanner] Starting multi-TF cascade scan (4h→1h→15m→5m)...")
@@ -194,7 +194,7 @@ async def _background_scanner():
 
             # Prefetch all timeframes to warm cache (reduces per-TF API calls in cascade)
             try:
-                from src.data_sources import get_provider as _gp
+                from src.data.data_sources import get_provider as _gp
                 _provider = _gp()
                 await asyncio.to_thread(_provider.prefetch_all_timeframes, 'XAU/USD')
             except Exception as _pf_err:
@@ -217,7 +217,7 @@ async def _background_scanner():
 
             # Run cascade scan in thread pool (all SMC + finance calls are blocking)
             try:
-                from src.scanner import cascade_mtf_scan
+                from src.trading.scanner import cascade_mtf_scan
                 trade = await asyncio.wait_for(
                     asyncio.to_thread(cascade_mtf_scan, db, portfolio_balance, portfolio_currency),
                     timeout=120.0,  # generous — cascade may check up to 4 TFs
@@ -330,7 +330,7 @@ async def _broadcast_prices_task():
                     if not can_use:
                         await asyncio.sleep(30)
                         continue
-                    from src.data_sources import get_provider
+                    from src.data.data_sources import get_provider
                     provider = get_provider()
                     ticker = await asyncio.to_thread(provider.get_current_price, "XAU/USD")
 
@@ -366,7 +366,7 @@ async def _auto_resolve_trades():
 
     while True:
         try:
-            from src.database import NewsDB
+            from src.core.database import NewsDB
 
             # Try cached price first (0 credits)
             current_price = 0.0
@@ -389,7 +389,7 @@ async def _auto_resolve_trades():
                     logger.debug("[Resolver] Skipping — credits low, waiting for refill")
                     await asyncio.sleep(300)
                     continue
-                from src.data_sources import get_provider
+                from src.data.data_sources import get_provider
                 provider = get_provider()
                 ticker = await asyncio.to_thread(provider.get_current_price, "XAU/USD")
                 if not ticker:
@@ -470,7 +470,7 @@ async def _auto_resolve_trades():
 
                         # Update factor weights for self-learning
                         try:
-                            from src.self_learning import update_factor_weights
+                            from src.learning.self_learning import update_factor_weights
                             update_factor_weights(trade_id, status)
                         except Exception:
                             pass
@@ -592,7 +592,7 @@ async def _monitoring_loop():
             # Daily summary + report at 22:00 UTC (once per day)
             if now.hour == 22 and last_daily_date != now.date():
                 try:
-                    from src.monitoring import send_daily_summary
+                    from src.ops.monitoring import send_daily_summary
                     await asyncio.to_thread(send_daily_summary)
                     last_daily_date = now.date()
                 except (ImportError, AttributeError) as e:
@@ -600,7 +600,7 @@ async def _monitoring_loop():
 
                 # Generate persistent daily report
                 try:
-                    from src.compliance import generate_daily_report
+                    from src.ops.compliance import generate_daily_report
                     await asyncio.to_thread(generate_daily_report)
                 except (ImportError, AttributeError):
                     pass
@@ -608,7 +608,7 @@ async def _monitoring_loop():
                 # Data retention (monthly, on 1st of month)
                 if now.day == 1:
                     try:
-                        from src.compliance import archive_old_data
+                        from src.ops.compliance import archive_old_data
                         await asyncio.to_thread(archive_old_data)
                     except (ImportError, AttributeError):
                         pass
@@ -616,7 +616,7 @@ async def _monitoring_loop():
             # Weekly report on Sunday
             if now.weekday() == 6 and now.hour == 20 and last_weekly_weekday != now.isocalendar()[1]:
                 try:
-                    from src.monitoring import send_weekly_report
+                    from src.ops.monitoring import send_weekly_report
                     await asyncio.to_thread(send_weekly_report)
                     last_weekly_weekday = now.isocalendar()[1]
                 except (ImportError, AttributeError) as e:
@@ -625,7 +625,7 @@ async def _monitoring_loop():
             # Model drift check every 6 hours
             if now.hour % 6 == 0 and now.minute < 5:
                 try:
-                    from src.monitoring import check_and_alert_drift
+                    from src.ops.monitoring import check_and_alert_drift
                     await asyncio.to_thread(check_and_alert_drift)
                 except (ImportError, AttributeError) as e:
                     logger.debug(f"Drift check skipped: {e}")
@@ -659,7 +659,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 async def get_metrics():
     """System metrics: trades, latency, portfolio, model health."""
     try:
-        from src.metrics import get_all_metrics
+        from src.ops.metrics import get_all_metrics
         return get_all_metrics()
     except Exception as e:
         return {"error": str(e)}
@@ -671,7 +671,7 @@ async def find_similar(headline: str = ""):
     if not headline:
         return {"error": "Provide ?headline=your+headline+here"}
     try:
-        from src.news_similarity import find_similar_news
+        from src.data.news_similarity import find_similar_news
         return await asyncio.to_thread(find_similar_news, headline)
     except Exception as e:
         return {"error": str(e), "signal": 0}
@@ -681,7 +681,7 @@ async def find_similar(headline: str = ""):
 async def get_events():
     """Historical gold reaction to CPI, FOMC, NFP events."""
     try:
-        from src.event_reactions import get_all_event_biases
+        from src.data.event_reactions import get_all_event_biases
         return await asyncio.to_thread(get_all_event_biases)
     except Exception as e:
         return {"error": str(e)}
@@ -691,7 +691,7 @@ async def get_events():
 async def get_news():
     """Gold-relevant news with sentiment classification."""
     try:
-        from src.news_feed import get_gold_news_signal
+        from src.data.news_feed import get_gold_news_signal
         return await asyncio.to_thread(get_gold_news_signal)
     except Exception as e:
         return {"error": str(e), "signal": 0}
@@ -701,7 +701,7 @@ async def get_news():
 async def get_macro():
     """Full macro signal: FRED real yields, retail sentiment, seasonality, COT."""
     try:
-        from src.macro_data import get_full_macro_signal
+        from src.data.macro_data import get_full_macro_signal
         return await asyncio.to_thread(get_full_macro_signal)
     except Exception as e:
         return {"error": str(e), "composite_signal": 0}
@@ -711,7 +711,7 @@ async def get_macro():
 async def get_detailed_health():
     """Comprehensive health check: database, models, risk manager, data provider."""
     try:
-        from src.monitoring import get_system_health
+        from src.ops.monitoring import get_system_health
         return await asyncio.to_thread(get_system_health)
     except Exception as e:
         return {"status": "error", "error": str(e)}
@@ -774,7 +774,7 @@ async def health_check_detailed():
     db_ok = False
     db_tables = 0
     try:
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         # Use a known table instead of sqlite_master (Turso-safe)
         row = db._query_one("SELECT COUNT(*) FROM trades")

@@ -52,7 +52,7 @@ if not os.getenv("DATABASE_URL"):
 
 import numpy as np
 import pandas as pd
-from src.logger import logger as _logger
+from src.core.logger import logger as _logger
 
 
 # =====================================================================
@@ -74,7 +74,7 @@ def _print_gpu_info():
             print("💻 GPU nie wykryte — TensorFlow używa CPU")
 
         try:
-            from src.ml_models import _XGB_PARAMS
+            from src.ml.ml_models import _XGB_PARAMS
             if 'cuda' in str(_XGB_PARAMS.get('device', '')) or 'gpu' in str(_XGB_PARAMS.get('tree_method', '')):
                 print(f"🎮 XGBoost: GPU acceleration aktywna ({_XGB_PARAMS})")
             else:
@@ -115,7 +115,7 @@ def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
     but has contango/backwardation. Acceptable for training features.
     """
     import yfinance as yf
-    from src.logger import logger
+    from src.core.logger import logger
 
     logger.info(f"Fetching training data for {symbol}...")
 
@@ -215,7 +215,7 @@ def train_xgboost(train_df: pd.DataFrame, precomputed_features=None) -> dict:
     print("🌳 TRENING XGBOOST")
     print("=" * 60)
 
-    from src.ml_models import ml
+    from src.ml.ml_models import ml
 
     t0 = time.time()
     acc = ml.train_xgb(train_df, precomputed_features=precomputed_features)
@@ -227,7 +227,7 @@ def train_xgboost(train_df: pd.DataFrame, precomputed_features=None) -> dict:
 
         # Feature importance
         if ml.xgb is not None and hasattr(ml.xgb, 'feature_importances_'):
-            from src.ml_models import FEATURE_COLS
+            from src.ml.ml_models import FEATURE_COLS
             importances = dict(zip(FEATURE_COLS, ml.xgb.feature_importances_))
             top5 = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:5]
             print(f"   📊 Top 5 features:")
@@ -249,7 +249,7 @@ def train_lstm(train_df: pd.DataFrame, epochs: int = 50, precomputed_features=No
     print("🧠 TRENING LSTM")
     print("=" * 60)
 
-    from src.ml_models import ml
+    from src.ml.ml_models import ml
 
     t0 = time.time()
     model = ml.train_lstm(train_df, precomputed_features=precomputed_features)
@@ -258,7 +258,7 @@ def train_lstm(train_df: pd.DataFrame, epochs: int = 50, precomputed_features=No
     if model is not None:
         # Odczytaj metryki z bazy
         try:
-            from src.database import NewsDB
+            from src.core.database import NewsDB
             db = NewsDB()
             val_acc = db.get_param("lstm_last_accuracy", 0)
             wf_acc = db.get_param("lstm_walkforward_accuracy", 0)
@@ -290,7 +290,7 @@ def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
     print("🤖 TRENING DQN (Double DQN)")
     print("=" * 60)
 
-    from src.rl_agent import TradingEnv, DQNAgent
+    from src.ml.rl_agent import TradingEnv, DQNAgent
 
     if len(train_df) < 50:
         print("   ❌ Za mało danych")
@@ -383,7 +383,7 @@ def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
 
     # Metryki do bazy
     try:
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         db.set_param("rl_best_reward", best_reward)
         db.set_param("rl_episodes_trained", episodes)
@@ -404,21 +404,21 @@ def run_bayesian_optimization() -> dict:
     print("=" * 60)
 
     try:
-        from src.self_learning import run_learning_cycle
+        from src.learning.self_learning import run_learning_cycle
 
         # Tymczasowo włącz Bayes
-        import src.config
-        old_bayes = src.config.ENABLE_BAYES
-        src.config.ENABLE_BAYES = True
+        import src.core.config
+        old_bayes = src.core.config.ENABLE_BAYES
+        src.core.config.ENABLE_BAYES = True
 
         t0 = time.time()
         run_learning_cycle()
         elapsed = time.time() - t0
 
-        src.config.ENABLE_BAYES = old_bayes
+        src.core.config.ENABLE_BAYES = old_bayes
 
         # Odczytaj zoptymalizowane parametry
-        from src.database import NewsDB
+        from src.core.database import NewsDB
         db = NewsDB()
         params = {}
         for p in ['risk_percent', 'min_tp_distance_mult', 'target_rr', 'min_score']:
@@ -443,7 +443,7 @@ def run_bayesian_optimization() -> dict:
 
 def run_backtest(holdout_df: pd.DataFrame) -> dict:
     """Uruchom backtest na danych holdout."""
-    from src.backtest import run_full_backtest
+    from src.analysis.backtest import run_full_backtest
     return run_full_backtest(holdout_df)
 
 
@@ -536,7 +536,7 @@ def main():
 
     # ---- 1b. Pre-compute features ONCE (reused by XGBoost + LSTM) ----
     print("\n⚙️  Pre-computing features...")
-    from src.ml_models import ml
+    from src.ml.ml_models import ml
     t_feat = time.time()
     precomputed = ml._features(train_df)
     print(f"   ✅ {len(precomputed)} rows, {len(precomputed.columns)} features ({time.time()-t_feat:.1f}s)")
@@ -552,7 +552,7 @@ def main():
         print("\n" + "=" * 60)
         print("  ATTENTION MODEL (TFT-lite)")
         print("=" * 60)
-        from src.attention_model import train_attention_model
+        from src.ml.attention_model import train_attention_model
         t0 = time.time()
         attn_model, attn_acc = train_attention_model(train_df)
         elapsed = time.time() - t0
@@ -571,7 +571,7 @@ def main():
         print("\n" + "=" * 60)
         print("  DPFORMER-LITE (Decompose + LSTM + Attention)")
         print("=" * 60)
-        from src.decompose_model import train_decompose_model
+        from src.ml.decompose_model import train_decompose_model
         t0 = time.time()
         dp_model, dp_acc = train_decompose_model(train_df, epochs=args.epochs)
         elapsed = time.time() - t0
@@ -611,7 +611,7 @@ def main():
     print("  POST-TRAINING: ONNX Export + Calibration")
     print("=" * 60)
     try:
-        from src.compute import convert_keras_to_onnx, convert_xgboost_to_onnx
+        from src.analysis.compute import convert_keras_to_onnx, convert_xgboost_to_onnx
         import pickle
 
         # LSTM → ONNX
@@ -639,7 +639,7 @@ def main():
 
     # ---- 8. Calibration fit (Platt Scaling) ----
     try:
-        from src.model_calibration import get_calibrator
+        from src.ml.model_calibration import get_calibrator
         cal = get_calibrator()
         cal.fit_all()
         status = cal.get_status()
@@ -654,7 +654,7 @@ def main():
     # ---- 9. Model validation on val_df ----
     try:
         print(f"\n   Validation set ({len(val_df)} bars):")
-        from src.backtest import backtest_xgb, backtest_lstm
+        from src.analysis.backtest import backtest_xgb, backtest_lstm
         val_xgb = backtest_xgb(val_df)
         if 'accuracy' in val_xgb:
             print(f"   XGBoost val: acc={val_xgb['accuracy']:.1%} MCC={val_xgb.get('mcc', 0):.3f} Sharpe={val_xgb.get('sharpe', 0):.2f}")

@@ -15,7 +15,7 @@ from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.logger import logger
+from src.core.logger import logger
 from api.schemas.models import TrainingStartRequest, TrainingStatus
 
 router = APIRouter()
@@ -182,7 +182,7 @@ async def run_backtest(
     Optionally runs Monte Carlo simulation (5000 shuffles) for risk distribution.
     """
     try:
-        from src.backtest import (
+        from src.analysis.backtest import (
             backtest_xgb, backtest_lstm, backtest_dqn, backtest_ensemble,
             monte_carlo_simulation, apply_transaction_costs
         )
@@ -191,7 +191,7 @@ async def run_backtest(
         def _fetch_data():
             # Try Twelve Data first (real-time, accurate)
             try:
-                from src.data_sources import get_provider
+                from src.data.data_sources import get_provider
                 provider = get_provider()
                 limit_map = {"1mo": 500, "3mo": 1500, "6mo": 3000, "1y": 5000}
                 limit = limit_map.get(period, 1000)

@@ -22,19 +22,19 @@ if sys.platform == "win32":
 @pytest.fixture
 def db():
     """Database fixture"""
-    from src.database import NewsDB
+    from src.core.database import NewsDB
     return NewsDB()
 
 @pytest.fixture
 def config():
     """Config fixture"""
-    from src import config
+    from src.core import config
     return config
 
 @pytest.fixture
 def logger():
     """Logger fixture"""
-    from src.logger import logger
+    from src.core.logger import logger
     return logger
 
 @pytest.fixture

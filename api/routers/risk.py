@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.logger import logger
+from src.core.logger import logger
 
 router = APIRouter()
 
@@ -25,7 +25,7 @@ def get_risk_status():
     halted, daily loss, consecutive losses, cooldown, Kelly risk, session, spread.
     """
     try:
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         return rm.get_status()
     except Exception as e:
@@ -40,7 +40,7 @@ def halt_trading(reason: str = "Manual halt via API"):
     Active positions are NOT closed — only new trade creation is blocked.
     """
     try:
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         rm.halt(reason)
         return {"success": True, "message": f"Trading halted: {reason}", "halted": True}
@@ -55,7 +55,7 @@ def resume_trading():
     Resume trading after a halt. Clears halt state and cooldown timers.
     """
     try:
-        from src.risk_manager import get_risk_manager
+        from src.trading.risk_manager import get_risk_manager
         rm = get_risk_manager()
         rm.resume()
         return {"success": True, "message": "Trading resumed", "halted": False}
