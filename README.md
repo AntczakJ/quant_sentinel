@@ -1,17 +1,17 @@
-# 🤖 QUANT SENTINEL - Autonomous Gold Trading Bot
+# QUANT SENTINEL — Autonomous Gold Trading System
 
-> Advanced AI-powered automated trading system for XAU/USD (Gold) with Smart Money Concepts analysis, Machine Learning predictions, and Real-time Telegram monitoring.
+> Professional AI-powered trading system for XAU/USD with Smart Money Concepts, ML Ensemble (6 models), 11 macro data signals, and full risk management stack.
 
-**Status:** ✅ Production Ready | **Version:** 2.3 | **Last Updated:** 2026-04-03
-**Backend:** ✅ 20/20 Tests Pass | **Frontend:** ✅ Ready | **AI:** Enhanced with Ensemble Methods
+**Version:** 3.0 | **Tests:** 114 passing | **Python:** 3.10+ | **Frontend:** React 18 + TypeScript
 
-**QUANT SENTINEL** is an autonomous gold trading bot combining:
-- **Smart Money Concepts (SMC)** - Advanced technical analysis with 19+ detection functions
-- **Artificial Intelligence** - GPT-4o with ensemble voting for better decisions
-- **Machine Learning** - XGBoost, LSTM, Reinforcement Learning (DQN) + Ensemble Voting
-- **Real-time Monitoring** - Telegram bot with inline menus & live signals
-- **Risk Management** - Position sizing with 1% rule + Dynamic optimization
-- **Self-Learning** - Pattern statistics, parameter optimization, feedback loops
+## What It Does
+
+- **6 ML Models** in ensemble: XGBoost, LSTM, Attention (TFT-lite), DPformer, DQN, SMC — with Platt Scaling calibration and Thompson Sampling weight optimization
+- **11 Macro Signals**: FRED real yields, COT positioning, Finnhub news sentiment, GPR geopolitical risk, ETF proxies (UUP/TLT/VIXY), USD/JPY, seasonality, event reactions, FAISS news similarity
+- **Smart Money Concepts**: Order Blocks (volume-weighted + time decay), FVG, BOS/CHoCH, Liquidity Grabs, session-aware scoring
+- **Risk Management**: Fractional Kelly Criterion, drawdown circuit breakers, portfolio heat tracking, 5-level trailing stop with ATR continuous trail
+- **Self-Learning**: Bayesian parameter optimization with holdout validation, A/B testing framework, time-weighted pattern statistics
+- **Infrastructure**: JWT auth, rate limiting, hash-chain audit trail, Docker deployment, Telegram alerts, structured JSON logging
 
 ---
 
