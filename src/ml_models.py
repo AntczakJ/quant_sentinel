@@ -119,8 +119,8 @@ class MLPredictor:
             db = NewsDB()
             db.set_param("xgb_last_accuracy", avg_acc)
             db.set_param("xgb_feature_count", len(FEATURE_COLS))
-        except:
-            pass
+        except (ImportError, AttributeError, Exception) as e:
+            logger.debug(f"Could not persist XGBoost metrics to DB: {e}")
 
         return avg_acc
 
@@ -129,7 +129,7 @@ class MLPredictor:
             try:
                 with open(os.path.join(self.model_dir, 'xgb.pkl'), 'rb') as f:
                     self.xgb = pickle.load(f)
-            except:
+            except (FileNotFoundError, pickle.UnpicklingError, EOFError, ModuleNotFoundError):
                 return 0.5
         features = self._features(df.tail(100))
         X = features[FEATURE_COLS].tail(1)
@@ -255,8 +255,8 @@ class MLPredictor:
             db = NewsDB()
             db.set_param("lstm_last_accuracy", best_val_acc)
             db.set_param("lstm_walkforward_accuracy", wf_acc)
-        except:
-            pass
+        except (ImportError, AttributeError, Exception) as e:
+            logger.debug(f"Could not persist LSTM metrics to DB: {e}")
 
         logger.info(f"LSTM trained, val_accuracy: {best_val_acc:.3f}, walk-forward: {wf_acc:.3f} ({len(fold_accuracies)} folds)")
         return model

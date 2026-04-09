@@ -9,37 +9,97 @@ import os
 import json
 import datetime
 import threading
-from typing import Optional
+from typing import Any, Optional, List
 
 from src.logger import logger
 
 # ======================== DATABASE CONNECTION ========================
+#
+# Dual-write architecture:
+#   PRIMARY  = local SQLite (fast reads, training data, everything)
+#   SECONDARY = Turso cloud (optional sync for trades, signals, portfolio)
+#
+# Tables synced to Turso (production data):
+#   trades, scanner_signals, dynamic_params, pattern_stats, session_stats,
+#   regime_stats, setup_quality_stats, trades_audit, processed_news
+#
+# Tables LOCAL ONLY (training/debug — too large or too frequent for cloud):
+#   ml_predictions, news_sentiment, trailing_stop_log, loss_patterns,
+#   rejected_setups, filter_performance, hourly_stats
 
 DATABASE_URL = os.getenv("DATABASE_URL", "data/sentinel.db")
-DATABASE_TOKEN = os.getenv("DATABASE_TOKEN")
+TURSO_URL = os.getenv("TURSO_URL", "")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN", "")
 
 _db_lock = threading.Lock()
+_DB_LOCK_TIMEOUT = 5.0  # seconds — prevent indefinite hangs
 
-if DATABASE_URL.startswith("libsql://"):
+# Tables that sync to Turso (production-critical data)
+_TURSO_SYNC_TABLES = {
+    "trades", "scanner_signals", "dynamic_params", "pattern_stats",
+    "session_stats", "regime_stats", "setup_quality_stats", "trades_audit",
+    "processed_news", "agent_threads",
+}
+
+# Tables that stay local only
+_LOCAL_ONLY_TABLES = {
+    "ml_predictions", "news_sentiment", "trailing_stop_log", "loss_patterns",
+    "rejected_setups", "filter_performance", "hourly_stats",
+}
+
+
+class _DBLockContext:
+    """Context manager for database lock with timeout."""
+    def __enter__(self):
+        if not _db_lock.acquire(timeout=_DB_LOCK_TIMEOUT):
+            raise TimeoutError(f"Database lock timeout after {_DB_LOCK_TIMEOUT}s — possible deadlock")
+        return self
+
+    def __exit__(self, *args):
+        _db_lock.release()
+
+
+def _db_locked():
+    return _DBLockContext()
+
+
+# ── Primary: always local SQLite ──
+import sqlite3
+os.makedirs(os.path.dirname(DATABASE_URL) or ".", exist_ok=True)
+_conn = sqlite3.connect(DATABASE_URL, check_same_thread=False)
+_cursor = _conn.cursor()
+_using_sqlite = True
+logger.info(f"Primary database: {DATABASE_URL}")
+
+# ── Secondary: Turso cloud (optional) ──
+_turso_conn = None
+_turso_cursor = None
+
+if TURSO_URL and TURSO_URL.startswith("libsql://"):
     try:
         import libsql
-        if DATABASE_TOKEN:
-            _conn = libsql.connect(DATABASE_URL, auth_token=DATABASE_TOKEN)
-        else:
-            _conn = libsql.connect(DATABASE_URL)
-        _cursor = _conn.cursor()
-        _using_sqlite = False
-        logger.info(f"Using Turso database: {DATABASE_URL}")
+        _turso_conn = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN) if TURSO_TOKEN else libsql.connect(TURSO_URL)
+        _turso_cursor = _turso_conn.cursor()
+        logger.info(f"Secondary database (Turso): {TURSO_URL[:50]}...")
     except ImportError:
-        logger.error("libsql-client not installed. Run: pip install libsql-client")
-        raise
-else:
-    import sqlite3
-    os.makedirs(os.path.dirname(DATABASE_URL) or ".", exist_ok=True)
-    _conn = sqlite3.connect(DATABASE_URL, check_same_thread=False)
-    _cursor = _conn.cursor()
-    _using_sqlite = True
-    logger.info(f"Using local SQLite database: {DATABASE_URL}")
+        logger.info("Turso sync disabled (libsql not installed)")
+    except Exception as e:
+        logger.warning(f"Turso connection failed: {e} — running local only")
+
+
+def _should_sync_to_turso(sql: str) -> bool:
+    """Check if this SQL statement should be replicated to Turso."""
+    if not _turso_conn:
+        return False
+    sql_upper = sql.strip().upper()
+    # Only sync writes (INSERT, UPDATE, DELETE) and schema changes
+    if not sql_upper.startswith(("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER")):
+        return False
+    # Check if target table is in sync list
+    for table in _TURSO_SYNC_TABLES:
+        if table.upper() in sql_upper:
+            return True
+    return False
 
 # ======================== DATABASE CLASS ========================
 
@@ -57,8 +117,8 @@ class NewsDB:
             _db_initialized = True
 
     def _execute(self, sql: str, params: tuple = (), _silent: bool = False):
-        """Execute SQL, committing if needed. Thread-safe."""
-        with _db_lock:
+        """Execute SQL, committing if needed. Thread-safe. Dual-write to Turso if applicable."""
+        with _db_locked():
             try:
                 self.cursor.execute(sql, params)
                 if sql.strip().upper().startswith(("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER")):
@@ -68,30 +128,49 @@ class NewsDB:
                     logger.error(f"Database error: {e}\nSQL: {sql}\nParams: {params}")
                 raise
 
+        # Async-ish sync to Turso (best-effort, never blocks primary)
+        if _should_sync_to_turso(sql):
+            try:
+                if _turso_cursor is not None and _turso_conn is not None:
+                    _turso_cursor.execute(sql, params)
+                    _turso_conn.commit()
+            except Exception as e:
+                logger.debug(f"Turso sync failed (non-critical): {e}")
+
     def _insert_returning_id(self, sql: str, params: tuple = ()) -> int:
-        """INSERT and return last_insert_rowid atomically (under the same lock)."""
-        with _db_lock:
+        """INSERT and return last_insert_rowid atomically (under the same lock). Dual-write."""
+        with _db_locked():
             try:
                 self.cursor.execute(sql, params)
                 self.conn.commit()
                 self.cursor.execute("SELECT last_insert_rowid()")
                 row = self.cursor.fetchone()
-                return row[0] if row else 0
+                row_id = row[0] if row else 0
             except Exception as e:
                 logger.error(f"Database error: {e}\nSQL: {sql}\nParams: {params}")
                 raise
 
-    def _query(self, sql: str, params: tuple = ()):
-        """Execute a SELECT query thread-safely and return all rows."""
-        with _db_lock:
-            self.cursor.execute(sql, params)
-            return self.cursor.fetchall()
+        if _should_sync_to_turso(sql):
+            try:
+                if _turso_cursor is not None and _turso_conn is not None:
+                    _turso_cursor.execute(sql, params)
+                    _turso_conn.commit()
+            except Exception as e:
+                logger.debug(f"Turso sync failed (non-critical): {e}")
 
-    def _query_one(self, sql: str, params: tuple = ()):
-        """Execute a SELECT query thread-safely and return first row."""
-        with _db_lock:
+        return row_id
+
+    def _query(self, sql: str, params: tuple = ()) -> list:  # type: ignore[override]
+        """Execute a SELECT query thread-safely and return all rows."""
+        with _db_locked():
             self.cursor.execute(sql, params)
-            return self.cursor.fetchone()
+            return list(self.cursor.fetchall())
+
+    def _query_one(self, sql: str, params: tuple = ()) -> Optional[tuple]:  # type: ignore[override]
+        """Execute a SELECT query thread-safely and return first row."""
+        with _db_locked():
+            self.cursor.execute(sql, params)
+            return self.cursor.fetchone()  # type: ignore[no-any-return]
 
     def get_portfolio_params(self) -> dict:
         rows = self._query("SELECT param_name, param_value, param_text FROM dynamic_params WHERE param_name LIKE 'portfolio_%'")
@@ -187,7 +266,7 @@ class NewsDB:
                   'vol_regime': 'TEXT'}
         for col, typ in needed.items():
             try:
-                with _db_lock:
+                with _db_locked():
                     self.cursor.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
                     self.conn.commit()
                 logger.info(f"Migration: added column trades.{col}")
@@ -198,7 +277,7 @@ class NewsDB:
 
         # Add param_text column to dynamic_params for text/JSON values
         try:
-            with _db_lock:
+            with _db_locked():
                 self.cursor.execute("ALTER TABLE dynamic_params ADD COLUMN param_text TEXT")
                 self.conn.commit()
             logger.info("Migration: added column dynamic_params.param_text")
@@ -227,6 +306,47 @@ class NewsDB:
                 logger.info(f"Migration: normalized {migrated[0]} PROFIT→WIN, rebuilt stats")
         except Exception:
             pass
+
+        # Normalize session names: old 3-session → new 5-session format
+        session_map = {"Asia": "asian", "London": "london", "NewYork": "new_york"}
+        for old_name, new_name in session_map.items():
+            try:
+                self._execute("UPDATE trades SET session=? WHERE session=?", (new_name, old_name))
+                self._execute("UPDATE session_stats SET session=? WHERE session=?", (new_name, old_name), _silent=True)
+            except Exception:
+                pass
+
+        # Backfill NULL sessions from timestamps
+        try:
+            null_sessions = self._query("SELECT id, timestamp FROM trades WHERE session IS NULL AND timestamp IS NOT NULL")
+            for row in (null_sessions or []):
+                session = self.get_session(row[1])
+                if session and session != 'unknown':
+                    self._execute("UPDATE trades SET session=? WHERE id=?", (session, row[0]))
+            if null_sessions:
+                logger.info(f"Migration: backfilled {len(null_sessions)} NULL sessions")
+        except Exception:
+            pass
+
+        # Backfill audit columns (filled_entry/filled_sl) for historical resolved trades
+        try:
+            missing = self._query(
+                "SELECT id, entry, sl, tp, status FROM trades "
+                "WHERE status IN ('WIN','LOSS') AND filled_entry IS NULL AND entry IS NOT NULL"
+            )
+            for row in (missing or []):
+                t_id, entry, sl, tp, status = row
+                filled_tp = tp if status == 'WIN' else None
+                self._execute(
+                    "UPDATE trades SET filled_entry=?, filled_sl=?, filled_tp=?, "
+                    "slippage=0, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (entry, sl, filled_tp, t_id)
+                )
+            if missing:
+                logger.info(f"Migration: backfilled audit columns for {len(missing)} trades")
+        except Exception:
+            pass
+
         try:
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
@@ -244,6 +364,65 @@ class NewsDB:
         except Exception as e:
             logger.warning(f"Index creation: {e}")
 
+        # --- Phase 4: Audit trail ---
+        # Add execution quality columns to trades
+        audit_cols = {
+            'filled_entry': 'REAL', 'filled_sl': 'REAL', 'filled_tp': 'REAL',
+            'slippage': 'REAL', 'spread_at_entry': 'REAL',
+            'updated_at': 'TIMESTAMP',
+        }
+        for col, typ in audit_cols.items():
+            try:
+                with _db_locked():
+                    self.cursor.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
+                    self.conn.commit()
+            except Exception:
+                pass  # column already exists
+
+        # trades_audit table — tracks every status change with hash chain
+        self._execute("""CREATE TABLE IF NOT EXISTS trades_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_id INTEGER NOT NULL,
+            old_status TEXT,
+            new_status TEXT,
+            field_changed TEXT,
+            old_value TEXT,
+            new_value TEXT,
+            reason TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            prev_hash TEXT,
+            entry_hash TEXT
+        )""")
+        self._execute("CREATE INDEX IF NOT EXISTS idx_audit_trade ON trades_audit(trade_id)")
+        # Add hash columns if table already exists without them
+        for col in ('prev_hash', 'entry_hash'):
+            try:
+                with _db_locked():
+                    self.cursor.execute(f"ALTER TABLE trades_audit ADD COLUMN {col} TEXT")
+                    self.conn.commit()
+            except Exception:
+                pass
+
+    def log_trade_audit(self, trade_id: int, old_status: str, new_status: str,
+                        field_changed: str = "status", old_value: str = "",
+                        new_value: str = "", reason: str = ""):
+        """Record a change to a trade for audit trail."""
+        try:
+            self._execute(
+                "INSERT INTO trades_audit (trade_id, old_status, new_status, field_changed, old_value, new_value, reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (trade_id, old_status, new_status, field_changed, old_value, new_value, reason)
+            )
+        except (AttributeError, TypeError) as e:
+            logger.debug(f"Audit log failed: {e}")
+
+    def get_trade_audit(self, trade_id: int) -> list:
+        """Get audit history for a specific trade."""
+        return self._query(
+            "SELECT * FROM trades_audit WHERE trade_id = ? ORDER BY timestamp",
+            (trade_id,)
+        )
+
     def get_agent_thread(self, user_id: str) -> Optional[str]:
         try:
             row = self._query_one("SELECT thread_id FROM agent_threads WHERE user_id = ?", (str(user_id),))
@@ -256,10 +435,22 @@ class NewsDB:
         self._execute("INSERT OR REPLACE INTO agent_threads (user_id, thread_id, last_used) VALUES (?, ?, CURRENT_TIMESTAMP)", (str(user_id), thread_id))
 
     def get_session(self, timestamp: str) -> str:
-        hour = int(timestamp[11:13])
-        if 0 <= hour < 8: return "Asia"
-        elif 8 <= hour < 16: return "London"
-        else: return "NewYork"
+        """Determine trading session from timestamp. Uses CET-based logic matching smc_engine."""
+        try:
+            hour = int(timestamp[11:13])
+        except (ValueError, IndexError):
+            return "unknown"
+        # CET-based session mapping (matches smc_engine.get_active_session)
+        if 0 <= hour < 8:
+            return "asian"
+        elif 8 <= hour < 14:
+            return "london"
+        elif 14 <= hour < 17:
+            return "overlap"
+        elif 17 <= hour < 23:
+            return "new_york"
+        else:
+            return "off_hours"
 
     def update_pattern_stats(self, pattern: str, outcome: str):
         """Atomowa aktualizacja statystyk wzorca (bez race condition)."""
@@ -330,10 +521,46 @@ class NewsDB:
         """, (pattern, session, is_win, is_loss, float(is_win),
               is_win, is_loss, is_win))
 
-    def get_session_stats(self, pattern: str = None) -> list:
+    def get_session_stats(self, pattern: Optional[str] = None) -> list:
         if pattern:
             return self._query("SELECT pattern, session, count, wins, losses, win_rate FROM session_stats WHERE pattern = ? ORDER BY win_rate DESC", (pattern,))
         return self._query("SELECT pattern, session, count, wins, losses, win_rate FROM session_stats ORDER BY pattern, win_rate DESC")
+
+    def get_session_win_rate(self, session: str, direction: Optional[str] = None, min_trades: int = 5) -> dict:
+        """Get win rate for a specific session, optionally filtered by direction."""
+        if direction:
+            row = self._query_one(
+                "SELECT COUNT(*) as n, "
+                "SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END) as wins "
+                "FROM trades WHERE session=? AND direction LIKE ? AND status IN ('WIN','LOSS')",
+                (session, f"%{direction}%")
+            )
+        else:
+            row = self._query_one(
+                "SELECT COUNT(*) as n, "
+                "SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END) as wins "
+                "FROM trades WHERE session=? AND status IN ('WIN','LOSS')",
+                (session,)
+            )
+        if not row or not row[0] or row[0] < min_trades:
+            return {"session": session, "count": row[0] if row else 0, "win_rate": None, "sufficient_data": False}
+        n, wins = row[0], row[1] or 0
+        return {"session": session, "count": n, "wins": wins, "win_rate": round(wins / n, 3), "sufficient_data": True}
+
+    def get_all_session_performance(self, min_trades: int = 3) -> list:
+        """Get win rate breakdown per session for dashboard/analysis."""
+        rows = self._query(
+            "SELECT session, direction, COUNT(*) as n, "
+            "SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END) as wins, "
+            "SUM(CASE WHEN status='LOSS' THEN 1 ELSE 0 END) as losses, "
+            "ROUND(CAST(SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END) AS REAL) / COUNT(*), 3) as wr "
+            "FROM trades WHERE status IN ('WIN','LOSS') "
+            "GROUP BY session, direction HAVING COUNT(*) >= ? "
+            "ORDER BY wr DESC",
+            (min_trades,)
+        )
+        return [{"session": r[0], "direction": r[1], "count": r[2], "wins": r[3],
+                 "losses": r[4], "win_rate": r[5]} for r in (rows or [])]
 
     def init_weights(self):
         fw = {'weight_ob_main': 2.0, 'weight_ob_m5': 1.5, 'weight_ob_h1': 1.5, 'weight_fvg': 1.5, 'weight_grab_mss': 2.0, 'weight_dbr_rbd': 1.5, 'weight_news': 1.0, 'weight_macro': 1.5, 'weight_rsi_opt': 1.0, 'weight_m5_confluence': 1.0, 'weight_bos': 1.5, 'weight_choch': 1.5, 'weight_ob_count': 0.8, 'weight_ob_confluence': 0.8, 'weight_choch_h1': 1.2, 'weight_supply_demand': 1.5, 'weight_rsi_divergence': 1.5, 'weight_ichimoku_bull': 1.2, 'weight_near_poc': 1.0, 'weight_engulfing_bull': 1.3, 'weight_engulfing_bear': 1.3, 'weight_pin_bar_bull': 1.2, 'weight_pin_bar_bear': 1.2, 'weight_inside_bar': 0.8, 'weight_ml_bull': 1.5, 'weight_ml_bear': 1.5, 'weight_rl_buy': 1.5, 'weight_rl_sell': 1.5}
@@ -399,7 +626,7 @@ class NewsDB:
         if count == 0: return 0
         self._execute("DELETE FROM trades WHERE entry IS NOT NULL AND (CAST(entry AS REAL) < ? OR CAST(entry AS REAL) > ?)", (low, high))
         try: self._execute("DELETE FROM scanner_signals WHERE entry IS NOT NULL AND (CAST(entry AS REAL) < ? OR CAST(entry AS REAL) > ?)", (low, high))
-        except Exception: pass
+        except (Exception) as e: logger.debug(f"scanner_signals cleanup skipped: {e}")
         logger.info(f"Usunięto {count} tradów z cenami poza zakresem ${low:.0f}-${high:.0f} (ref: ${reference_price:.0f})")
         return count
 
@@ -468,7 +695,7 @@ class NewsDB:
         """, (regime, session, direction, is_win, is_loss, float(is_win),
               is_win, is_loss, is_win))
 
-    def get_regime_stats(self, regime: str = None, session: str = None) -> list:
+    def get_regime_stats(self, regime: Optional[str] = None, session: Optional[str] = None) -> list:
         if regime and session:
             return self._query("SELECT regime, session, direction, count, wins, losses, win_rate FROM regime_stats WHERE regime = ? AND session = ? ORDER BY win_rate DESC", (regime, session))
         elif regime:
@@ -526,7 +753,7 @@ class NewsDB:
         """, (grade, direction, is_win, is_loss, float(is_win), profit,
               is_win, is_loss, is_win, profit))
 
-    def get_setup_quality_stats(self, grade: str = None) -> list:
+    def get_setup_quality_stats(self, grade: Optional[str] = None) -> list:
         if grade:
             return self._query("SELECT grade, direction, count, wins, losses, win_rate, avg_profit FROM setup_quality_stats WHERE grade = ?", (grade,))
         return self._query("SELECT grade, direction, count, wins, losses, win_rate, avg_profit FROM setup_quality_stats ORDER BY grade, direction")
@@ -548,7 +775,7 @@ class NewsDB:
         """, (hour, direction, is_win, is_loss, float(is_win),
               is_win, is_loss, is_win))
 
-    def get_hourly_stats(self, hour: int = None) -> list:
+    def get_hourly_stats(self, hour: Optional[int] = None) -> list:
         if hour is not None:
             return self._query("SELECT hour, direction, count, wins, losses, win_rate FROM hourly_stats WHERE hour = ?", (hour,))
         return self._query("SELECT hour, direction, count, wins, losses, win_rate FROM hourly_stats ORDER BY hour")
@@ -583,7 +810,7 @@ class NewsDB:
                 last_seen = CURRENT_TIMESTAMP
         """, (pattern_type, direction, description))
 
-    def get_loss_patterns(self, direction: str = None, min_count: int = 2) -> list:
+    def get_loss_patterns(self, direction: Optional[str] = None, min_count: int = 2) -> list:
         if direction:
             return self._query(
                 "SELECT pattern_type, direction, count, description FROM loss_patterns WHERE direction = ? AND count >= ? ORDER BY count DESC",
@@ -621,7 +848,7 @@ class NewsDB:
         """, (timeframe, direction, price, rejection_reason, filter_name,
               confluence_count, rsi, trend, pattern, atr))
 
-    def get_recent_rejections(self, filter_name: str = None, limit: int = 50) -> list:
+    def get_recent_rejections(self, filter_name: Optional[str] = None, limit: int = 50) -> list:
         if filter_name:
             return self._query(
                 "SELECT id, timestamp, timeframe, direction, price, rejection_reason, filter_name, pattern "
@@ -691,7 +918,7 @@ class NewsDB:
               cb, cp,
               cb, ib, cp, ip))
 
-    def get_filter_accuracy(self, filter_name: str = None) -> list:
+    def get_filter_accuracy(self, filter_name: Optional[str] = None) -> list:
         if filter_name:
             return self._query(
                 "SELECT filter_name, direction, correct_blocks, incorrect_blocks, "
@@ -711,7 +938,7 @@ class NewsDB:
 
     # ── PER-REGIME MODEL ACCURACY ──
 
-    def get_model_accuracy_by_regime(self, regime: str = None) -> list:
+    def get_model_accuracy_by_regime(self, regime: Optional[str] = None) -> list:
         """Zwraca accuracy modeli per regime (z ml_predictions + trades)."""
         sql = """
             SELECT mp.ensemble_signal, t.status, t.vol_regime,
@@ -720,7 +947,7 @@ class NewsDB:
             JOIN trades t ON mp.trade_id = t.id
             WHERE t.status IN ('WIN', 'LOSS')
         """
-        params = ()
+        params: tuple = ()
         if regime:
             sql += " AND t.vol_regime = ?"
             params = (regime,)

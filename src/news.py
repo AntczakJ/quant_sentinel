@@ -71,5 +71,5 @@ def get_economic_calendar() -> str:
                 events.append(f"⚠️ {entry.title} ({event_time})")
 
         return "\n".join(events[:3])  # Zwracamy 3 najbliższe ważne wydarzenia
-    except:
+    except (requests.RequestException, AttributeError, ValueError, KeyError):
         return "Brak danych z kalendarza."

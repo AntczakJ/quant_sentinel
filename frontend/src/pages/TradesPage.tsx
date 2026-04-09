@@ -6,7 +6,7 @@ import { TradeHistory, PortfolioStats, SignalHistory, RiskMetrics } from '../com
 
 export default function TradesPage() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-w-[1600px] mx-auto">
       {/* Portfolio summary row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="card">

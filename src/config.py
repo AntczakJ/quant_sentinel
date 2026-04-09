@@ -61,4 +61,60 @@ ENABLE_PATTERNS = os.getenv("ENABLE_PATTERNS", "True").lower() == "true"
 
 def get_sym() -> str:
     """Zwraca symbol waluty portfela użytkownika (np. 'zł', '$', '€')."""
-    return {"PLN": "zł", "USD": "$", "EUR": "€"}.get(USER_PREFS["currency"], "$")
+    currency = str(USER_PREFS.get("currency", "USD"))
+    return {"PLN": "zł", "USD": "$", "EUR": "€"}.get(currency, "$")
+
+
+def validate_startup_config() -> list[str]:
+    """
+    Validate configuration on startup. Returns list of warnings.
+
+    Checks:
+      - Required API keys present
+      - Model files exist when ML features enabled
+      - Database accessible
+      - Feature flag consistency
+    """
+    import logging
+    _logger = logging.getLogger('quant_sentinel')
+    warnings = []
+
+    # Required API keys
+    if not TD_API_KEY:
+        warnings.append("TWELVE_DATA_API_KEY not set — market data will be unavailable")
+
+    # ML model files
+    model_files = {
+        "models/xgb.pkl": "XGBoost",
+        "models/lstm.keras": "LSTM",
+        "models/rl_agent.keras": "RL Agent",
+    }
+    for path, name in model_files.items():
+        if not os.path.exists(path):
+            if ENABLE_ML or ENABLE_RL:
+                warnings.append(f"{name} model not found ({path}) — ML predictions will use fallback values")
+            else:
+                _logger.debug(f"{name} model not found ({path}) — ML disabled, OK")
+
+    # Database
+    db_url = os.getenv("DATABASE_URL", "data/sentinel.db")
+    if not db_url.startswith("libsql://"):
+        db_dir = os.path.dirname(db_url) or "."
+        if not os.path.exists(db_dir):
+            warnings.append(f"Database directory does not exist: {db_dir}")
+
+    # Feature flag consistency
+    if ENABLE_RL and not ENABLE_ML:
+        warnings.append("ENABLE_RL=true but ENABLE_ML=false — RL requires ML features")
+
+    if ENABLE_BAYES and not ENABLE_ML:
+        warnings.append("ENABLE_BAYES=true but ENABLE_ML=false — Bayesian opt requires ML")
+
+    # Log warnings
+    for w in warnings:
+        _logger.warning(f"[CONFIG] {w}")
+
+    if not warnings:
+        _logger.info("[CONFIG] All startup checks passed")
+
+    return warnings

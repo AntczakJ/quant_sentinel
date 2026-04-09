@@ -70,7 +70,26 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     # Pobranie dynamicznych parametrów (zamiast hardcoded)
     from src.database import NewsDB
     db = NewsDB()
-    risk_percent = db.get_param("risk_percent", 1.0)
+
+    # --- RISK MANAGER: Kelly sizing + circuit breakers ---
+    from src.risk_manager import get_risk_manager, MAX_PORTFOLIO_HEAT_PCT
+    rm = get_risk_manager()
+
+    # Check circuit breakers before anything else
+    can_trade, reason = rm.check_circuit_breakers(balance)
+    if not can_trade:
+        return {"direction": "CZEKAJ", "reason": f"Risk manager: {reason}"}
+
+    # Use Kelly-optimal risk instead of fixed 1%
+    default_risk = float(db.get_param("risk_percent", 1.0))
+    risk_percent = rm.compute_kelly_risk_percent(default_risk)
+
+    # Apply daily drawdown multiplier (reduces risk as daily losses accumulate)
+    daily_mult = rm.get_daily_risk_multiplier(balance)
+    if daily_mult < 1.0:
+        logger.info(f"Daily risk reduction active: {daily_mult:.0%} of normal risk")
+        risk_percent *= daily_mult
+
     min_tp_distance_mult = db.get_param("min_tp_distance_mult", 1.0)
     sl_atr_mult = db.get_param("sl_atr_multiplier", 1.5)
     sl_min_distance = db.get_param("sl_min_distance", 4.0)
@@ -95,13 +114,22 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         try:
             from src.ensemble_models import get_ensemble_prediction
             initial_balance = balance  # Założenie, że balance to obecny stan
+            # Fetch current position from database (0=flat, 1=long, -1=short)
+            current_position = 0
+            try:
+                open_trades = db.get_open_trades()
+                if open_trades:
+                    last_dir = str(open_trades[-1][1]).upper()
+                    current_position = 1 if "LONG" in last_dir else -1
+            except (AttributeError, IndexError, TypeError):
+                pass
             ensemble_result = get_ensemble_prediction(
                 df=df,
                 smc_trend=trend,
                 current_price=price,
                 balance=balance,
                 initial_balance=initial_balance,
-                position=0,  # TODO: pobrać z bazy danych
+                position=current_position,
                 use_twelve_data=False  # Już mamy df, nie pobieraj ponownie
             )
             ml_signal = ensemble_result['ensemble_signal']
@@ -124,7 +152,8 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
             logic = "Liquidity Grab + MSS (Bullish)"
         elif grab_dir == "bearish":
             direction = "SHORT"
-            entry = ob_price if ob_price < price else price
+            # For SHORT: OB is resistance (high) — enter at or near OB above price
+            entry = ob_price if ob_price and ob_price > price * 0.995 else price
             logic = "Liquidity Grab + MSS (Bearish)"
     elif dbr_rbd_type == "DBR":
         direction = "LONG"
@@ -132,7 +161,8 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         logic = "DBR (Drop-Base-Rally)"
     elif dbr_rbd_type == "RBD":
         direction = "SHORT"
-        entry = base_low if base_low else price
+        # RBD: enter at top of base (resistance) — sell the rally
+        entry = base_high if base_high else price
         logic = "RBD (Rally-Base-Drop)"
     else:
         if trend == "bull":
@@ -225,7 +255,7 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         if consecutive_losses >= 2:
             risk_percent *= 0.75  # 25% reduction after 2 consecutive losses
             logger.info(f"⚠️ {consecutive_losses} strat z rzędu → risk zmniejszony do {risk_percent:.2f}%")
-    except Exception:
+    except (IndexError, TypeError, ValueError, AttributeError):
         pass
 
     # --- 2. SL i TP (STRUCTURAL PLACEMENT) ---
@@ -313,10 +343,14 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
             if rate is None:
                 rate = 4.0
             balance_in_usd = balance / rate
-        except:
+        except (ImportError, AttributeError, TypeError, ValueError):
             balance_in_usd = balance / 4.0
 
-    # --- 4. Wielkość lota (ryzyko %) ---
+    # --- 4. Slippage adjustment (session-aware spread model) ---
+    spread_buffer = rm.get_spread_buffer()
+    entry, sl, tp = rm.adjust_for_slippage(entry, sl, tp, direction)
+
+    # --- 5. Wielkość lota (ryzyko %) ---
     risk_usd = balance_in_usd * (risk_percent / 100)
     dist = abs(entry - sl)
     if dist <= 0:
@@ -325,7 +359,13 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     if lot_size < 0.01:
         lot_size = 0.01
 
-    # --- 5. FILTR: minimalny dystans TP ---
+    # --- 6. Portfolio heat check (max aggregate risk) ---
+    can_open, heat_pct = rm.check_portfolio_heat(balance_in_usd, risk_usd)
+    if not can_open:
+        return {"direction": "CZEKAJ",
+                "reason": f"Portfolio heat {heat_pct:.1f}% exceeds {MAX_PORTFOLIO_HEAT_PCT}% limit"}
+
+    # --- 7. FILTR: minimalny dystans TP ---
     MIN_TP_DISTANCE = 5.0
     dynamic_min_distance = atr * min_tp_distance_mult
     min_distance = max(dynamic_min_distance, MIN_TP_DISTANCE)

@@ -1,0 +1,68 @@
+[project]
+name = "quant-sentinel"
+version = "3.0.0"
+description = "Autonomous gold trading system — SMC + ML Ensemble"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "-x",  # stop on first failure for fast feedback
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests requiring external services",
+    "unit: marks pure unit tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "src/__pycache__/*",
+    "src/main.py",          # Telegram bot entry point
+    "src/feature_engineering.py",  # standalone utility
+]
+
+[tool.coverage.report]
+fail_under = 10
+show_missing = true
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "pass",
+    "except ImportError",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = false
+exclude = ["tests/", "train_all.py", "train_rl.py"]
+
+[tool.black]
+line-length = 120
+target-version = ["py310", "py313"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
+known_first_party = ["src", "api"]

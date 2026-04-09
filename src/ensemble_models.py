@@ -399,11 +399,12 @@ def _load_dynamic_weights() -> Dict[str, float]:
     """Ładuj wagi ensemble z bazy danych. Fallback na domyślne.
     Inicjalizuje brakujące wagi w bazie przy pierwszym uruchomieniu."""
     default_weights = {
-        "smc": 0.30,
-        "attention": 0.20,
+        "smc": 0.25,
+        "attention": 0.15,
+        "dpformer": 0.15,
         "lstm": 0.15,
-        "xgb": 0.20,
-        "dqn": 0.15,
+        "xgb": 0.18,
+        "dqn": 0.12,
     }
     try:
         from src.database import NewsDB
@@ -594,13 +595,47 @@ def get_ensemble_prediction(
             "confidence": 0.0, "status": "unavailable"
         }
 
+    # --- 2b. DPformer (Decomposition + LSTM + Attention Fusion) ---
+    try:
+        from src.decompose_model import predict_decompose
+        dp_pred = predict_decompose(df)
+        if dp_pred is not None:
+            results["predictions"]["dpformer"] = {
+                "value": dp_pred,
+                "direction": "LONG" if dp_pred > 0.5 else "SHORT",
+                "confidence": abs(dp_pred - 0.5) * 2
+            }
+        else:
+            results["predictions"]["dpformer"] = {
+                "value": 0.5, "direction": "NEUTRAL",
+                "confidence": 0.0, "status": "unavailable"
+            }
+    except Exception as e:
+        logger.debug(f"DPformer skipped: {e}")
+        results["predictions"]["dpformer"] = {
+            "value": 0.5, "direction": "NEUTRAL",
+            "confidence": 0.0, "status": "unavailable"
+        }
+
+    # --- Calibrator (Platt Scaling) ---
+    try:
+        from src.model_calibration import get_calibrator
+        calibrator = get_calibrator()
+    except (ImportError, AttributeError):
+        calibrator = None
+
     # --- 3. LSTM Prediction ---
     lstm_pred = predict_lstm_direction(df)
     if lstm_pred is not None:
+        raw_lstm = lstm_pred
+        if calibrator:
+            lstm_pred = calibrator.calibrate("lstm", lstm_pred)
         results["predictions"]["lstm"] = {
             "value": lstm_pred,
+            "raw_value": raw_lstm,
             "direction": "LONG" if lstm_pred > 0.5 else "SHORT",
-            "confidence": abs(lstm_pred - 0.5) * 2  # 0.5 = 0% pewności, 1.0/0.0 = 100%
+            "confidence": abs(lstm_pred - 0.5) * 2,
+            "calibrated": calibrator.is_calibrated("lstm") if calibrator else False,
         }
     else:
         results["predictions"]["lstm"] = {
@@ -613,10 +648,15 @@ def get_ensemble_prediction(
     # --- 3. XGBoost Prediction ---
     xgb_pred = predict_xgb_direction(df)
     if xgb_pred is not None:
+        raw_xgb = xgb_pred
+        if calibrator:
+            xgb_pred = calibrator.calibrate("xgb", xgb_pred)
         results["predictions"]["xgb"] = {
             "value": xgb_pred,
+            "raw_value": raw_xgb,
             "direction": "LONG" if xgb_pred > 0.5 else "SHORT",
-            "confidence": abs(xgb_pred - 0.5) * 2
+            "confidence": abs(xgb_pred - 0.5) * 2,
+            "calibrated": calibrator.is_calibrated("xgb") if calibrator else False,
         }
     else:
         results["predictions"]["xgb"] = {
@@ -648,11 +688,16 @@ def get_ensemble_prediction(
             2: "SELL"
         }.get(dqn_action, "NEUTRAL")
 
+        raw_dqn = dqn_signal
+        if calibrator:
+            dqn_signal = calibrator.calibrate("dqn", dqn_signal)
         results["predictions"]["dqn"] = {
             "value": dqn_signal,
+            "raw_value": raw_dqn,
             "action": dqn_action,
             "direction": dqn_direction,
-            "confidence": dqn_confidence  # dynamiczny confidence z softmax(Q-values)
+            "confidence": dqn_confidence,
+            "calibrated": calibrator.is_calibrated("dqn") if calibrator else False,
         }
     else:
         results["predictions"]["dqn"] = {
@@ -763,20 +808,39 @@ def get_ensemble_prediction(
         "neutral": models_neutral,
     }
 
+    # ========== HIGH-CONFIDENCE MODEL COUNT ==========
+    # Count models with confidence > 50% in the majority direction
+    high_conf_count = 0
+    for model_name in regime_weights:
+        if model_name in results["predictions"]:
+            pred = results["predictions"][model_name]
+            if "status" not in pred and pred.get("confidence", 0) > 0.50:
+                pred_dir = "LONG" if pred["value"] > 0.55 else ("SHORT" if pred["value"] < 0.45 else "NEUTRAL")
+                if pred_dir == agreement_direction:
+                    high_conf_count += 1
+
+    results["model_agreement"]["high_confidence_count"] = high_conf_count
+
     # ========== OSTATECZNY SYGNAL ==========
-    # Confidence threshold: 0.25 (podniesiony z 0.20, ale nie za wysoko)
-    # Agreement: >= 50% modeli musi się zgadzać (łagodny filtr)
+    # Confidence threshold: 0.30 (professional level)
+    # Agreement: >= 60% modeli musi się zgadzać
+    # Require: 2+ models with confidence > 50% in same direction
     if available_models == 0:
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "NEUTRAL"
-    elif results["confidence"] < 0.25:
+    elif results["confidence"] < 0.30:
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "UNCERTAIN"
-    elif agreement_ratio < 0.50 and available_models >= 3:
+    elif agreement_ratio < 0.60 and available_models >= 3:
         # Modele zbyt podzielone — nie ryzykuj
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "CONFLICTED"
-        logger.info(f"⚠️ Ensemble: modele podzielone (agreement={agreement_ratio:.0%}) — CZEKAJ")
+        logger.info(f"Ensemble: modele podzielone (agreement={agreement_ratio:.0%}) — CZEKAJ")
+    elif high_conf_count < 2 and available_models >= 3:
+        # Nie wystarczająco pewnych modeli
+        results["ensemble_signal"] = "CZEKAJ"
+        results["final_direction"] = "LOW_CONVICTION"
+        logger.info(f"Ensemble: only {high_conf_count} high-confidence models — CZEKAJ")
     elif results["final_score"] > 0.58:
         results["ensemble_signal"] = "LONG"
         results["final_direction"] = "LONG"

@@ -21,12 +21,12 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> Dict:
     """
     Oblicz metryki klasyfikacji binarnej (fully vectorized).
     y_true, y_pred: 0 = spadek, 1 = wzrost
-    Uses CuPy if GPU available for large arrays.
+    Includes MCC (Matthews Correlation Coefficient) — better than F1 for imbalanced data.
     """
     xp = get_array_module()
     n = len(y_true)
     if n == 0:
-        return {"accuracy": 0, "precision": 0, "recall": 0, "f1": 0}
+        return {"accuracy": 0, "precision": 0, "recall": 0, "f1": 0, "mcc": 0}
 
     yt = xp.asarray(y_true)
     yp = xp.asarray(y_pred)
@@ -37,29 +37,39 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> Dict:
     tp = int(((yp == 1) & (yt == 1)).sum())
     fp = int(((yp == 1) & (yt == 0)).sum())
     fn = int(((yp == 0) & (yt == 1)).sum())
+    tn = int(((yp == 0) & (yt == 0)).sum())
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+    # MCC: Matthews Correlation Coefficient — balanced metric for binary classification
+    # MCC = (TP*TN - FP*FN) / sqrt((TP+FP)(TP+FN)(TN+FP)(TN+FN))
+    denom = np.sqrt(float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)))
+    mcc = (tp * tn - fp * fn) / denom if denom > 0 else 0.0
 
     return {
         "accuracy": round(accuracy, 4),
         "precision": round(precision, 4),
         "recall": round(recall, 4),
         "f1": round(f1, 4),
+        "mcc": round(mcc, 4),
         "total": n,
         "correct": correct,
+        "tp": tp, "fp": fp, "fn": fn, "tn": tn,
     }
 
 
 def compute_equity_metrics(returns: np.ndarray) -> Dict:
     """
-    Oblicz metryki equity curve: Sharpe ratio, max drawdown, total return.
+    Professional equity curve metrics:
+    Sharpe, Sortino, Calmar, Max Drawdown, VaR (95%), Total Return.
     Fully vectorized — uses CuPy if GPU available for large arrays.
     """
     xp = get_array_module()
     if len(returns) == 0:
-        return {"sharpe": 0, "max_drawdown": 0, "total_return": 0}
+        return {"sharpe": 0, "sortino": 0, "calmar": 0, "max_drawdown": 0,
+                "total_return": 0, "var_95": 0}
 
     ret = xp.asarray(returns)
 
@@ -72,35 +82,78 @@ def compute_equity_metrics(returns: np.ndarray) -> Dict:
     drawdown = (peak - equity) / (peak + 1e-10)
     max_drawdown = float(drawdown.max())
 
-    # Sharpe ratio
+    # Risk-free rate
+    risk_free_daily = 0.05 / 252
+
     mean_ret = float(xp.mean(ret))
     std_ret = float(xp.std(ret))
-    sharpe = (mean_ret / std_ret * np.sqrt(252)) if std_ret > 0 else 0
+    excess_ret = mean_ret - risk_free_daily
+
+    # Sharpe ratio
+    sharpe = (excess_ret / std_ret * np.sqrt(252)) if std_ret > 0 else 0
+
+    # Sortino ratio (penalizes downside volatility only)
+    downside = ret[ret < 0]
+    downside_std = float(xp.std(downside)) if len(downside) > 1 else std_ret
+    sortino = (excess_ret / downside_std * np.sqrt(252)) if downside_std > 0 else 0
+
+    # Calmar ratio (annualized return / max drawdown)
+    ann_return = mean_ret * 252
+    calmar = ann_return / max_drawdown if max_drawdown > 0.001 else 0
+
+    # VaR 95% (Value at Risk — 5th percentile of daily returns)
+    ret_np = to_numpy(ret) if hasattr(ret, 'get') else np.asarray(ret)
+    var_95 = float(np.percentile(ret_np, 5))
+
+    # Win rate and profit factor
+    wins = ret[ret > 0]
+    losses = ret[ret < 0]
+    win_rate = float(len(wins)) / len(ret) if len(ret) > 0 else 0
+    profit_factor = float(xp.sum(wins) / (-xp.sum(losses))) if len(losses) > 0 and float(xp.sum(losses)) != 0 else 0
 
     return {
         "sharpe": round(sharpe, 4),
+        "sortino": round(sortino, 4),
+        "calmar": round(calmar, 4),
         "max_drawdown": round(max_drawdown, 4),
         "total_return": round(total_return, 4),
         "final_equity": round(float(equity[-1]), 4),
+        "var_95": round(var_95, 6),
+        "win_rate": round(win_rate, 4),
+        "profit_factor": round(profit_factor, 4),
+        "n_trades": int(len(ret)),
     }
 
 
 def backtest_xgb(df: pd.DataFrame, lookback: int = 100) -> Dict:
     """
     Backtest modelu XGBoost bar-by-bar na podanych danych.
+
+    Target: matches training target — significant move >0.5 ATR in next 5 bars
+    (not simple next-bar direction, which would be a target mismatch).
     """
     from src.ml_models import ml
+    from src.compute import compute_features, compute_target
 
-    if len(df) < lookback + 10:
+    lookahead = 5  # must match training lookahead
+
+    if len(df) < lookback + lookahead + 10:
         return {"error": "Za mało danych", "accuracy": 0}
+
+    # Pre-compute actual targets using same logic as training
+    features = compute_features(df)
+    actual_targets = compute_target(features, lookahead=lookahead)
 
     y_true = []
     y_pred = []
     returns = []
 
-    for i in range(lookback, len(df) - 1):
+    for i in range(lookback, len(df) - lookahead):
         window = df.iloc[max(0, i - lookback):i + 1]
-        actual_direction = 1 if df['close'].iloc[i + 1] > df['close'].iloc[i] else 0
+
+        # Use same target as training (significant move in next N bars)
+        actual_direction = int(actual_targets.iloc[i]) if i < len(actual_targets) else 0
+        # Return: use next-bar return for equity simulation
         actual_return = (df['close'].iloc[i + 1] - df['close'].iloc[i]) / df['close'].iloc[i]
 
         prob = ml.predict_xgb(window)
@@ -127,19 +180,30 @@ def backtest_xgb(df: pd.DataFrame, lookback: int = 100) -> Dict:
 def backtest_lstm(df: pd.DataFrame, lookback: int = 100, seq_len: int = 60) -> Dict:
     """
     Backtest modelu LSTM bar-by-bar na podanych danych.
+
+    Target: matches training target — significant move >0.5 ATR in next 5 bars.
     """
     from src.ml_models import ml
+    from src.compute import compute_features, compute_target
 
-    if len(df) < lookback + seq_len + 10:
+    lookahead = 5  # must match training lookahead
+
+    if len(df) < lookback + seq_len + lookahead + 10:
         return {"error": "Za mało danych", "accuracy": 0}
+
+    # Pre-compute actual targets using same logic as training
+    features = compute_features(df)
+    actual_targets = compute_target(features, lookahead=lookahead)
 
     y_true = []
     y_pred = []
     returns = []
 
-    for i in range(lookback + seq_len, len(df) - 1):
+    for i in range(lookback + seq_len, len(df) - lookahead):
         window = df.iloc[max(0, i - lookback - seq_len):i + 1]
-        actual_direction = 1 if df['close'].iloc[i + 1] > df['close'].iloc[i] else 0
+
+        # Use same target as training (significant move in next N bars)
+        actual_direction = int(actual_targets.iloc[i]) if i < len(actual_targets) else 0
         actual_return = (df['close'].iloc[i + 1] - df['close'].iloc[i]) / df['close'].iloc[i]
 
         prob = ml.predict_lstm(window, seq_len)
@@ -276,70 +340,114 @@ def backtest_ensemble(df: pd.DataFrame, lookback: int = 200) -> Dict:
     return result
 
 
+def apply_transaction_costs(returns: np.ndarray, spread_pct: float = 0.0003) -> np.ndarray:
+    """
+    Deduct transaction costs from returns.
+
+    Args:
+        returns: Array of per-trade returns
+        spread_pct: Cost per trade as fraction (0.0003 = 0.03% = ~$0.60 on $2000 gold)
+
+    Returns:
+        Adjusted returns array
+    """
+    return returns - spread_pct
+
+
+def monte_carlo_simulation(returns: np.ndarray, n_simulations: int = 5000,
+                           spread_pct: float = 0.0003) -> Dict:
+    """
+    Monte Carlo simulation: shuffle trade order to estimate return distribution.
+
+    Generates n_simulations random permutations of the trade sequence,
+    computes equity curves for each, and reports statistical distribution.
+
+    Args:
+        returns: Array of actual trade returns
+        n_simulations: Number of random shuffles (default 5000)
+        spread_pct: Transaction cost per trade
+
+    Returns:
+        Dict with percentile statistics of final equity and max drawdown
+    """
+    if len(returns) < 10:
+        return {"error": "Insufficient trades for Monte Carlo"}
+
+    # Apply costs once
+    adj_returns = apply_transaction_costs(returns, spread_pct)
+
+    final_equities = np.empty(n_simulations)
+    max_drawdowns = np.empty(n_simulations)
+
+    for i in range(n_simulations):
+        shuffled = np.random.permutation(adj_returns)
+        equity = np.cumprod(1 + shuffled)
+        final_equities[i] = equity[-1]
+
+        peak = np.maximum.accumulate(equity)
+        dd = (peak - equity) / (peak + 1e-10)
+        max_drawdowns[i] = dd.max()
+
+    return {
+        "n_simulations": n_simulations,
+        "n_trades": len(returns),
+        "spread_pct": spread_pct,
+        "final_equity": {
+            "mean": round(float(np.mean(final_equities)), 4),
+            "median": round(float(np.median(final_equities)), 4),
+            "p1": round(float(np.percentile(final_equities, 1)), 4),
+            "p5": round(float(np.percentile(final_equities, 5)), 4),
+            "p25": round(float(np.percentile(final_equities, 25)), 4),
+            "p75": round(float(np.percentile(final_equities, 75)), 4),
+            "p95": round(float(np.percentile(final_equities, 95)), 4),
+            "p99": round(float(np.percentile(final_equities, 99)), 4),
+        },
+        "max_drawdown": {
+            "mean": round(float(np.mean(max_drawdowns)), 4),
+            "median": round(float(np.median(max_drawdowns)), 4),
+            "p95": round(float(np.percentile(max_drawdowns, 95)), 4),
+            "p99": round(float(np.percentile(max_drawdowns, 99)), 4),
+            "worst": round(float(np.max(max_drawdowns)), 4),
+        },
+        "profitable_pct": round(float((final_equities > 1.0).mean()) * 100, 1),
+        "ruin_pct": round(float((final_equities < 0.5).mean()) * 100, 2),
+    }
+
+
 def run_full_backtest(df: pd.DataFrame) -> Dict:
     """
     Uruchamia backtest dla wszystkich modeli i zwraca zbiorczy raport.
     """
-    print("\n" + "=" * 60)
-    print("📊 PEŁNY BACKTEST WSZYSTKICH MODELI")
-    print("=" * 60)
-    print(f"Dane: {len(df)} świec\n")
+    logger.info(f"[BACKTEST] Starting full backtest on {len(df)} bars")
 
     results = {}
 
-    # XGBoost
-    try:
-        print("🌳 Backtesting XGBoost...")
-        results['xgb'] = backtest_xgb(df)
-    except Exception as e:
-        print(f"   ❌ XGBoost backtest failed: {e}")
-        results['xgb'] = {"error": str(e)}
+    for name, label, fn in [
+        ('xgb', 'XGBoost', backtest_xgb),
+        ('lstm', 'LSTM', backtest_lstm),
+        ('dqn', 'DQN', backtest_dqn),
+        ('ensemble', 'Ensemble', backtest_ensemble),
+    ]:
+        try:
+            logger.info(f"[BACKTEST] Running {label}...")
+            results[name] = fn(df)
+        except Exception as e:
+            logger.warning(f"[BACKTEST] {label} failed: {e}")
+            results[name] = {"error": str(e)}
 
-    # LSTM
-    try:
-        print("🧠 Backtesting LSTM...")
-        results['lstm'] = backtest_lstm(df)
-    except Exception as e:
-        print(f"   ❌ LSTM backtest failed: {e}")
-        results['lstm'] = {"error": str(e)}
-
-    # DQN
-    try:
-        print("🤖 Backtesting DQN...")
-        results['dqn'] = backtest_dqn(df)
-    except Exception as e:
-        print(f"   ❌ DQN backtest failed: {e}")
-        results['dqn'] = {"error": str(e)}
-
-    # Ensemble
-    try:
-        print("🎯 Backtesting Ensemble...")
-        results['ensemble'] = backtest_ensemble(df)
-    except Exception as e:
-        print(f"   ❌ Ensemble backtest failed: {e}")
-        results['ensemble'] = {"error": str(e)}
-
-    # Raport końcowy
-    print("\n" + "=" * 60)
-    print("📋 RAPORT BACKTESTOWY")
-    print("=" * 60)
+    # Report
     for model_name, r in results.items():
         if "error" in r and r.get("accuracy", 0) == 0:
-            print(f"  {model_name:>10s}: ❌ {r.get('error', 'unknown error')}")
+            logger.warning(f"[BACKTEST] {model_name}: FAILED — {r.get('error', 'unknown')}")
         else:
-            acc = r.get('accuracy', 0)
-            f1 = r.get('f1', 0)
-            sharpe = r.get('sharpe', 0)
-            mdd = r.get('max_drawdown', 0)
-            ret = r.get('total_return', 0)
-            print(
-                f"  {model_name:>10s}: "
-                f"Accuracy={acc:.1%} | F1={f1:.3f} | "
-                f"Sharpe={sharpe:.2f} | MaxDD={mdd:.1%} | Return={ret:+.1%}"
+            logger.info(
+                f"[BACKTEST] {model_name}: "
+                f"Acc={r.get('accuracy', 0):.1%} MCC={r.get('mcc', 0):.3f} "
+                f"Sharpe={r.get('sharpe', 0):.2f} Sortino={r.get('sortino', 0):.2f} "
+                f"MaxDD={r.get('max_drawdown', 0):.1%} Return={r.get('total_return', 0):+.1%}"
             )
-    print("=" * 60)
 
-    # Zapisz do bazy
+    # Persist to database
     try:
         from src.database import NewsDB
         db = NewsDB()
@@ -349,9 +457,9 @@ def run_full_backtest(df: pd.DataFrame) -> Dict:
                 for kk, vv in v.items()}
             for k, v in results.items()
         }))
-        print("📝 Wyniki backtestów zapisane do bazy.")
+        logger.info("[BACKTEST] Results saved to database")
     except Exception as e:
-        print(f"⚠️ Nie udało się zapisać wyników: {e}")
+        logger.warning(f"[BACKTEST] Could not save results: {e}")
 
     return results
 
@@ -359,7 +467,7 @@ def run_full_backtest(df: pd.DataFrame) -> Dict:
 if __name__ == "__main__":
     import yfinance as yf
 
-    print("Pobieranie danych do backtestingu...")
+    logger.info("Fetching data for backtest...")
     ticker = yf.Ticker("GC=F")
     df = ticker.history(period="3mo", interval="15m")
     if df.empty:

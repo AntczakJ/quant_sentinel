@@ -156,8 +156,8 @@ def _log_rejection(db, tf, direction, price, reason, filter_name,
             confluence_count=confluence_count, rsi=rsi,
             trend=trend, pattern=pattern, atr=atr
         )
-    except Exception:
-        pass  # nie blokuj scannera błędami logowania
+    except (AttributeError, TypeError, Exception) as e:
+        logger.debug(f"Rejection log failed: {e}")
 
 
 def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = "USD") -> dict | None:
@@ -202,7 +202,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                     f"ticker=${ref:.2f} (Δ{deviation:.0%}) — pomijam"
                 )
                 return None
-    except Exception:
+    except (ImportError, AttributeError, TypeError, ValueError):
         pass  # persistent_cache not available outside FastAPI context
     current_structure = analysis.get('structure', 'Stable')
     current_fvg = analysis.get('fvg')
@@ -218,34 +218,34 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         return None
 
     # --- 0c. FILTR RSI EXTREME — nie wchodź w pozycję przeciw momentum ---
-    if current_trend == "bull" and current_rsi > 78:
-        logger.info(f"🔍 [MTF] {tf}: RSI={current_rsi:.0f} > 78 (wykupiony) — nie LONG na szczycie")
-        _log_rejection(db, tf, "LONG", current_price, f"RSI={current_rsi:.0f}>78", "rsi_extreme",
+    if current_trend == "bull" and current_rsi > 75:
+        logger.info(f"[MTF] {tf}: RSI={current_rsi:.0f} > 75 (wykupiony) — nie LONG na szczycie")
+        _log_rejection(db, tf, "LONG", current_price, f"RSI={current_rsi:.0f}>75", "rsi_extreme",
                        rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
-    if current_trend == "bear" and current_rsi < 22:
-        logger.info(f"🔍 [MTF] {tf}: RSI={current_rsi:.0f} < 22 (wyprzedany) — nie SHORT na dnie")
-        _log_rejection(db, tf, "SHORT", current_price, f"RSI={current_rsi:.0f}<22", "rsi_extreme",
+    if current_trend == "bear" and current_rsi < 25:
+        logger.info(f"[MTF] {tf}: RSI={current_rsi:.0f} < 25 (wyprzedany) — nie SHORT na dnie")
+        _log_rejection(db, tf, "SHORT", current_price, f"RSI={current_rsi:.0f}<25", "rsi_extreme",
                        rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
 
-    # --- 1. FILTR FAIL RATE ---
+    # --- 1. FILTR FAIL RATE (tightened: 75% → 65%) ---
     fail_rate = db.get_fail_rate_for_pattern(current_rsi, current_structure)
-    if fail_rate > 75:
-        logger.info(f"🔍 [MTF] {tf}: fail rate {fail_rate}% za wysoki — pomijam")
+    if fail_rate > 65:
+        logger.info(f"[MTF] {tf}: fail rate {fail_rate}% za wysoki (max 65%) — pomijam")
         _log_rejection(db, tf, "LONG" if current_trend == "bull" else "SHORT",
-                       current_price, f"fail_rate={fail_rate}%>75%", "fail_rate",
+                       current_price, f"fail_rate={fail_rate}%>65%", "fail_rate",
                        rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
 
-    # --- 2. FILTR WAGI WZORCA (self-learning) ---
+    # --- 2. FILTR WAGI WZORCA (tightened: 0.5 → 0.6) ---
     direction_str = "LONG" if current_trend == "bull" else "SHORT"
     pattern = f"{direction_str}_{current_structure}_{current_fvg_type}"
     weight = get_pattern_adjustment({"pattern": pattern})
-    if weight < 0.5:
-        logger.info(f"🔍 [MTF] {tf}: waga wzorca {pattern} = {weight:.2f} za niska — pomijam")
+    if weight < 0.6:
+        logger.info(f"[MTF] {tf}: waga wzorca {pattern} = {weight:.2f} za niska (min 0.6) — pomijam")
         _log_rejection(db, tf, direction_str, current_price,
-                       f"pattern_weight={weight:.2f}<0.5", "pattern_weight",
+                       f"pattern_weight={weight:.2f}<0.6", "pattern_weight",
                        rsi=current_rsi, trend=current_trend, pattern=pattern, atr=current_atr)
         return None
 
@@ -268,7 +268,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         (current_trend == "bear" and analysis.get('engulfing') == "bearish")
     )
 
-    # Wymagamy co najmniej 2 sygnały konfluencji (zamiast jednego)
+    # Count confluence signals
     confluence_count = sum([
         bool(has_grab_mss),
         bool(has_fvg),
@@ -279,15 +279,41 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         bool(has_engulfing),
     ])
 
-    # Wymog: Grab+MSS (premium) albo DBR/RBD albo minimum 3 sygnaly konfluencji
-    # UWAGA: "Stable" structure = konsolidacja = 0% win rate historycznie — blokuj
+    # --- 3a. DIRECTIONAL ALIGNMENT CHECK (new) ---
+    # BOS/CHoCH must agree with trade direction — don't trade against structure
+    if has_bos or has_choch:
+        bos_bullish = analysis.get('bos_bullish', False)
+        bos_bearish = analysis.get('bos_bearish', False)
+        choch_bullish = analysis.get('choch_bullish', False)
+        choch_bearish = analysis.get('choch_bearish', False)
+
+        structure_bullish = bos_bullish or choch_bullish
+        structure_bearish = bos_bearish or choch_bearish
+
+        if direction_str == "LONG" and structure_bearish and not structure_bullish:
+            logger.info(f"[MTF] {tf}: LONG but BOS/CHoCH is bearish — structural conflict")
+            _log_rejection(db, tf, direction_str, current_price,
+                           "structure_direction_conflict", "directional_alignment",
+                           confluence_count=confluence_count, rsi=current_rsi,
+                           trend=current_trend, pattern=pattern, atr=current_atr)
+            return None
+        if direction_str == "SHORT" and structure_bullish and not structure_bearish:
+            logger.info(f"[MTF] {tf}: SHORT but BOS/CHoCH is bullish — structural conflict")
+            _log_rejection(db, tf, direction_str, current_price,
+                           "structure_direction_conflict", "directional_alignment",
+                           confluence_count=confluence_count, rsi=current_rsi,
+                           trend=current_trend, pattern=pattern, atr=current_atr)
+            return None
+
+    # --- 3b. CONFLUENCE THRESHOLD (tightened: 3→4 base, grab+2→grab+3, dbr+2→dbr+3) ---
+    # "Stable" structure = konsolidacja = 0% win rate historycznie — blokuj
     structure = analysis.get('structure', 'Stable')
     is_stable = 'Stable' in str(structure)
 
     strong_setup = (
-        (has_grab_mss and confluence_count >= 2)   # premium: grab+mss + potwierdzenie
-        or (has_dbr_rbd and confluence_count >= 2)  # DBR/RBD + potwierdzenie
-        or confluence_count >= 3                     # silna konfluencja (podwyzszony prog z 2 na 3)
+        (has_grab_mss and confluence_count >= 3)   # premium: grab+mss + 3 confirmations
+        or (has_dbr_rbd and confluence_count >= 3)  # DBR/RBD + 3 confirmations
+        or confluence_count >= 3                     # standalone: 3+ signals required
     )
     if not strong_setup or is_stable:
         reason = "structure=Stable (chop)" if is_stable else f"confluence={confluence_count}<3"
@@ -351,13 +377,13 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
             ml_signal = ensemble.get('ensemble_signal', 'CZEKAJ')
             ml_conf = ensemble.get('confidence', 0)
 
-            if ml_conf > 0.7 and ml_signal == direction_str:
+            if ml_conf > 0.6 and ml_signal == direction_str:
                 ml_info = f"ML: {ml_signal} ({ml_conf:.0%})"
-                logger.info(f"✅ [MTF] {tf}: ML potwierdza kierunek — {ml_info}")
-            elif ml_conf > 0.5 and ml_signal != "CZEKAJ" and ml_signal != direction_str:
-                # ML silnie się nie zgadza z SMC — BLOKUJ trade
+                logger.info(f"[MTF] {tf}: ML potwierdza kierunek — {ml_info}")
+            elif ml_conf > 0.45 and ml_signal != "CZEKAJ" and ml_signal != direction_str:
+                # ML conflict (tightened: 50%→40%) — block earlier
                 logger.warning(
-                    f"🚫 [MTF] {tf}: ML ({ml_signal}, {ml_conf:.0%}) "
+                    f"[MTF] {tf}: ML ({ml_signal}, {ml_conf:.0%}) "
                     f"KONFLIKT z SMC ({direction_str}) — BLOKUJĘ trade"
                 )
                 _log_rejection(db, tf, direction_str, current_price,
@@ -437,11 +463,36 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     except Exception as e:
         logger.debug(f"Loss pattern check skipped: {e}")
 
-    # --- 6f. HOURLY STATS CHECK (nowe!) ---
+    # --- 6f. SESSION PERFORMANCE FILTER ---
+    # Block trading in sessions where historical WR is poor for this direction
+    try:
+        current_session = analysis.get('session', 'unknown')
+        session_perf = db.get_session_win_rate(current_session, direction_str, min_trades=5)
+        if session_perf.get('sufficient_data') and session_perf['win_rate'] is not None:
+            if session_perf['win_rate'] < 0.30:
+                logger.info(
+                    f"[MTF] {tf}: Session '{current_session}' WR={session_perf['win_rate']:.0%} "
+                    f"for {direction_str} ({session_perf['count']} trades) — below 30%, pomijam"
+                )
+                _log_rejection(db, tf, direction_str, current_price,
+                               f"session_wr={session_perf['win_rate']:.0%}<30%({current_session})",
+                               "session_performance",
+                               confluence_count=confluence_count, rsi=current_rsi,
+                               trend=current_trend, pattern=pattern, atr=current_atr)
+                return None
+            elif session_perf['win_rate'] < 0.40:
+                logger.info(
+                    f"[MTF] {tf}: Session '{current_session}' WR={session_perf['win_rate']:.0%} "
+                    f"for {direction_str} — marginal, proceeding with caution"
+                )
+    except (AttributeError, TypeError) as e:
+        logger.debug(f"Session performance check skipped: {e}")
+
+    # --- 6g. HOURLY STATS CHECK ---
     try:
         from datetime import datetime
         current_hour = datetime.now().hour
-        bad_hours = db.get_bad_hours(min_trades=8, max_winrate=0.30)
+        bad_hours = db.get_bad_hours(min_trades=5, max_winrate=0.35)
         for bh in bad_hours:
             hour, bh_dir, bh_wr, bh_count = bh
             if hour == current_hour and bh_dir == direction_str:
@@ -457,25 +508,40 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     except Exception as e:
         logger.debug(f"Hourly stats check skipped: {e}")
 
-    # --- 6g. HTF TREND CONFIRMATION (nie handluj M5/M15 przeciw H1/H4) ---
-    if tf in ("5m", "15m"):
+    # --- 6g. HTF TREND CONFIRMATION (nie handluj przeciw wyższemu TF) ---
+    # M5/M15 must align with H1; M15 should also check H4 for stronger confirmation
+    htf_checks = []
+    if tf == "5m":
+        htf_checks = [("1h", "H1")]
+    elif tf == "15m":
+        htf_checks = [("1h", "H1"), ("4h", "H4")]
+    elif tf == "1h":
+        htf_checks = [("4h", "H4")]
+
+    for htf_tf, htf_label in htf_checks:
         try:
-            htf_analysis = get_smc_analysis("1h")
+            htf_analysis = get_smc_analysis(htf_tf)
             if htf_analysis:
                 htf_trend = htf_analysis.get('trend', '')
                 if direction == "LONG" and htf_trend == "bear":
-                    logger.info(
-                        f"🔍 [MTF] {tf}: LONG ale H1 trend=bear — NIE handluj przeciw HTF"
-                    )
+                    logger.info(f"[MTF] {tf}: LONG ale {htf_label} trend=bear — NIE handluj przeciw HTF")
+                    _log_rejection(db, tf, direction, current_price,
+                                   f"htf_conflict:{htf_label}=bear", "htf_confirmation",
+                                   confluence_count=confluence_count, rsi=current_rsi,
+                                   trend=current_trend, pattern=pattern, atr=current_atr)
                     return None
                 if direction == "SHORT" and htf_trend == "bull":
-                    logger.info(
-                        f"🔍 [MTF] {tf}: SHORT ale H1 trend=bull — NIE handluj przeciw HTF"
-                    )
+                    logger.info(f"[MTF] {tf}: SHORT ale {htf_label} trend=bull — NIE handluj przeciw HTF")
+                    _log_rejection(db, tf, direction, current_price,
+                                   f"htf_conflict:{htf_label}=bull", "htf_confirmation",
+                                   confluence_count=confluence_count, rsi=current_rsi,
+                                   trend=current_trend, pattern=pattern, atr=current_atr)
                     return None
-                logger.info(f"✅ [MTF] {tf}: HTF trend {htf_trend} potwierdza {direction}")
-        except Exception as e:
-            logger.debug(f"[MTF] HTF confirmation skipped: {e}")
+        except (ImportError, AttributeError, TypeError) as e:
+            logger.debug(f"[MTF] {htf_label} confirmation skipped: {e}")
+
+    if htf_checks:
+        logger.info(f"[MTF] {tf}: HTF trend alignment confirmed for {direction}")
 
     # --- 7. SETUP QUALITY SCORING (nowe!) ---
     setup_quality = None
@@ -538,12 +604,63 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     }
 
 
-def _check_trade_cooldown(db, min_hours: float = 2.0) -> bool:
+def _get_adaptive_cooldown_hours(db) -> float:
+    """
+    Compute adaptive cooldown based on session + consecutive losses.
+
+    Base cooldown per session:
+      Asian:    1.5h  (low vol, avoid noise)
+      London:   0.5h  (high vol, fast moves)
+      Overlap:  0.5h  (max liquidity)
+      NY:       0.75h (high vol)
+      Off-hours: 2.0h (thin liquidity)
+
+    Consecutive loss scaling: +0.5h per loss (up to +2h).
+    """
+    # Session-dependent base cooldown
+    try:
+        from src.smc_engine import get_active_session
+        session_info = get_active_session()
+        session = session_info.get('session', 'off_hours')
+    except (ImportError, AttributeError):
+        session = 'off_hours'
+
+    base_hours = {
+        'asian': 1.5,
+        'london': 0.5,
+        'overlap': 0.5,
+        'new_york': 0.75,
+        'off_hours': 2.0,
+        'weekend': 24.0,
+    }.get(session, 1.0)
+
+    # Add penalty for consecutive losses
+    try:
+        recent = db._query(
+            "SELECT status FROM trades WHERE status IN ('WIN', 'LOSS') ORDER BY id DESC LIMIT 5"
+        )
+        consec_losses = 0
+        for r in (recent or []):
+            if r[0] == 'LOSS':
+                consec_losses += 1
+            else:
+                break
+        base_hours += min(consec_losses * 0.5, 2.0)
+    except (AttributeError, TypeError, IndexError):
+        pass
+
+    return base_hours
+
+
+def _check_trade_cooldown(db, min_hours: float = None) -> bool:
     """
     Sprawdza czy minął minimalny czas od ostatniego trade'a.
-    Zapobiega rapid-fire trading (np. 3 trady w 2 minuty).
+    Uses adaptive cooldown based on session + loss streak if min_hours not specified.
     Zwraca True jeśli można handlować, False jeśli jeszcze za wcześnie.
     """
+    if min_hours is None:
+        min_hours = _get_adaptive_cooldown_hours(db)
+
     try:
         from datetime import datetime, timedelta
         last_trade = db._query_one(
@@ -554,11 +671,11 @@ def _check_trade_cooldown(db, min_hours: float = 2.0) -> bool:
             elapsed = (datetime.now() - last_time).total_seconds() / 3600
             if elapsed < min_hours:
                 logger.info(
-                    f"⏳ [COOLDOWN] Ostatni trade {elapsed:.1f}h temu, "
-                    f"minimum {min_hours}h — pomijam"
+                    f"[COOLDOWN] Ostatni trade {elapsed:.1f}h temu, "
+                    f"adaptive minimum {min_hours:.1f}h — pomijam"
                 )
                 return False
-    except Exception as e:
+    except (ValueError, TypeError, AttributeError) as e:
         logger.debug(f"Cooldown check error: {e}")
     return True
 
@@ -579,8 +696,19 @@ def cascade_mtf_scan(db, balance: float = 10000, currency: str = "USD") -> dict 
     Returns:
         dict z parametrami trade'a lub None jeśli żaden TF nie dał sygnału
     """
+    # --- RISK MANAGER: circuit breaker check before scanning ---
+    try:
+        from src.risk_manager import get_risk_manager
+        rm = get_risk_manager()
+        can_trade, reason = rm.check_circuit_breakers(balance)
+        if not can_trade:
+            logger.warning(f"[MTF] Risk manager blocked scan: {reason}")
+            return None
+    except (ImportError, AttributeError) as e:
+        logger.debug(f"Risk manager unavailable: {e}")
+
     # --- COOLDOWN: minimum 30min między tradami (M5/M15 dają setupy częściej) ---
-    if not _check_trade_cooldown(db, min_hours=0.5):
+    if not _check_trade_cooldown(db):  # adaptive cooldown (session + loss streak)
         return None
 
     logger.info(f"🔎 [MTF] Start kaskady: {' → '.join(SCAN_TIMEFRAMES)}")
@@ -595,7 +723,7 @@ def cascade_mtf_scan(db, balance: float = 10000, currency: str = "USD") -> dict 
             if not can:
                 logger.info(f"🔎 [MTF] Credits low — przerywam kaskadę na {tf}")
                 break
-        except Exception:
+        except (ImportError, AttributeError):
             pass  # API optimizer not initialized (tests / early startup)
 
         result = _evaluate_tf_for_trade(tf, db, balance=balance, currency=currency)
@@ -650,9 +778,9 @@ async def scan_market_task(context):
                 _curr = db.get_param("portfolio_currency_text")
                 if _curr:
                     scan_currency = str(_curr)
-            except Exception:
+            except (AttributeError, ValueError, TypeError):
                 pass
-        except Exception:
+        except (AttributeError, ValueError, TypeError):
             pass
 
         # =====================================================================
@@ -685,7 +813,7 @@ async def scan_market_task(context):
             setup_score = setup_quality.get('score', 50)
 
             # Deduplikacja — nie stawiaj tego samego trade'a dwa razy
-            trade_key = _hash(f"mtf_{direction}_{entry:.1f}_{tf}")
+            trade_key = _hash(f"mtf_{direction}_{entry:.3f}_{sl:.2f}_{tp:.2f}_{tf}")
             if not db.is_news_processed(trade_key):
                 # Zapisz trade do bazy (OPEN)
                 structure_desc = (
@@ -704,6 +832,13 @@ async def scan_market_task(context):
                     pattern=pattern,
                     lot=lot,
                 )
+
+                # Increment metrics
+                try:
+                    from src.metrics import trades_opened
+                    trades_opened.inc()
+                except (ImportError, AttributeError):
+                    pass
 
                 # Zapisz setup grade + confirmation data + model agreement do trade'a
                 try:
@@ -809,7 +944,7 @@ async def scan_market_task(context):
                 _pos = calculate_position(analysis_base, 10000, "USD", TD_API_KEY)
                 current_sl = _pos.get('sl', current_price)
                 current_tp = _pos.get('tp', current_price)
-            except Exception:
+            except (ValueError, TypeError, AttributeError, KeyError):
                 if current_trend == 'bull':
                     current_sl = round(current_price - _atr, 2)
                     current_tp = round(current_price + _atr * 2, 2)
@@ -936,7 +1071,7 @@ async def scan_market_task(context):
                         hb_pos = calculate_position(hb_analysis, 10000, "USD", TD_API_KEY)
                         hb_sl = hb_pos.get('sl', hb_price - 10)
                         hb_tp = hb_pos.get('tp', hb_price + 20)
-                    except Exception:
+                    except (ValueError, TypeError, AttributeError, KeyError):
                         _atr = hb_analysis.get('atr', 5.0)
                         if hb_trend == 'bull':
                             hb_sl = round(hb_price - _atr, 2)
@@ -1014,7 +1149,7 @@ async def resolve_trades_task(context):
                 f"Struktura: {analysis.get('structure', '?')} | "
                 f"FVG: {analysis.get('fvg', '?')}"
             ) if analysis else f"Cena: {current_price}"
-        except Exception:
+        except (TypeError, AttributeError, KeyError):
             market_snapshot = f"Cena: {current_price}"
 
         for trade in open_trades:
@@ -1028,8 +1163,18 @@ async def resolve_trades_task(context):
             original_sl = float(sl or 0)
 
             # ═══════════════════════════════════════════════════
-            # TRAILING STOP LOGIC
-            # ═══════════════════════════════════════════════════
+            # TRAILING STOP LOGIC (5-level + ATR continuous trail)
+            #
+            # ╔═══════════════════════════════════════════════════════╗
+            # ║  R-Multiple  │  Action                               ║
+            # ╠═══════════════════════════════════════════════════════╣
+            # ║  >= 0.5R     │  Reduce risk: SL → entry - 0.3R       ║
+            # ║  >= 1.0R     │  Breakeven: SL → entry ± spread       ║
+            # ║  >= 1.5R     │  Lock profit: SL → entry + 0.75R      ║
+            # ║  >= 2.0R     │  Strong trail: SL → entry + 1.25R     ║
+            # ║  >= 2.5R     │  ATR trail: SL → price - 1.5×ATR      ║
+            # ╚═══════════════════════════════════════════════════════╝
+            # ═══════════════════════════════════════════════════════
             sl_distance = abs(entry_f - original_sl) if entry_f and original_sl else 0
 
             if sl_distance > 0:
@@ -1038,82 +1183,98 @@ async def resolve_trades_task(context):
                 else:
                     r_multiple = (entry_f - current_price) / sl_distance
 
-                # Trailing stop adjustments (tylko w górę — nigdy nie cofaj SL)
-                new_sl = sl_f  # domyślnie bez zmian
+                # Session-aware spread buffer for breakeven
+                try:
+                    from src.risk_manager import get_risk_manager
+                    spread_buf = get_risk_manager().get_spread_buffer()
+                except (ImportError, AttributeError):
+                    spread_buf = 0.60
 
-                if r_multiple >= 2.0:
-                    # 🚀 Trail: SL = entry + 1.5R
+                new_sl = sl_f  # default: no change
+                trail_event = None
+                candidate_sl = None
+
+                # Helper: compute candidate SL for given lock level
+                def _trail_sl(lock_r: float) -> float:
                     if "LONG" in dir_clean:
-                        candidate_sl = round(entry_f + sl_distance * 1.5, 2)
+                        return round(entry_f + sl_distance * lock_r, 2)
                     else:
-                        candidate_sl = round(entry_f - sl_distance * 1.5, 2)
-                    trail_event = "🚀 TRAIL_2R"
+                        return round(entry_f - sl_distance * lock_r, 2)
 
-                    if ("LONG" in dir_clean and candidate_sl > sl_f) or \
-                       ("SHORT" in dir_clean and candidate_sl < sl_f):
-                        new_sl = candidate_sl
-                        db.update_trade_trailing_sl(t_id, new_sl)
-                        db.log_trailing_stop_event(t_id, trail_event, sl_f, new_sl, current_price, round(r_multiple, 2))
-                        logger.info(
-                            f"🚀 [TRAILING] #{t_id} | R={r_multiple:.1f} | "
-                            f"SL: {sl_f:.2f}$ → {new_sl:.2f}$ | "
-                            f"Zysk zabezpieczony: +{abs(new_sl - entry_f):.2f}$"
-                        )
+                # Helper: check if candidate improves SL (LONG=higher, SHORT=lower)
+                def _is_better(cand: float) -> bool:
+                    if "LONG" in dir_clean:
+                        return cand > sl_f
+                    else:
+                        return cand < sl_f
+
+                if r_multiple >= 2.5:
+                    # ATR-based continuous trailing — locks in most of the move
+                    try:
+                        _atr = analysis.get('atr', sl_distance) if analysis else sl_distance
+                        atr_trail = max(_atr * 1.5, sl_distance * 0.5)  # min trail width = 0.5R
+                        if "LONG" in dir_clean:
+                            candidate_sl = round(current_price - atr_trail, 2)
+                        else:
+                            candidate_sl = round(current_price + atr_trail, 2)
+                        # Don't let ATR trail go below the 2.0R lock level
+                        fixed_floor = _trail_sl(1.25)
+                        if "LONG" in dir_clean:
+                            candidate_sl = max(candidate_sl, fixed_floor)
+                        else:
+                            candidate_sl = min(candidate_sl, fixed_floor)
+                    except (TypeError, ValueError):
+                        candidate_sl = _trail_sl(1.5)
+                    trail_event = "ATR_TRAIL"
+
+                elif r_multiple >= 2.0:
+                    candidate_sl = _trail_sl(1.25)
+                    trail_event = "TRAIL_2R"
 
                 elif r_multiple >= 1.5:
-                    # 📈 Lock: SL = entry + 1.0R
-                    if "LONG" in dir_clean:
-                        candidate_sl = round(entry_f + sl_distance * 1.0, 2)
-                    else:
-                        candidate_sl = round(entry_f - sl_distance * 1.0, 2)
-                    trail_event = "📈 LOCK_1.5R"
-
-                    if ("LONG" in dir_clean and candidate_sl > sl_f) or \
-                       ("SHORT" in dir_clean and candidate_sl < sl_f):
-                        new_sl = candidate_sl
-                        db.update_trade_trailing_sl(t_id, new_sl)
-                        db.log_trailing_stop_event(t_id, trail_event, sl_f, new_sl, current_price, round(r_multiple, 2))
-                        logger.info(
-                            f"📈 [TRAILING] #{t_id} | R={r_multiple:.1f} | "
-                            f"SL: {sl_f:.2f}$ → {new_sl:.2f}$ | "
-                            f"Profit locked: +{abs(new_sl - entry_f):.2f}$"
-                        )
+                    candidate_sl = _trail_sl(0.75)
+                    trail_event = "LOCK_1.5R"
 
                 elif r_multiple >= 1.0:
-                    # 🔒 Breakeven: SL = entry
+                    # Breakeven — SL at entry + spread buffer
                     if "LONG" in dir_clean:
-                        candidate_sl = round(entry_f + 0.50, 2)  # +0.50$ spread buffer
+                        candidate_sl = round(entry_f + spread_buf, 2)
                     else:
-                        candidate_sl = round(entry_f - 0.50, 2)
-                    trail_event = "🔒 BREAKEVEN_1R"
+                        candidate_sl = round(entry_f + spread_buf, 2)
+                    trail_event = "BREAKEVEN_1R"
 
-                    if ("LONG" in dir_clean and candidate_sl > sl_f) or \
-                       ("SHORT" in dir_clean and candidate_sl < sl_f):
-                        new_sl = candidate_sl
-                        db.update_trade_trailing_sl(t_id, new_sl)
-                        db.log_trailing_stop_event(t_id, trail_event, sl_f, new_sl, current_price, round(r_multiple, 2))
-                        logger.info(
-                            f"🔒 [TRAILING] #{t_id} | R={r_multiple:.1f} | "
-                            f"SL: {sl_f:.2f}$ → {new_sl:.2f}$ (breakeven) | "
-                            f"Ryzyko wyeliminowane ✓"
-                        )
-                        # Alert Telegram o breakeven
+                elif r_multiple >= 0.5:
+                    # Partial risk reduction — cut initial risk by 30%
+                    candidate_sl = _trail_sl(-0.7)  # SL at entry - 0.7R (was -1.0R)
+                    trail_event = "REDUCE_0.5R"
+
+                # Apply trailing stop update (only if improvement)
+                if candidate_sl is not None and trail_event and _is_better(candidate_sl):
+                    new_sl = candidate_sl
+                    db.update_trade_trailing_sl(t_id, new_sl)
+                    db.log_trailing_stop_event(t_id, trail_event, sl_f, new_sl, current_price, round(r_multiple, 2))
+
+                    locked_pnl = abs(new_sl - entry_f)
+                    if "SHORT" in dir_clean:
+                        locked_pnl = entry_f - new_sl if new_sl < entry_f else -(new_sl - entry_f)
+
+                    logger.info(
+                        f"[TRAILING] #{t_id} {dir_clean} | {trail_event} R={r_multiple:.1f} | "
+                        f"SL: {sl_f:.2f} → {new_sl:.2f} | locked={locked_pnl:+.2f}$"
+                    )
+
+                    # Telegram alert on breakeven (milestone)
+                    if trail_event == "BREAKEVEN_1R":
                         try:
-                            be_msg = (
-                                f"🔒 *BREAKEVEN AKTYWOWANY*\n"
-                                f"━━━━━━━━━━━━━━\n"
-                                f"Trade #{t_id} | {dir_clean}\n"
-                                f"📍 Entry: `{entry_f:.2f}$`\n"
-                                f"🔒 Nowy SL: `{new_sl:.2f}$`\n"
-                                f"📊 R: `{r_multiple:.1f}` | Cena: `{current_price:.2f}$`\n"
-                                f"━━━━━━━━━━━━━━\n"
-                                f"✅ _Ryzyko wyeliminowane — zysk zabezpieczony_"
+                            send_telegram_alert(
+                                f"*BREAKEVEN* #{t_id} {dir_clean}\n"
+                                f"Entry: `{entry_f:.2f}$` | SL: `{new_sl:.2f}$`\n"
+                                f"R: `{r_multiple:.1f}` | Ryzyko wyeliminowane"
                             )
-                            send_telegram_alert(be_msg)
-                        except Exception:
-                            pass
+                        except (AttributeError, TypeError, Exception) as e:
+                            logger.debug(f"Breakeven alert failed: {e}")
 
-                # Użyj zaktualizowanego SL do sprawdzenia wyjścia
+                # Use updated SL for win/loss check
                 sl_f = new_sl if new_sl != sl_f else sl_f
 
             # ═══════════════════════════════════════════════════
@@ -1136,16 +1297,52 @@ async def resolve_trades_task(context):
                     if status == "WIN":
                         profit_val = round(abs(tp_f - entry_f), 2) if entry_f > 0 else 0
                     else:
-                        # Przy trailing stop, loss może być mniejszy (lub nawet profit!)
+                        # SL hit — compute actual P&L (trailing stop may yield positive P&L)
                         if "LONG" in dir_clean:
                             profit_val = round(sl_f - entry_f, 2)
                         else:
                             profit_val = round(entry_f - sl_f, 2)
+
+                        # Trailing stop correction: if SL hit yields positive P&L, it's a WIN
+                        if profit_val > 0:
+                            status = "WIN"
+                            logger.info(f"[RESOLVER] #{t_id} trailing stop hit with profit +{profit_val:.2f} → reclassified as WIN")
                 except (ValueError, TypeError):
                     profit_val = 0
 
                 db.update_trade_status(t_id, status)
                 db.update_trade_profit(t_id, profit_val)
+
+                # Audit trail + execution quality
+                try:
+                    from src.compliance import log_audit_with_chain
+                    log_audit_with_chain(t_id, "OPEN", status, "status", "OPEN", status,
+                                        f"Price ${current_price:.2f}, profit ${profit_val:.2f}")
+                    # Populate execution quality columns
+                    db._execute(
+                        "UPDATE trades SET filled_entry=entry, filled_sl=?, filled_tp=?, "
+                        "slippage=0, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (sl_f, tp_f if status == "WIN" else None, t_id)
+                    )
+                except (AttributeError, TypeError):
+                    pass
+
+                # Metrics
+                try:
+                    from src.metrics import trades_won, trades_lost
+                    if status == "WIN":
+                        trades_won.inc()
+                    else:
+                        trades_lost.inc()
+                except (ImportError, AttributeError):
+                    pass
+
+                # Trade result Telegram alert
+                try:
+                    from src.monitoring import alert_trade_result
+                    alert_trade_result(t_id, dir_clean, status, entry_f, profit_val, setup_grade or "")
+                except (ImportError, AttributeError):
+                    pass
 
                 # ═══════════════════════════════════════════════
                 # AKTUALIZACJA STATYSTYK
@@ -1165,7 +1362,7 @@ async def resolve_trades_task(context):
                             if ts:
                                 hour = int(ts[11:13])
                                 db.update_hourly_stats(hour, dir_clean, status)
-                        except Exception:
+                        except (ValueError, TypeError, IndexError):
                             pass
 
                     # Setup quality stats (nowe!)
@@ -1176,6 +1373,15 @@ async def resolve_trades_task(context):
                 if status in ("WIN", "LOSS"):
                     from src.self_learning import update_factor_weights
                     update_factor_weights(t_id, status)
+
+                    # A/B testing: record outcome
+                    try:
+                        from src.ab_testing import get_ab_manager
+                        ab = get_ab_manager()
+                        if ab.is_active:
+                            ab.record_outcome(status)
+                    except (ImportError, AttributeError):
+                        pass
 
                     # Loss classification (nowe!)
                     if status == "LOSS":

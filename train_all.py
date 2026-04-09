@@ -52,6 +52,7 @@ if not os.getenv("DATABASE_URL"):
 
 import numpy as np
 import pandas as pd
+from src.logger import logger as _logger
 
 
 # =====================================================================
@@ -104,59 +105,62 @@ def _print_gpu_info():
 def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
     """
     Pobiera jak najwięcej danych historycznych.
-    Strategia: próbuj 15m (max ~60 dni), potem 1h (max ~2 lata), potem 1d.
-    Łączy dane z różnych interwałów jeśli trzeba.
 
-    UWAGA: GC=F (Gold Futures) jest bliskim proxy dla XAU/USD (Spot Gold),
-    ale nie identycznym instrumentem. Futures mają contango/backwardation.
-    Dla najlepszych wyników trenuj na danych najbliższych instrumentowi live.
+    Strategia (priorytet):
+      1. 1h data (max 2 lata, ~12k bars) — best balance of depth + resolution
+      2. 15m data (max 60 dni, ~4k bars) — highest resolution, limited depth
+      3. 1d data (max 10 lat) — fallback for deep history
+
+    NOTE: GC=F (Gold Futures) is a close proxy for XAU/USD (Spot Gold),
+    but has contango/backwardation. Acceptable for training features.
     """
     import yfinance as yf
+    from src.logger import logger
 
-    print(f"📡 Pobieranie danych dla {symbol}...")
+    logger.info(f"Fetching training data for {symbol}...")
 
     all_dfs = []
     ticker = yf.Ticker(symbol)
 
-    # Strategia 1: 15m data (ostatnie 60 dni) — najlepsza rozdzielczość
-    try:
-        df_15m = ticker.history(period="60d", interval="15m")
-        if df_15m is not None and len(df_15m) > 100:
-            df_15m = _normalize_df(df_15m)
-            all_dfs.append(("15m", df_15m))
-            print(f"   ✅ 15m: {len(df_15m)} świec")
-    except Exception as e:
-        print(f"   ⚠️ 15m failed: {e}")
-
-    # Strategia 2: 1h data (ostatnie 2 lata) — dobry balans
+    # Strategy 1: 1h data — 2 years, ~12,000 bars (best for ML training)
     try:
         df_1h = ticker.history(period="2y", interval="1h")
         if df_1h is not None and len(df_1h) > 100:
             df_1h = _normalize_df(df_1h)
             all_dfs.append(("1h", df_1h))
-            print(f"   ✅ 1h:  {len(df_1h)} świec")
+            logger.info(f"  1h: {len(df_1h)} bars (2 years)")
     except Exception as e:
-        print(f"   ⚠️ 1h failed: {e}")
+        logger.warning(f"  1h failed: {e}")
 
-    # Strategia 3: 1d data (max history)
+    # Strategy 2: 15m data — 60 days, ~4,000 bars (high resolution)
+    try:
+        df_15m = ticker.history(period="60d", interval="15m")
+        if df_15m is not None and len(df_15m) > 100:
+            df_15m = _normalize_df(df_15m)
+            all_dfs.append(("15m", df_15m))
+            logger.info(f"  15m: {len(df_15m)} bars (60 days)")
+    except Exception as e:
+        logger.warning(f"  15m failed: {e}")
+
+    # Strategy 3: 1d data — up to 10 years (macro regime training)
     try:
         df_1d = ticker.history(period="10y", interval="1d")
         if df_1d is not None and len(df_1d) > 100:
             df_1d = _normalize_df(df_1d)
             all_dfs.append(("1d", df_1d))
-            print(f"   ✅ 1d:  {len(df_1d)} świec")
+            logger.info(f"  1d: {len(df_1d)} bars (max history)")
     except Exception as e:
-        print(f"   ⚠️ 1d failed: {e}")
+        logger.warning(f"  1d failed: {e}")
 
     if not all_dfs:
-        raise ValueError(f"Nie udało się pobrać żadnych danych dla {symbol}")
+        raise ValueError(f"No data fetched for {symbol}")
 
-    # Wybierz najlepszy dataset: preferuj 1h (dużo danych + przyzwoita rozdzielczość)
+    # Select best: prefer 1h (most bars at good resolution)
     priority = {"1h": 1, "15m": 2, "1d": 3}
     all_dfs.sort(key=lambda x: (priority.get(x[0], 99), -len(x[1])))
     best_tf, best_df = all_dfs[0]
 
-    # Walidacja danych OHLC — usuń uszkodzone świece
+    # OHLC validation — remove broken candles
     before = len(best_df)
     best_df = best_df[
         (best_df['high'] >= best_df['low']) &
@@ -164,9 +168,9 @@ def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
     ].reset_index(drop=True)
     after = len(best_df)
     if before != after:
-        print(f"   ⚠️ Usunięto {before - after} uszkodzonych świec")
+        logger.warning(f"  Removed {before - after} invalid candles")
 
-    print(f"\n📊 Używam danych {best_tf}: {len(best_df)} świec")
+    logger.info(f"Training data: {best_tf}, {len(best_df)} bars")
     return best_df
 
 
@@ -258,10 +262,10 @@ def train_lstm(train_df: pd.DataFrame, epochs: int = 50, precomputed_features=No
             db = NewsDB()
             val_acc = db.get_param("lstm_last_accuracy", 0)
             wf_acc = db.get_param("lstm_walkforward_accuracy", 0)
-            print(f"   ✅ Validation accuracy: {val_acc:.1%}")
-            print(f"   ✅ Walk-forward accuracy: {wf_acc:.1%}")
-        except:
-            print(f"   ✅ Model wytrenowany")
+            print(f"   Validation accuracy: {val_acc:.1%}")
+            print(f"   Walk-forward accuracy: {wf_acc:.1%}")
+        except (ImportError, AttributeError, TypeError):
+            print(f"   Model trained successfully")
         print(f"   ⏱️  Czas: {elapsed:.1f}s")
         print(f"   💾 Scaler zapisany do models/lstm_scaler.pkl")
     else:
@@ -383,7 +387,7 @@ def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
         db = NewsDB()
         db.set_param("rl_best_reward", best_reward)
         db.set_param("rl_episodes_trained", episodes)
-    except:
+    except (ImportError, AttributeError, TypeError):
         pass
 
     return {"best_reward": best_reward, "episodes": episodes, "time": elapsed}
@@ -543,6 +547,44 @@ def main():
     # ---- 3. LSTM ----
     results['lstm'] = train_lstm(train_df, epochs=args.epochs, precomputed_features=precomputed)
 
+    # ---- 3b. Attention (TFT-lite) ----
+    try:
+        print("\n" + "=" * 60)
+        print("  ATTENTION MODEL (TFT-lite)")
+        print("=" * 60)
+        from src.attention_model import train_attention_model
+        t0 = time.time()
+        attn_model, attn_acc = train_attention_model(train_df)
+        elapsed = time.time() - t0
+        if attn_model:
+            print(f"   Walk-forward accuracy: {attn_acc:.1%}")
+            print(f"   Time: {elapsed:.1f}s")
+        else:
+            print("   Failed (insufficient data?)")
+        results['attention'] = {"accuracy": attn_acc, "time": elapsed}
+    except Exception as e:
+        print(f"   Attention skipped: {e}")
+        results['attention'] = {"error": str(e)}
+
+    # ---- 3c. DPformer-lite (Decomposition + LSTM + Attention Fusion) ----
+    try:
+        print("\n" + "=" * 60)
+        print("  DPFORMER-LITE (Decompose + LSTM + Attention)")
+        print("=" * 60)
+        from src.decompose_model import train_decompose_model
+        t0 = time.time()
+        dp_model, dp_acc = train_decompose_model(train_df, epochs=args.epochs)
+        elapsed = time.time() - t0
+        if dp_model:
+            print(f"   Walk-forward accuracy: {dp_acc:.1%}")
+            print(f"   Time: {elapsed:.1f}s")
+        else:
+            print("   Failed (insufficient data?)")
+        results['dpformer'] = {"accuracy": dp_acc, "time": elapsed}
+    except Exception as e:
+        print(f"   DPformer skipped: {e}")
+        results['dpformer'] = {"error": str(e)}
+
     # ---- 4. DQN ----
     if not args.skip_rl:
         results['dqn'] = train_dqn(train_df, episodes=args.rl_episodes)
@@ -557,14 +599,72 @@ def main():
         print("\n⏭️  Bayesian pominięty (--skip-bayes)")
         results['bayes'] = {"skipped": True}
 
-    # ---- 6. Backtest ----
+    # ---- 6. Backtest on holdout ----
     if not args.skip_backtest:
         results['backtest'] = run_backtest(holdout_df)
     else:
-        print("\n⏭️  Backtest pominięty (--skip-backtest)")
+        print("\n  Backtest skipped (--skip-backtest)")
         results['backtest'] = {"skipped": True}
 
-    # ---- 7. Raport ----
+    # ---- 7. Post-training: ONNX export ----
+    print("\n" + "=" * 60)
+    print("  POST-TRAINING: ONNX Export + Calibration")
+    print("=" * 60)
+    try:
+        from src.compute import convert_keras_to_onnx, convert_xgboost_to_onnx
+        import pickle
+
+        # LSTM → ONNX
+        if os.path.exists("models/lstm.keras"):
+            result = convert_keras_to_onnx("models/lstm.keras", "models/lstm.onnx")
+            if result:
+                print(f"   LSTM exported to ONNX: models/lstm.onnx")
+
+        # XGBoost → ONNX
+        if os.path.exists("models/xgb.pkl"):
+            with open("models/xgb.pkl", "rb") as f:
+                xgb_model = pickle.load(f)
+            n_features = xgb_model.n_features_in_ if hasattr(xgb_model, 'n_features_in_') else 31
+            result = convert_xgboost_to_onnx(xgb_model, n_features, "models/xgb.onnx")
+            if result:
+                print(f"   XGBoost exported to ONNX: models/xgb.onnx")
+
+        # DQN → ONNX
+        if os.path.exists("models/rl_agent.keras"):
+            result = convert_keras_to_onnx("models/rl_agent.keras", "models/rl_agent.onnx")
+            if result:
+                print(f"   DQN exported to ONNX: models/rl_agent.onnx")
+    except Exception as e:
+        print(f"   ONNX export skipped: {e}")
+
+    # ---- 8. Calibration fit (Platt Scaling) ----
+    try:
+        from src.model_calibration import get_calibrator
+        cal = get_calibrator()
+        cal.fit_all()
+        status = cal.get_status()
+        for model, info in status.items():
+            if info.get('calibrated'):
+                print(f"   Calibration fitted: {model} (A={info['a']:.3f}, B={info['b']:.3f})")
+            else:
+                print(f"   Calibration: {model} — insufficient data (will auto-fit after 50 trades)")
+    except Exception as e:
+        print(f"   Calibration skipped: {e}")
+
+    # ---- 9. Model validation on val_df ----
+    try:
+        print(f"\n   Validation set ({len(val_df)} bars):")
+        from src.backtest import backtest_xgb, backtest_lstm
+        val_xgb = backtest_xgb(val_df)
+        if 'accuracy' in val_xgb:
+            print(f"   XGBoost val: acc={val_xgb['accuracy']:.1%} MCC={val_xgb.get('mcc', 0):.3f} Sharpe={val_xgb.get('sharpe', 0):.2f}")
+        val_lstm = backtest_lstm(val_df)
+        if 'accuracy' in val_lstm:
+            print(f"   LSTM val:    acc={val_lstm['accuracy']:.1%} MCC={val_lstm.get('mcc', 0):.3f} Sharpe={val_lstm.get('sharpe', 0):.2f}")
+    except Exception as e:
+        print(f"   Validation skipped: {e}")
+
+    # ---- 10. Raport ----
     print_final_report(results)
 
     print("\n✅ Pipeline zakończony pomyślnie!")

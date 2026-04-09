@@ -11,18 +11,24 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Minimal Dark Theme ── */
+/* ── Modern Dark Theme ── */
 
 :root {
-  --color-bg: #0b0e14;
-  --color-surface: #111622;
+  --color-bg: #0a0d12;
+  --color-surface: #0f1318;
+  --color-surface-raised: #141920;
   --color-secondary: #1a2030;
-  --color-border: #222a3a;
+  --color-border: #1e2736;
+  --color-border-hover: #2a3544;
   --color-accent-green: #22c55e;
   --color-accent-red: #ef4444;
   --color-accent-blue: #3b82f6;
   --color-accent-cyan: #06b6d4;
   --color-accent-purple: #8b5cf6;
+  --color-accent-orange: #f59e0b;
+  --color-text-primary: #e2e8f0;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
 }
 
 * { box-sizing: border-box; }
@@ -37,8 +43,8 @@ body {
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
-  color: #e2e8f0;
-  background: #0b0e14;
+  color: var(--color-text-primary);
+  background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -49,13 +55,13 @@ body {
 }
 
 /* Scrollbar — thin, subtle */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #2a3344; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #3a4a5c; }
+::-webkit-scrollbar-thumb { background: #1e2736; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2a3a4c; }
 
 ::selection {
-  background-color: rgba(34, 197, 94, 0.25);
+  background-color: rgba(59, 130, 246, 0.25);
   color: #fff;
 }
 
@@ -66,35 +72,54 @@ body {
 .signal-sell { @apply text-red-400; }
 .signal-strong-sell { @apply bg-red-950/20 text-red-400; }
 
-/* Card — flat, clean */
+/* ── Card system ── */
+
+/* Standard card */
 .card {
-  @apply rounded-lg p-4;
-  background: #111622;
-  border: 1px solid #1e2736;
+  @apply rounded-xl p-4;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  transition: border-color 0.2s ease;
+}
+.card:hover {
+  border-color: var(--color-border-hover);
 }
 
-.card:hover {
-  border-color: #2a3544;
+/* Elevated card — for important panels */
+.card-elevated {
+  @apply rounded-xl p-5;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.card-elevated:hover {
+  border-color: var(--color-border-hover);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
 }
 
 /* Section title — clean, no glow */
 .section-title {
-  @apply text-xs font-semibold uppercase tracking-widest text-gray-400;
+  @apply text-xs font-semibold uppercase tracking-widest;
+  color: var(--color-text-muted);
   font-family: 'Inter', sans-serif;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
 }
 
 /* Button styling */
 .btn {
-  @apply px-4 py-2 rounded-md font-medium text-sm transition-colors;
+  @apply px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200;
 }
 
 .btn-primary {
   @apply bg-green-600 text-white hover:bg-green-500;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.15);
+}
+.btn-primary:hover {
+  box-shadow: 0 0 16px rgba(34, 197, 94, 0.25);
 }
 
 .btn-secondary {
-  @apply bg-gray-800 text-gray-300 hover:bg-gray-700;
+  @apply bg-gray-800/60 text-gray-300 hover:bg-gray-700/60;
 }
 
 /* Price display */
@@ -102,17 +127,17 @@ body {
   font-family: 'JetBrains Mono', monospace;
   font-size: 1.75rem;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--color-text-primary);
 }
 
 /* Glow text — toned down to simple color */
-.glow-text { color: #22c55e; }
-.glow-text-red { color: #ef4444; }
-.glow-text-blue { color: #3b82f6; }
+.glow-text { color: var(--color-accent-green); }
+.glow-text-red { color: var(--color-accent-red); }
+.glow-text-blue { color: var(--color-accent-blue); }
 
 .divider {
   height: 1px;
-  background: #1e2736;
+  background: var(--color-border);
 }
 
 /* Chart container */
@@ -138,8 +163,9 @@ body {
 .status-connected::before {
   content: '';
   width: 6px; height: 6px;
-  background: #22c55e;
+  background: var(--color-accent-green);
   border-radius: 50%;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
 }
 .status-disconnected {
   @apply flex items-center gap-2 text-red-400;
@@ -147,8 +173,9 @@ body {
 .status-disconnected::before {
   content: '';
   width: 6px; height: 6px;
-  background: #ef4444;
+  background: var(--color-accent-red);
   border-radius: 50%;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
 }
 
 /* Responsive grid */
@@ -182,4 +209,33 @@ a:hover { text-decoration: underline; }
 .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
 .scrollbar-none::-webkit-scrollbar { display: none; }
 
+/* ── Stat item styling for panels ── */
+.stat-item {
+  @apply rounded-lg p-3;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  transition: border-color 0.15s ease;
+}
+.stat-item:hover {
+  border-color: var(--color-border-hover);
+}
 
+/* ── Model card in signal panel ── */
+.model-card {
+  @apply rounded-lg p-3;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  transition: all 0.15s ease;
+}
+.model-card:hover {
+  border-color: var(--color-border-hover);
+}
+
+/* ── Toast animation ── */
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+.animate-slide-in {
+  animation: slide-in 0.25s ease-out;
+}

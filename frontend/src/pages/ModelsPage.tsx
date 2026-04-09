@@ -95,7 +95,7 @@ function TrainingControls() {
 
 export default function ModelsPage() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-w-[1600px] mx-auto">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="card">
           <h2 className="section-title mb-3">ML Models</h2>

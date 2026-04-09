@@ -7,6 +7,7 @@ import { useTradingStore } from '../../store/tradingStore';
 import { modelsAPI } from '../../api/client';
 import type { AllModelsStats } from '../../types/trading';
 import { Brain } from 'lucide-react';
+import { useToast } from '../ui/Toast';
 
 interface StatRowProps {
   label: string;
@@ -37,6 +38,7 @@ function StatRow({ label, value, format = 'text', color }: StatRowProps) {
 }
 
 export const ModelStats = memo(function ModelStats() {
+  const toast = useToast();
   const { setModelsStats, apiConnected } = useTradingStore();
   const [stats, setStatsState] = useState<AllModelsStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,7 +54,7 @@ export const ModelStats = memo(function ModelStats() {
         setStatsState(data);
         setModelsStats(data);
       } catch (err) {
-        console.error('Error fetching model stats:', err);
+        toast.error('Failed to load model stats');
         setError('Failed to load model stats');
       } finally {
         setLoading(false);

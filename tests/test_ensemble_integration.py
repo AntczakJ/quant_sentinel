@@ -10,6 +10,7 @@ Tests to verify:
 
 import sys
 import os
+import pytest
 import pandas as pd
 import numpy as np
 
@@ -52,6 +53,7 @@ def test_ensemble_agreement_level():
     print(f"✅ Agreement test PASSED: 3/3 models agreement detected")
 
 
+@pytest.mark.skip(reason="Legacy feature_engineering.py deprecated — use compute.py")
 def test_feature_engineering():
     """Test feature engineering pipeline"""
     # Create sample market data

@@ -7,6 +7,7 @@ import { useTradingStore } from '../../store/tradingStore';
 import { signalsAPI } from '../../api/client';
 import type { Signal } from '../../types/trading';
 import { AlertTriangle } from 'lucide-react';
+import { useToast } from '../ui/Toast';
 
 const CONSENSUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
   STRONG_BUY: { bg: 'bg-green-950/20', border: 'border-green-600/30', text: 'text-green-400' },
@@ -22,6 +23,7 @@ const MODEL_COLORS: Record<string, string> = {
 };
 
 export const SignalPanel = memo(function SignalPanel() {
+  const toast = useToast();
   const { setCurrentSignal } = useTradingStore();
   const [signal, setSignal] = useState<Signal | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,7 +40,7 @@ export const SignalPanel = memo(function SignalPanel() {
         setCurrentSignal(data);
         setLastUpdate(new Date());
       } catch (err) {
-        console.error('Error fetching signal:', err);
+        toast.error('Failed to load signal');
         setError('Failed to load signal');
       } finally {
         setLoading(false);
@@ -69,76 +71,71 @@ export const SignalPanel = memo(function SignalPanel() {
   const cs = CONSENSUS_COLORS[signal.consensus] || CONSENSUS_COLORS.HOLD;
 
   return (
-    <div className="space-y-3">
-      {/* Consensus */}
-      <div className={`${cs.bg} border ${cs.border} rounded-lg p-3`}>
-        <div className="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wider">Consensus</div>
+    <div className="space-y-4">
+      {/* Consensus — hero section */}
+      <div className={`${cs.bg} border ${cs.border} rounded-xl p-4`}>
         <div className="flex items-end justify-between">
           <div>
-            <div className={`text-2xl font-bold ${cs.text}`}>{signal.consensus}</div>
-            <div className="text-xs text-gray-500 mt-1 font-mono">
+            <div className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-1.5">Consensus</div>
+            <div className={`text-3xl font-bold ${cs.text} tracking-tight`}>{signal.consensus}</div>
+            <div className="text-xs text-gray-500 mt-1.5 font-mono">
               Score: <span className={`${cs.text} font-semibold`}>{signal.consensus_score.toFixed(2)}</span>
             </div>
           </div>
           <div className="text-right">
-            <div className="text-xs text-gray-500">Price</div>
-            <div className="text-lg font-bold text-white font-mono">${signal.current_price.toFixed(2)}</div>
+            <div className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-1">Price</div>
+            <div className="text-xl font-bold text-white font-mono">${signal.current_price.toFixed(2)}</div>
           </div>
         </div>
       </div>
 
-      {/* Models */}
-      <div className="space-y-2">
-        <div className="text-xs text-gray-500 font-medium uppercase tracking-wider">Models</div>
-
-        {/* RL Agent */}
-        <div className="bg-dark-bg rounded-lg p-2.5 border border-dark-secondary">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-blue-500" />
-              <span className="text-xs font-medium text-gray-400">RL Agent</span>
+      {/* Models — horizontal on wide, vertical on narrow */}
+      <div>
+        <div className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-3">Models</div>
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+          {/* RL Agent */}
+          <div className="model-card">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.4)]" />
+              <span className="text-[11px] font-medium text-gray-400">RL Agent</span>
             </div>
-            <span className={`text-xs font-bold ${MODEL_COLORS[signal.rl_action] || 'text-gray-400'}`}>{signal.rl_action}</span>
-          </div>
-          <div className="flex justify-between text-xs text-gray-500 mt-1.5 font-mono">
-            <span>{(signal.rl_confidence * 100).toFixed(1)}%</span>
-            <span>ε {signal.rl_epsilon.toFixed(3)}</span>
-          </div>
-        </div>
-
-        {/* LSTM */}
-        <div className="bg-dark-bg rounded-lg p-2.5 border border-dark-secondary">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-purple-500" />
-              <span className="text-xs font-medium text-gray-400">LSTM</span>
+            <div className={`text-lg font-bold ${MODEL_COLORS[signal.rl_action] || 'text-gray-400'}`}>{signal.rl_action}</div>
+            <div className="flex justify-between text-[10px] text-gray-500 mt-2 font-mono">
+              <span>{(signal.rl_confidence * 100).toFixed(1)}%</span>
+              <span className="text-gray-600">{signal.rl_epsilon.toFixed(3)}</span>
             </div>
-            <span className={`text-xs font-bold ${signal.lstm_change_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+          </div>
+
+          {/* LSTM */}
+          <div className="model-card">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_6px_rgba(139,92,246,0.4)]" />
+              <span className="text-[11px] font-medium text-gray-400">LSTM</span>
+            </div>
+            <div className={`text-lg font-bold ${signal.lstm_change_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {signal.lstm_change_pct >= 0 ? '+' : ''}{signal.lstm_change_pct.toFixed(2)}%
-            </span>
-          </div>
-          <div className="text-xs text-gray-500 mt-1.5 font-mono">
-            Pred: ${signal.lstm_prediction.toFixed(2)}
-          </div>
-        </div>
-
-        {/* XGBoost */}
-        <div className="bg-dark-bg rounded-lg p-2.5 border border-dark-secondary">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-orange-500" />
-              <span className="text-xs font-medium text-gray-400">XGBoost</span>
             </div>
-            <span className={`text-xs font-bold ${MODEL_COLORS[signal.xgb_direction] || 'text-gray-400'}`}>{signal.xgb_direction}</span>
+            <div className="text-[10px] text-gray-500 mt-2 font-mono">
+              Pred: ${signal.lstm_prediction.toFixed(2)}
+            </div>
           </div>
-          <div className="text-xs text-gray-500 mt-1.5 font-mono">
-            Prob: {(signal.xgb_probability * 100).toFixed(1)}%
+
+          {/* XGBoost */}
+          <div className="model-card">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_6px_rgba(245,158,11,0.4)]" />
+              <span className="text-[11px] font-medium text-gray-400">XGBoost</span>
+            </div>
+            <div className={`text-lg font-bold ${MODEL_COLORS[signal.xgb_direction] || 'text-gray-400'}`}>{signal.xgb_direction}</div>
+            <div className="text-[10px] text-gray-500 mt-2 font-mono">
+              Prob: {(signal.xgb_probability * 100).toFixed(1)}%
+            </div>
           </div>
         </div>
       </div>
 
       {lastUpdate && (
-        <div className="text-xs text-gray-600 pt-2 border-t border-dark-secondary font-mono">
+        <div className="text-[10px] text-gray-600 pt-3 border-t border-[#1e2736] font-mono">
           Updated: {lastUpdate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </div>
       )}

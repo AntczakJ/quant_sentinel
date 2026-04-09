@@ -299,7 +299,7 @@ class DQNAgent:
         # Warm up the model with a dummy prediction (builds computation graph)
         try:
             model(np.zeros((1, self.state_size), dtype=np.float32), training=False)
-        except Exception:
+        except (RuntimeError, ValueError, TypeError):
             pass
         return model
 

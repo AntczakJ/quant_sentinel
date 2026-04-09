@@ -95,7 +95,7 @@ export function Header() {
 
   if (!ticker) {
     return (
-      <header className="sticky top-0 z-50 bg-dark-surface border-b border-dark-secondary">
+      <header className="sticky top-0 z-50 bg-[#0f1318]/95 backdrop-blur-md border-b border-[#1e2736]">
         <div className="px-6 py-3 text-center text-gray-500 text-sm">Loading...</div>
       </header>
     );
@@ -104,40 +104,20 @@ export function Header() {
   const isPositive = ticker.change >= 0;
 
   return (
-    <header className="sticky top-0 z-50 bg-dark-surface/95 backdrop-blur-sm border-b border-dark-secondary">
-      {/* Top row: logo + price + session + status */}
-      <div className="px-4 lg:px-6 py-2 flex items-center justify-between gap-4 max-w-[1600px] mx-auto">
+    <header className="sticky top-0 z-50 bg-[#0f1318]/95 backdrop-blur-md border-b border-[#1e2736]">
+      {/* Single row: logo + nav + price + session + status */}
+      <div className="px-4 lg:px-6 py-0 flex items-center gap-2 lg:gap-4">
         {/* Logo */}
-        <div className="flex items-center gap-2 min-w-max">
-          <span className="text-base font-bold text-white tracking-wide">QUANT</span>
-          <span className="text-base font-bold text-green-400 tracking-wide">SENTINEL</span>
+        <div className="flex items-center gap-1.5 min-w-max py-2.5">
+          <span className="text-sm font-bold text-white tracking-wider">QUANT</span>
+          <span className="text-sm font-bold text-green-400 tracking-wider">SENTINEL</span>
         </div>
 
-        {/* Price */}
-        <div className={`flex-1 text-center transition-colors duration-200 ${priceFlash === 'up' ? 'text-green-400' : priceFlash === 'down' ? 'text-red-400' : ''}`}>
-          <div className="text-xl lg:text-2xl font-bold font-mono text-white">
-            ${ticker.price.toFixed(2)}
-          </div>
-          <div className={`flex items-center justify-center gap-1 text-[11px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-            {isPositive ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
-            <span>
-              {isPositive ? '+' : ''}{ticker.change.toFixed(2)} ({isPositive ? '+' : ''}{ticker.change_pct.toFixed(2)}%)
-            </span>
-          </div>
-        </div>
+        {/* Subtle separator */}
+        <div className="hidden md:block w-px h-6 bg-[#1e2736]" />
 
-        {/* Session badge */}
-        {sessionInfo && <SessionBadge session={sessionInfo} />}
-
-        {/* Status */}
-        <div className="text-right min-w-max">
-          <ConnectionStatus />
-        </div>
-      </div>
-
-      {/* Navigation bar */}
-      <nav className="px-4 lg:px-6 max-w-[1600px] mx-auto">
-        <div className="flex items-center gap-0.5 overflow-x-auto scrollbar-none">
+        {/* Navigation — inline with header */}
+        <nav className="flex items-center gap-0.5 overflow-x-auto scrollbar-none">
           {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
@@ -146,19 +126,45 @@ export function Header() {
               onMouseEnter={() => prefetchRoute(to)}
               onFocus={() => prefetchRoute(to)}
               className={({ isActive }) =>
-                `flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t transition-colors whitespace-nowrap border-b-2 ${
+                `flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium rounded-md transition-all duration-150 whitespace-nowrap ${
                   isActive
-                    ? 'border-green-500 text-green-400 bg-green-500/5'
-                    : 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-dark-secondary/50'
+                    ? 'text-white bg-[#1a2030]'
+                    : 'text-gray-500 hover:text-gray-300 hover:bg-[#141920]'
                 }`
               }
             >
-              <Icon size={13} />
+              <Icon size={12} />
               <span className="hidden sm:inline">{label}</span>
             </NavLink>
           ))}
+        </nav>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Price — compact, right-aligned */}
+        <div className={`flex items-center gap-3 transition-colors duration-200 ${priceFlash === 'up' ? 'text-green-400' : priceFlash === 'down' ? 'text-red-400' : ''}`}>
+          <div className="text-right">
+            <div className="text-lg font-bold font-mono text-white leading-tight">
+              ${ticker.price.toFixed(2)}
+            </div>
+            <div className={`flex items-center justify-end gap-1 text-[10px] font-medium leading-tight ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+              {isPositive ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
+              <span>
+                {isPositive ? '+' : ''}{ticker.change.toFixed(2)} ({isPositive ? '+' : ''}{ticker.change_pct.toFixed(2)}%)
+              </span>
+            </div>
+          </div>
         </div>
-      </nav>
+
+        {/* Session badge */}
+        {sessionInfo && <SessionBadge session={sessionInfo} />}
+
+        {/* Status */}
+        <div className="min-w-max">
+          <ConnectionStatus />
+        </div>
+      </div>
 
       <ScrollProgressBar />
     </header>

@@ -1,0 +1,49 @@
+# Git
+.git
+.github
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.coverage
+htmlcov
+.venv
+venv
+*.egg-info
+
+# Node
+frontend/node_modules
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs & cache
+logs/
+cache/
+persistent_cache/
+
+# Database backups (keep main db)
+data/backups/
+data/*.db-wal
+data/*.db-shm
+
+# Documentation (not needed in container)
+docs/
+*.md
+!README.md
+
+# Test artifacts
+tests/
+.flake8
+.pylintrc
+.editorconfig

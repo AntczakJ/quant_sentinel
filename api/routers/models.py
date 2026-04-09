@@ -117,3 +117,34 @@ async def get_xgboost_stats():
         "file_size_kb": info["size_kb"],
     }
 
+
+@router.get("/monitor", summary="Model drift & health monitoring")
+async def get_model_monitoring():
+    """
+    Run model monitoring checks: prediction drift (PSI), rolling accuracy,
+    calibration status. Returns alerts if thresholds breached.
+    """
+    try:
+        from src.model_monitor import check_prediction_drift, compute_rolling_accuracy
+        from src.model_calibration import get_calibrator
+
+        drift = check_prediction_drift()
+        accuracy = compute_rolling_accuracy()
+        calibration = get_calibrator().get_status()
+
+        alerts = []
+        for model, info in drift.items():
+            if info.get("status") in ("warn", "alert"):
+                alerts.append(f"{model}: PSI={info['psi']:.3f} ({info['status']})")
+
+        return {
+            "drift": drift,
+            "accuracy": accuracy,
+            "calibration": calibration,
+            "alerts": alerts,
+            "healthy": len(alerts) == 0,
+        }
+    except Exception as e:
+        logger.error(f"Model monitoring error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

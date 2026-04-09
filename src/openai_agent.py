@@ -757,8 +757,8 @@ class QuantSentinelAgent:
             regime_stats = []
             try:
                 regime_stats = db.get_regime_stats()
-            except:
-                pass
+            except (AttributeError, TypeError, Exception) as e:
+                logger.debug(f"Regime stats unavailable: {e}")
 
             return {
                 "failures_report": failures_report,

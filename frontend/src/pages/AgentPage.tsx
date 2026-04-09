@@ -6,7 +6,7 @@ import { AgentChat } from '../components/dashboard';
 
 export default function AgentPage() {
   return (
-    <div className="card" style={{ minHeight: 'calc(100vh - 160px)' }}>
+    <div className="card max-w-[1600px] mx-auto" style={{ minHeight: 'calc(100vh - 160px)' }}>
       <h2 className="section-title mb-3">
         AI Agent
         {' '}
