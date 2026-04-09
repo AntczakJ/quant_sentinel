@@ -14,7 +14,7 @@ FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --silent
+RUN npm ci --legacy-peer-deps
 
 COPY frontend/ ./
 RUN npm run build
@@ -30,9 +30,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies first (cached layer)
+# Install Python dependencies (cached layer)
+# Filter out Windows-only packages (DirectML) and install Linux equivalents
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN grep -v "onnxruntime-directml" requirements.txt > requirements_linux.txt && \
+    pip install --no-cache-dir -r requirements_linux.txt && \
+    pip install --no-cache-dir onnxruntime && \
+    rm requirements_linux.txt
 
 # Copy application code
 COPY src/ ./src/
@@ -46,8 +50,8 @@ COPY models/ ./models/
 # Copy pre-built frontend from Stage 1
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
-# Create data directories
-RUN mkdir -p data logs data/backups
+# Create data directories with proper permissions
+RUN mkdir -p data logs data/backups && chmod -R 777 data logs
 
 # Expose API port
 EXPOSE 8000

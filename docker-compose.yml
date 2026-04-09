@@ -1,20 +1,13 @@
 # ══════════════════════════════════════════════════════════════════════════════
 #  Quant Sentinel — Docker Compose
 #
-#  Services:
-#    backend  — FastAPI API + WebSocket + background tasks (scanner, resolver)
-#    bot      — Telegram bot (optional, can run standalone)
-#
 #  Usage:
-#    docker compose up -d              # start all services
-#    docker compose up backend -d      # API only (no Telegram bot)
+#    docker compose up -d              # start API
 #    docker compose logs -f backend    # follow logs
-#    docker compose down               # stop all
+#    docker compose down               # stop
 #
-#  Data persistence:
-#    - ./data/  mounted as volume (SQLite database)
-#    - ./models/ mounted as volume (ML models)
-#    - ./logs/  mounted as volume (application logs)
+#  Data: SQLite stored in Docker named volume (survives container restarts).
+#  Models + logs: bind-mounted from host (shared with local dev).
 # ══════════════════════════════════════════════════════════════════════════════
 
 services:
@@ -31,7 +24,7 @@ services:
       - DATABASE_URL=data/sentinel.db
       - PYTHONUNBUFFERED=1
     volumes:
-      - ./data:/app/data
+      - sentinel-data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
     restart: unless-stopped
@@ -40,7 +33,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   bot:
     build:
@@ -54,7 +47,7 @@ services:
       - DATABASE_URL=data/sentinel.db
       - PYTHONUNBUFFERED=1
     volumes:
-      - ./data:/app/data
+      - sentinel-data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
     restart: unless-stopped
@@ -62,4 +55,8 @@ services:
       backend:
         condition: service_healthy
     profiles:
-      - with-bot  # Only starts with: docker compose --profile with-bot up
+      - with-bot
+
+volumes:
+  sentinel-data:
+    driver: local
