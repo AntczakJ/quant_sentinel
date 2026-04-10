@@ -55,7 +55,14 @@ export const SignalPanel = memo(function SignalPanel() {
   }, [setCurrentSignal]);
 
   if (loading && !signal) {
-    return <div className="flex items-center justify-center h-32 text-th-muted text-sm">Loading signal...</div>;
+    return (
+      <div className="space-y-3">
+        <div className="skeleton-shimmer h-8 w-24 rounded" />
+        <div className="skeleton-shimmer h-4 rounded-full" />
+        <div className="skeleton-shimmer h-4 w-3/4 rounded-full" />
+        <div className="skeleton-shimmer h-16 rounded-lg" />
+      </div>
+    );
   }
 
   if (error && !signal) {

@@ -69,8 +69,8 @@ export const ModelStats = memo(function ModelStats() {
 
   if (loading && !stats) {
     return (
-      <div className="flex items-center justify-center h-40 text-th-secondary">
-        <span>Loading models...</span>
+      <div className="space-y-3">
+        {[1,2,3].map(i => <div key={i} className="skeleton-shimmer h-20 rounded-lg" />)}
       </div>
     );
   }

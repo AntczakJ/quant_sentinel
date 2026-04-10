@@ -121,7 +121,19 @@ export const RiskMetrics = memo(function RiskMetrics() {
 
   if (isLoading && !data) {
     return (
-      <div className="text-xs text-th-muted text-center py-4">Ladowanie metryk...</div>
+      <div className="space-y-3">
+        <div className="flex gap-4">
+          <div className="skeleton-shimmer w-14 h-14 rounded-full" />
+          <div className="skeleton-shimmer w-14 h-14 rounded-full" />
+          <div className="flex-1 grid grid-cols-2 gap-2">
+            <div className="skeleton-shimmer h-14 rounded-lg" />
+            <div className="skeleton-shimmer h-14 rounded-lg" />
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {[1,2,3].map(i => <div key={i} className="skeleton-shimmer h-16 rounded-lg" />)}
+        </div>
+      </div>
     );
   }
 

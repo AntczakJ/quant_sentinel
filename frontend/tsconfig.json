@@ -27,6 +27,7 @@
     "strictFunctionTypes": true,
     "strictPropertyInitialization": true,
     "alwaysStrict": true,
+    "exactOptionalPropertyTypes": false,
 
     /* Interoperability */
     "esModuleInterop": true,

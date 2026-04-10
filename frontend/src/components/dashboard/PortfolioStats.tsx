@@ -8,6 +8,7 @@ import { portfolioAPI, signalsAPI } from '../../api/client';
 import type { Portfolio } from '../../types/trading';
 import { Edit2, Plus, Loader2 } from 'lucide-react';
 import { useToast } from '../ui/Toast';
+import { AnimatedNumber } from '../ui/AnimatedNumber';
 
 export const PortfolioStats = memo(function PortfolioStats() {
   const toast = useToast();
@@ -106,7 +107,20 @@ export const PortfolioStats = memo(function PortfolioStats() {
   };
 
   if (loading && !portfolio) {
-    return <div className="flex items-center justify-center h-32 text-th-muted text-sm">Loading portfolio...</div>;
+    return (
+      <div className="space-y-4">
+        <div className="skeleton-shimmer h-5 w-16 rounded" />
+        <div className="grid grid-cols-2 gap-3">
+          <div className="skeleton-shimmer h-20 rounded-lg" />
+          <div className="skeleton-shimmer h-20 rounded-lg" />
+        </div>
+        <div className="skeleton-shimmer h-24 rounded-xl" />
+        <div className="grid grid-cols-2 gap-3">
+          <div className="skeleton-shimmer h-14 rounded-lg" />
+          <div className="skeleton-shimmer h-14 rounded-lg" />
+        </div>
+      </div>
+    );
   }
   if (error && !portfolio) {
     return <div className="flex items-center justify-center h-32 text-accent-red text-xs">{error}</div>;
@@ -153,7 +167,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
             </div>
           ) : (
             <>
-              <div className="text-xl font-bold text-accent-green font-mono tracking-tight">{portfolio.balance.toFixed(2)} PLN</div>
+              <AnimatedNumber value={portfolio.balance} decimals={2} suffix=" PLN" className="text-xl font-bold text-accent-green font-mono tracking-tight" />
               <div className="text-[10px] text-th-dim mt-1">Initial: {portfolio.initial_balance.toFixed(2)}</div>
             </>
           )}
@@ -162,7 +176,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
         {/* Equity */}
         <div className="stat-item">
           <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1.5">Equity</div>
-          <div className="text-xl font-bold text-accent-blue font-mono tracking-tight">{portfolio.equity.toFixed(2)} PLN</div>
+          <AnimatedNumber value={portfolio.equity} decimals={2} suffix=" PLN" className="text-xl font-bold text-accent-blue font-mono tracking-tight" />
         </div>
       </div>
 
@@ -170,9 +184,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
       <div className={`rounded-xl p-4 border ${pnlPositive ? 'bg-accent-green/5 border-accent-green/15' : 'bg-accent-red/5 border-accent-red/15'}`}>
         <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1.5">P&L</div>
         <div className="flex items-end justify-between">
-          <div className={`text-2xl font-bold ${pnlColor} font-mono tracking-tight`}>
-            {pnlPositive ? '+' : ''}{portfolio.pnl.toFixed(2)}
-          </div>
+          <AnimatedNumber value={portfolio.pnl} decimals={2} prefix={pnlPositive ? '+' : ''} className={`text-2xl font-bold ${pnlColor} font-mono tracking-tight`} />
           <div className={`text-sm font-semibold ${pnlColor} font-mono`}>{pnlPositive ? '+' : ''}{returnPct}%</div>
         </div>
       </div>

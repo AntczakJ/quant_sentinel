@@ -5,7 +5,7 @@
  * sorting by date/P&L; pagination limit.
  */
 
-import { useState, useMemo, memo, useCallback } from 'react';
+import { useState, useMemo, memo, useCallback, useDeferredValue } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Filter, ArrowUpDown, X, Search, ExternalLink } from 'lucide-react';
 import { useTradingStore } from '../../store/tradingStore';
@@ -152,6 +152,7 @@ export const TradeHistory = memo(function TradeHistory() {
   const [sessionFilter, setSessionFilter] = useState<string>('ALL');
   const [gradeFilter, setGradeFilter] = useState<string>('ALL');
   const [patternSearch, setPatternSearch] = useState('');
+  const deferredPatternSearch = useDeferredValue(patternSearch);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [showFilters, setShowFilters] = useState(false);
@@ -232,9 +233,9 @@ export const TradeHistory = memo(function TradeHistory() {
       result = result.filter(t => t.grade === gradeFilter);
     }
 
-    // Pattern search
-    if (patternSearch) {
-      const q = patternSearch.toLowerCase();
+    // Pattern search (deferred for smooth typing)
+    if (deferredPatternSearch) {
+      const q = deferredPatternSearch.toLowerCase();
       result = result.filter(t => t.pattern?.toLowerCase().includes(q));
     }
 
@@ -252,12 +253,22 @@ export const TradeHistory = memo(function TradeHistory() {
     });
 
     return result.slice(0, 50);
-  }, [trades, resultFilter, dirFilter, sessionFilter, gradeFilter, patternSearch, sortField, sortDir]);
+  }, [trades, resultFilter, dirFilter, sessionFilter, gradeFilter, deferredPatternSearch, sortField, sortDir]);
 
   const winRate = stats.total > 0 ? (stats.wins / stats.total) * 100 : 0;
 
   if (isLoading && trades.length === 0) {
-    return <div className="flex items-center justify-center h-40 text-th-secondary"><span>Loading trades...</span></div>;
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-3 gap-2">
+          {[1,2,3].map(i => <div key={i} className="skeleton-shimmer h-14 rounded-lg" />)}
+        </div>
+        <div className="skeleton-shimmer h-6 rounded-full" />
+        <div className="space-y-2">
+          {[1,2,3,4].map(i => <div key={i} className="skeleton-shimmer h-20 rounded-lg" />)}
+        </div>
+      </div>
+    );
   }
 
   return (
