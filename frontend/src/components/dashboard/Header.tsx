@@ -4,11 +4,12 @@
 
 import { useEffect, useState, memo } from 'react';
 import { NavLink } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon } from 'lucide-react';
+import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon, Newspaper } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
 import { useTradingStore } from '../../store/tradingStore';
 import { ScrollProgressBar } from './ScrollProgressBar';
 import { ConnectionStatus } from '../ui/ConnectionStatus';
+import { RiskKillSwitch } from './RiskKillSwitch';
 import { analysisAPI } from '../../api/client';
 import { prefetchRoute } from '../../hooks/usePrefetch';
 
@@ -63,6 +64,7 @@ const NAV_ITEMS = [
   { to: '/analysis', label: 'Analysis', icon: LineChart },
   { to: '/trades',   label: 'Trades',   icon: Repeat },
   { to: '/models',   label: 'Models',   icon: Brain },
+  { to: '/news',     label: 'News',     icon: Newspaper },
   { to: '/agent',    label: 'Agent',    icon: Bot },
 ] as const;
 
@@ -165,6 +167,9 @@ export function Header() {
 
         {/* Session badge */}
         {sessionInfo && <SessionBadge session={sessionInfo} />}
+
+        {/* Risk Kill Switch */}
+        <RiskKillSwitch />
 
         {/* Theme toggle */}
         <button

@@ -2,7 +2,7 @@
  * pages/TradesPage.tsx — Trade History + Portfolio + Risk Metrics
  */
 
-import { TradeHistory, PortfolioStats, SignalHistory, RiskMetrics, ExecutionQuality } from '../components/dashboard';
+import { TradeHistory, PortfolioStats, SignalHistory, RiskMetrics, ExecutionQuality, EquityCurve } from '../components/dashboard';
 
 export default function TradesPage() {
   return (
@@ -20,6 +20,15 @@ export default function TradesPage() {
           </h2>
           <TradeHistory />
         </div>
+      </div>
+
+      {/* Equity Curve */}
+      <div className="card">
+        <h2 className="section-title mb-3">
+          Equity Curve
+          <span className="text-xs text-th-muted font-normal ml-2">— portfolio history + drawdown</span>
+        </h2>
+        <EquityCurve />
       </div>
 
       {/* Risk Metrics */}

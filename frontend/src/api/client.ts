@@ -518,5 +518,113 @@ export const modelMonitorAPI = {
   },
 };
 
+// News & Economic Calendar
+export const newsAPI = {
+  /** Latest news + economic calendar from /api/analysis/news */
+  getNews: async () => {
+    const response = await client.get<{
+      timestamp: string;
+      news: Array<{
+        title: string;
+        source?: string;
+        published?: string;
+        sentiment?: string;
+        impact?: string;
+        url?: string;
+      }>;
+      economic_calendar: Array<{
+        event: string;
+        date: string;
+        time?: string;
+        currency?: string;
+        impact?: string;
+        forecast?: string;
+        previous?: string;
+        actual?: string;
+      }>;
+    }>('/analysis/news');
+    return response.data;
+  },
+
+  /** AI-based market sentiment */
+  getSentiment: async () => {
+    const response = await client.get<{
+      sentiment: string;
+      score?: number;
+      summary?: string;
+    }>('/analysis/sentiment');
+    return response.data;
+  },
+};
+
+// Backtesting
+export const backtestAPI = {
+  /** Run model backtest — POST /api/training/backtest */
+  run: async (params: {
+    model?: string;
+    period?: string;
+    interval?: string;
+    include_monte_carlo?: boolean;
+    spread_pct?: number;
+  } = {}) => {
+    const response = await client.post<{
+      data_bars: number;
+      period: string;
+      interval: string;
+      xgb?: Record<string, number | string>;
+      lstm?: Record<string, number | string>;
+      dqn?: Record<string, number | string>;
+      ensemble?: Record<string, number | string>;
+      monte_carlo?: { risk_distribution?: number[]; VaR_95?: number; CVaR_95?: number; error?: string };
+    }>('/training/backtest', null, {
+      params: {
+        model: params.model ?? 'all',
+        period: params.period ?? '3mo',
+        interval: params.interval ?? '15m',
+        include_monte_carlo: params.include_monte_carlo ?? false,
+        spread_pct: params.spread_pct ?? 0.0003,
+      },
+      timeout: 120_000, // backtests can take a while
+    });
+    return response.data;
+  },
+};
+
+// Risk Management (Kill Switch)
+export const riskAPI = {
+  /** Current risk manager state */
+  getStatus: async () => {
+    const response = await client.get<{
+      halted: boolean;
+      halt_reason?: string;
+      daily_loss: number;
+      daily_loss_limit: number;
+      consecutive_losses: number;
+      max_consecutive_losses: number;
+      cooldown_until?: string;
+      kelly_risk?: number;
+      session?: string;
+      spread?: number;
+    }>('/risk/status');
+    return response.data;
+  },
+
+  /** Emergency halt — block new trades */
+  halt: async (reason: string = 'Manual halt via UI') => {
+    const response = await client.post<{ success: boolean; message: string; halted: boolean }>(
+      '/risk/halt', null, { params: { reason } }
+    );
+    return response.data;
+  },
+
+  /** Resume trading after halt */
+  resume: async () => {
+    const response = await client.post<{ success: boolean; message: string; halted: boolean }>(
+      '/risk/resume'
+    );
+    return response.data;
+  },
+};
+
 export default client;
 

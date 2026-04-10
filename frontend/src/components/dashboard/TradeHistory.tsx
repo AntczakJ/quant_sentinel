@@ -1,10 +1,12 @@
 /**
- * src/components/dashboard/TradeHistory.tsx - Recent trades history
- * Enhanced with filter tabs, win rate visual, and R:R display.
+ * src/components/dashboard/TradeHistory.tsx - Trade Journal with advanced filters
+ *
+ * Features: filter by result, direction, session, grade, pattern;
+ * sorting by date/P&L; pagination limit.
  */
 
-import { useState, useMemo, memo } from 'react';
-import { TrendingUp, TrendingDown, Filter } from 'lucide-react';
+import { useState, useMemo, memo, useCallback } from 'react';
+import { TrendingUp, TrendingDown, Filter, ArrowUpDown, X, Search } from 'lucide-react';
 import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { analysisAPI } from '../../api/client';
 
@@ -20,6 +22,8 @@ interface Trade {
   result: string;
   timeframe?: string | null;
   pattern?: string | null;
+  grade?: string | null;
+  session?: string | null;
 }
 
 interface TradesResponse {
@@ -29,23 +33,24 @@ interface TradesResponse {
   losses: number;
 }
 
-type FilterTab = 'ALL' | 'WIN' | 'LOSS' | 'PENDING';
+type ResultFilter = 'ALL' | 'WIN' | 'LOSS' | 'PENDING';
+type DirectionFilter = 'ALL' | 'LONG' | 'SHORT';
+type SortField = 'date' | 'pnl';
+type SortDir = 'asc' | 'desc';
 
-// Helper to safely parse timestamps from SQLite (e.g. "2025-04-05 12:30:00")
 function safeParseDate(raw: string | null | undefined): Date | null {
-  if (!raw) {return null;}
+  if (!raw) return null;
   let iso = raw.trim();
   iso = iso.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
-  if (!/[Zz+\-]/.test(iso.slice(-6))) {iso += 'Z';}
+  if (!/[Zz+\-]/.test(iso.slice(-6))) iso += 'Z';
   const d = new Date(iso);
   return isNaN(d.getTime()) ? null : d;
 }
 
-// Helper to format price
 function formatPrice(value: string | number | undefined): string {
-  if (!value) { return '$0.00'; }
+  if (!value) return '$0.00';
   if (typeof value === 'string') {
-    if (value.startsWith('$')) { return value; }
+    if (value.startsWith('$')) return value;
     const num = parseFloat(value);
     return !isNaN(num) ? `$${num.toFixed(2)}` : value;
   }
@@ -58,12 +63,53 @@ function parseNumericPrice(val: string | number | undefined): number {
   return parseFloat(val.replace('$', '')) || 0;
 }
 
+function parseProfit(val: string | number | undefined): number {
+  if (!val) return 0;
+  if (typeof val === 'number') return val;
+  return parseFloat(val.replace(/[$,]/g, '')) || 0;
+}
+
+/** Detect session from timestamp */
+function detectSession(ts: string | null | undefined): string {
+  const d = safeParseDate(ts);
+  if (!d) return 'unknown';
+  const h = d.getUTCHours();
+  if (h >= 0 && h < 7) return 'asian';
+  if (h >= 7 && h < 13) return 'london';
+  if (h >= 13 && h < 22) return 'new_york';
+  return 'off_hours';
+}
+
+const SESSION_LABELS: Record<string, string> = {
+  asian: 'Asian', london: 'London', new_york: 'NY', off_hours: 'Off', unknown: '?',
+};
+
+const SESSION_COLORS: Record<string, string> = {
+  asian: 'bg-accent-orange/12 text-accent-orange border-accent-orange/20',
+  london: 'bg-accent-blue/12 text-accent-blue border-accent-blue/20',
+  new_york: 'bg-accent-green/12 text-accent-green border-accent-green/20',
+  off_hours: 'bg-dark-secondary text-th-dim border-dark-secondary',
+  unknown: 'bg-dark-secondary text-th-dim border-dark-secondary',
+};
+
+const GRADE_COLORS: Record<string, string> = {
+  'A+': 'text-accent-green', 'A': 'text-accent-green',
+  'B': 'text-accent-blue', 'C': 'text-accent-orange', 'D': 'text-accent-red',
+};
+
 export const TradeHistory = memo(function TradeHistory() {
-  const [filter, setFilter] = useState<FilterTab>('ALL');
+  const [resultFilter, setResultFilter] = useState<ResultFilter>('ALL');
+  const [dirFilter, setDirFilter] = useState<DirectionFilter>('ALL');
+  const [sessionFilter, setSessionFilter] = useState<string>('ALL');
+  const [gradeFilter, setGradeFilter] = useState<string>('ALL');
+  const [patternSearch, setPatternSearch] = useState('');
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [showFilters, setShowFilters] = useState(false);
 
   const { data, isLoading } = usePollingQuery<TradesResponse>(
     'trade-history',
-    () => analysisAPI.getRecentTrades(30),
+    () => analysisAPI.getRecentTrades(100), // fetch more for client-side filtering
     30_000,
   );
 
@@ -74,23 +120,95 @@ export const TradeHistory = memo(function TradeHistory() {
     losses: data?.losses ?? 0,
   }), [data]);
 
+  // Unique values for filter dropdowns
+  const uniqueGrades = useMemo(() => {
+    const grades = new Set<string>();
+    for (const t of trades) {
+      if (t.grade) grades.add(t.grade);
+    }
+    return [...grades].sort();
+  }, [trades]);
+
+  const uniquePatterns = useMemo(() => {
+    const patterns = new Set<string>();
+    for (const t of trades) {
+      if (t.pattern) patterns.add(t.pattern);
+    }
+    return [...patterns].sort();
+  }, [trades]);
+
+  const hasActiveFilters = resultFilter !== 'ALL' || dirFilter !== 'ALL' ||
+    sessionFilter !== 'ALL' || gradeFilter !== 'ALL' || patternSearch !== '';
+
+  const clearFilters = useCallback(() => {
+    setResultFilter('ALL');
+    setDirFilter('ALL');
+    setSessionFilter('ALL');
+    setGradeFilter('ALL');
+    setPatternSearch('');
+  }, []);
+
+  const toggleSort = useCallback((field: SortField) => {
+    if (sortField === field) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setSortField(field); setSortDir('desc'); }
+  }, [sortField]);
+
   const filteredTrades = useMemo(() => {
-    if (filter === 'ALL') return trades.slice(0, 15);
-    return trades.filter(t => {
-      if (filter === 'WIN') return t.result?.includes('WIN');
-      if (filter === 'LOSS') return t.result?.includes('LOSS');
-      return t.result?.includes('PENDING');
-    }).slice(0, 15);
-  }, [trades, filter]);
+    let result = [...trades];
+
+    // Result filter
+    if (resultFilter !== 'ALL') {
+      result = result.filter(t => {
+        if (resultFilter === 'WIN') return t.result?.includes('WIN');
+        if (resultFilter === 'LOSS') return t.result?.includes('LOSS');
+        return t.result?.includes('PENDING');
+      });
+    }
+
+    // Direction filter
+    if (dirFilter !== 'ALL') {
+      result = result.filter(t => t.direction === dirFilter);
+    }
+
+    // Session filter
+    if (sessionFilter !== 'ALL') {
+      result = result.filter(t => {
+        const sess = t.session ?? detectSession(t.timestamp);
+        return sess === sessionFilter;
+      });
+    }
+
+    // Grade filter
+    if (gradeFilter !== 'ALL') {
+      result = result.filter(t => t.grade === gradeFilter);
+    }
+
+    // Pattern search
+    if (patternSearch) {
+      const q = patternSearch.toLowerCase();
+      result = result.filter(t => t.pattern?.toLowerCase().includes(q));
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'date') {
+        const da = safeParseDate(a.timestamp)?.getTime() ?? 0;
+        const db = safeParseDate(b.timestamp)?.getTime() ?? 0;
+        cmp = da - db;
+      } else {
+        cmp = parseProfit(a.profit) - parseProfit(b.profit);
+      }
+      return sortDir === 'desc' ? -cmp : cmp;
+    });
+
+    return result.slice(0, 50);
+  }, [trades, resultFilter, dirFilter, sessionFilter, gradeFilter, patternSearch, sortField, sortDir]);
 
   const winRate = stats.total > 0 ? (stats.wins / stats.total) * 100 : 0;
 
   if (isLoading && trades.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-40 text-th-secondary">
-        <span>Loading trades...</span>
-      </div>
-    );
+    return <div className="flex items-center justify-center h-40 text-th-secondary"><span>Loading trades...</span></div>;
   }
 
   return (
@@ -131,58 +249,162 @@ export const TradeHistory = memo(function TradeHistory() {
         </div>
       )}
 
-      {/* Filter Tabs */}
-      <div className="flex items-center gap-1">
-        <Filter size={10} className="text-th-muted" />
-        {(['ALL', 'WIN', 'LOSS', 'PENDING'] as FilterTab[]).map(tab => (
+      {/* Filter bar */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-1 flex-wrap">
+          {/* Result tabs */}
+          <Filter size={10} className="text-th-muted" />
+          {(['ALL', 'WIN', 'LOSS', 'PENDING'] as ResultFilter[]).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setResultFilter(tab)}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                resultFilter === tab
+                  ? tab === 'WIN' ? 'bg-accent-green/30 text-accent-green border border-accent-green/40'
+                  : tab === 'LOSS' ? 'bg-accent-red/30 text-accent-red border border-accent-red/40'
+                  : 'bg-accent-blue/30 text-accent-blue border border-accent-blue/40'
+                  : 'bg-dark-secondary text-th-muted border border-transparent hover:text-th-secondary'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+
+          <div className="w-px h-4 bg-dark-secondary mx-1" />
+
+          {/* Direction toggle */}
+          {(['ALL', 'LONG', 'SHORT'] as DirectionFilter[]).map(d => (
+            <button
+              key={d}
+              onClick={() => setDirFilter(d)}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                dirFilter === d
+                  ? d === 'LONG' ? 'bg-accent-green/20 text-accent-green border border-accent-green/30'
+                  : d === 'SHORT' ? 'bg-accent-red/20 text-accent-red border border-accent-red/30'
+                  : 'bg-accent-blue/20 text-accent-blue border border-accent-blue/30'
+                  : 'bg-dark-secondary text-th-muted border border-transparent hover:text-th-secondary'
+              }`}
+            >
+              {d === 'ALL' ? 'Both' : d}
+            </button>
+          ))}
+
+          <div className="flex-1" />
+
+          {/* Advanced filters toggle */}
           <button
-            key={tab}
-            onClick={() => setFilter(tab)}
-            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
-              filter === tab
-                ? tab === 'WIN' ? 'bg-accent-green/30 text-accent-green border border-accent-green/40'
-                : tab === 'LOSS' ? 'bg-accent-red/30 text-accent-red border border-accent-red/40'
-                : 'bg-accent-blue/30 text-accent-blue border border-accent-blue/40'
+            onClick={() => setShowFilters(v => !v)}
+            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors flex items-center gap-1 ${
+              showFilters || hasActiveFilters
+                ? 'bg-accent-purple/20 text-accent-purple border border-accent-purple/30'
                 : 'bg-dark-secondary text-th-muted border border-transparent hover:text-th-secondary'
             }`}
           >
-            {tab}
+            <Search size={9} />
+            Filters
+            {hasActiveFilters && (
+              <button onClick={(e) => { e.stopPropagation(); clearFilters(); }}
+                className="ml-1 hover:text-accent-red"><X size={8} /></button>
+            )}
           </button>
-        ))}
+
+          {/* Sort buttons */}
+          <button onClick={() => toggleSort('date')}
+            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors flex items-center gap-0.5 ${
+              sortField === 'date' ? 'bg-accent-blue/20 text-accent-blue border border-accent-blue/30'
+                : 'bg-dark-secondary text-th-muted border border-transparent hover:text-th-secondary'
+            }`}>
+            <ArrowUpDown size={8} />
+            Data {sortField === 'date' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+          </button>
+          <button onClick={() => toggleSort('pnl')}
+            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors flex items-center gap-0.5 ${
+              sortField === 'pnl' ? 'bg-accent-blue/20 text-accent-blue border border-accent-blue/30'
+                : 'bg-dark-secondary text-th-muted border border-transparent hover:text-th-secondary'
+            }`}>
+            <ArrowUpDown size={8} />
+            P&L {sortField === 'pnl' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+          </button>
+        </div>
+
+        {/* Advanced filter row */}
+        {showFilters && (
+          <div className="flex items-center gap-2 flex-wrap text-[10px]">
+            {/* Session */}
+            <div className="flex items-center gap-1">
+              <span className="text-th-muted">Session:</span>
+              <select value={sessionFilter} onChange={e => setSessionFilter(e.target.value)}
+                className="bg-dark-tertiary border border-dark-secondary rounded px-1.5 py-0.5 text-[10px] text-th-secondary outline-none">
+                <option value="ALL">All</option>
+                <option value="asian">Asian</option>
+                <option value="london">London</option>
+                <option value="new_york">New York</option>
+                <option value="off_hours">Off-Hours</option>
+              </select>
+            </div>
+
+            {/* Grade */}
+            {uniqueGrades.length > 0 && (
+              <div className="flex items-center gap-1">
+                <span className="text-th-muted">Grade:</span>
+                <select value={gradeFilter} onChange={e => setGradeFilter(e.target.value)}
+                  className="bg-dark-tertiary border border-dark-secondary rounded px-1.5 py-0.5 text-[10px] text-th-secondary outline-none">
+                  <option value="ALL">All</option>
+                  {uniqueGrades.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* Pattern search */}
+            {uniquePatterns.length > 0 && (
+              <div className="flex items-center gap-1">
+                <span className="text-th-muted">Pattern:</span>
+                <input
+                  type="text"
+                  value={patternSearch}
+                  onChange={e => setPatternSearch(e.target.value)}
+                  placeholder="Szukaj..."
+                  className="bg-dark-tertiary border border-dark-secondary rounded px-1.5 py-0.5 text-[10px] text-th-secondary outline-none w-24"
+                />
+              </div>
+            )}
+
+            {/* Matched count */}
+            <span className="text-th-dim ml-auto">{filteredTrades.length} wynikow</span>
+          </div>
+        )}
       </div>
 
       {/* Trades List */}
       <div className="space-y-2 max-h-[480px] overflow-y-auto pr-0.5 scrollbar-thin scrollbar-thumb-dark-secondary">
         {filteredTrades.length === 0 ? (
           <div className="text-center text-th-secondary text-xs py-4">
-            {filter === 'ALL' ? 'Brak transakcji' : `Brak transakcji: ${filter}`}
+            {hasActiveFilters ? 'Brak transakcji pasujacych do filtrow' : 'Brak transakcji'}
           </div>
         ) : (
           filteredTrades.map((trade) => {
             const isWin = trade.result?.includes('WIN');
             const isLoss = trade.result?.includes('LOSS');
-
-            // Calculate R:R ratio
             const entry = parseNumericPrice(trade.entry);
             const sl = parseNumericPrice(trade.sl);
             const tp = parseNumericPrice(trade.tp);
             const risk = Math.abs(entry - sl);
             const reward = Math.abs(tp - entry);
             const rr = risk > 0 ? (reward / risk) : 0;
+            const session = trade.session ?? detectSession(trade.timestamp);
+            const sessStyle = SESSION_COLORS[session] ?? SESSION_COLORS.unknown;
 
             return (
               <div
                 key={trade.id}
                 className={`border rounded p-2 text-xs ${
-                  isWin
-                    ? 'bg-accent-green/5 border-accent-green/30'
-                    : isLoss
-                    ? 'bg-accent-red/5 border-accent-red/30'
-                    : 'bg-accent-blue/5 border-accent-blue/30'
+                  isWin ? 'bg-accent-green/5 border-accent-green/30'
+                  : isLoss ? 'bg-accent-red/5 border-accent-red/30'
+                  : 'bg-accent-blue/5 border-accent-blue/30'
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <span>
                       {trade.direction === 'LONG' ? (
                         <TrendingUp size={14} className="text-accent-green" />
@@ -192,30 +414,26 @@ export const TradeHistory = memo(function TradeHistory() {
                     </span>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="font-bold">
-                          {trade.direction === 'LONG' ? 'LONG' : 'SHORT'}
-                        </span>
+                        <span className="font-bold">{trade.direction}</span>
                         {trade.timeframe && (
                           <span className="px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-accent-blue/15 text-accent-blue border border-accent-blue/20">
                             {trade.timeframe}
                           </span>
                         )}
+                        {trade.grade && (
+                          <span className={`text-[9px] font-bold ${GRADE_COLORS[trade.grade] ?? 'text-th-muted'}`}>
+                            {trade.grade}
+                          </span>
+                        )}
+                        <span className={`px-1 py-0.5 rounded text-[8px] font-medium border ${sessStyle}`}>
+                          {SESSION_LABELS[session] ?? session}
+                        </span>
                       </div>
-                      <div className="text-th-muted">
-                        Entry: {formatPrice(trade.entry)}
-                      </div>
+                      <div className="text-th-muted">Entry: {formatPrice(trade.entry)}</div>
                     </div>
                   </div>
                   <div className="text-right">
-                    <span
-                      className={`font-bold ${
-                        isWin
-                          ? 'text-accent-green'
-                          : isLoss
-                          ? 'text-accent-red'
-                          : 'text-accent-blue'
-                      }`}
-                    >
+                    <span className={`font-bold ${isWin ? 'text-accent-green' : isLoss ? 'text-accent-red' : 'text-accent-blue'}`}>
                       {trade.result}
                     </span>
                     {trade.profit != null && (
@@ -237,17 +455,18 @@ export const TradeHistory = memo(function TradeHistory() {
                   )}
                 </div>
 
-                {/* Timestamp */}
-                <div className="text-xs text-th-dim mt-1">
-                  {(() => {
-                    const d = safeParseDate(trade.timestamp);
-                    return d
-                      ? d.toLocaleString('pl-PL', {
-                          year: 'numeric', month: '2-digit', day: '2-digit',
-                          hour: '2-digit', minute: '2-digit', second: '2-digit',
-                        })
-                      : '—';
-                  })()}
+                {/* Pattern + Timestamp */}
+                <div className="flex items-center justify-between mt-1 text-xs text-th-dim">
+                  {trade.pattern && <span className="truncate max-w-[60%]">{trade.pattern}</span>}
+                  <span className="ml-auto">
+                    {(() => {
+                      const d = safeParseDate(trade.timestamp);
+                      return d ? d.toLocaleString('pl-PL', {
+                        year: 'numeric', month: '2-digit', day: '2-digit',
+                        hour: '2-digit', minute: '2-digit',
+                      }) : '—';
+                    })()}
+                  </span>
                 </div>
               </div>
             );

@@ -21,6 +21,7 @@ const ChartPage    = lazy(() => import('./pages/ChartPage'));
 const AnalysisPage = lazy(() => import('./pages/AnalysisPage'));
 const TradesPage   = lazy(() => import('./pages/TradesPage'));
 const ModelsPage   = lazy(() => import('./pages/ModelsPage'));
+const NewsPage     = lazy(() => import('./pages/NewsPage'));
 const AgentPage    = lazy(() => import('./pages/AgentPage'));
 
 const queryClient = new QueryClient({
@@ -121,6 +122,11 @@ function AppContent() {
         <Route path="models" element={
           <ErrorBoundary fallbackTitle="Błąd ładowania modeli">
             <Suspense fallback={<PageLoader />}><ModelsPage /></Suspense>
+          </ErrorBoundary>
+        } />
+        <Route path="news" element={
+          <ErrorBoundary fallbackTitle="Błąd ładowania newsów">
+            <Suspense fallback={<PageLoader />}><NewsPage /></Suspense>
           </ErrorBoundary>
         } />
         <Route path="agent" element={

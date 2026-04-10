@@ -10,6 +10,7 @@ const routes = [
   () => import('../pages/AnalysisPage'),
   () => import('../pages/TradesPage'),
   () => import('../pages/ModelsPage'),
+  () => import('../pages/NewsPage'),
   () => import('../pages/AgentPage'),
 ];
 
