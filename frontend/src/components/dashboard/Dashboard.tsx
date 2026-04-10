@@ -10,6 +10,8 @@ import { MobileNav } from '../layout/MobileNav';
 import { OfflineBanner } from '../ui/OfflineBanner';
 import { LoadingBar } from '../ui/LoadingBar';
 import { CommandPalette } from '../ui/CommandPalette';
+import { KeyboardHint } from '../ui/KeyboardHint';
+import { QuickStatsBar } from './QuickStatsBar';
 
 export function Dashboard() {
   const location = useLocation();
@@ -28,11 +30,13 @@ export function Dashboard() {
       <LoadingBar />
       <OfflineBanner />
       <Header />
-      <main id="main-content" key={location.pathname} role="main" aria-label="Page content" className="flex-1 w-full px-2 py-2 md:px-4 md:py-4 lg:px-6 lg:py-6 pb-20 md:pb-4 page-transition">
+      <main id="main-content" key={location.pathname} role="main" aria-label="Page content" className="flex-1 w-full px-2 py-2 md:px-4 md:py-4 lg:px-6 lg:py-6 pb-20 md:pb-8 page-transition">
         <Outlet />
       </main>
+      <QuickStatsBar />
       <MobileNav />
       <CommandPalette />
+      <KeyboardHint />
     </div>
   );
 }
