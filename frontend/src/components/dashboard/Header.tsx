@@ -42,9 +42,37 @@ const SESSION_LABELS: Record<string, string> = {
   weekend:   'Weekend',
 };
 
+/** Session end hours (UTC) */
+const SESSION_END_H: Record<string, number> = {
+  asian: 8, london: 16, overlap: 16, new_york: 22, off_hours: 0, weekend: 0,
+};
+
+function useSessionCountdown(session: string, _utcHour: number): string {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick(v => v + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const endH = SESSION_END_H[session];
+  if (!endH || session === 'off_hours' || session === 'weekend') return '';
+
+  const now = new Date();
+  const end = new Date(now);
+  end.setUTCHours(endH, 0, 0, 0);
+  if (end.getTime() <= now.getTime()) end.setUTCDate(end.getUTCDate() + 1);
+
+  const diffMin = Math.floor((end.getTime() - now.getTime()) / 60000);
+  if (diffMin <= 0) return '';
+  if (diffMin < 60) return `${diffMin}m`;
+  return `${Math.floor(diffMin / 60)}h${diffMin % 60 > 0 ? ` ${diffMin % 60}m` : ''}`;
+}
+
 const SessionBadge = memo(function SessionBadge({ session }: { session: SessionInfo }) {
   const colors = SESSION_COLORS[session.session] ?? SESSION_COLORS['off_hours'];
   const label = SESSION_LABELS[session.session] ?? session.session;
+  const countdown = useSessionCountdown(session.session, session.utc_hour);
+
   return (
     <div className={`hidden md:flex items-center gap-1.5 px-2 py-1 rounded border text-[11px] font-medium ${colors}`}>
       {session.is_killzone && (
@@ -56,6 +84,7 @@ const SessionBadge = memo(function SessionBadge({ session }: { session: SessionI
       {session.is_killzone && <Zap size={10} />}
       <span>{label}</span>
       {session.is_killzone && <span className="opacity-75">KZ</span>}
+      {countdown && <span className="opacity-60 text-[9px] font-mono">{countdown}</span>}
     </div>
   );
 });

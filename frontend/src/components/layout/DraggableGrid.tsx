@@ -15,7 +15,7 @@ const WidthProvider = (ReactGridLayout as any).WidthProvider ?? ((c: any) => c);
 
 interface Layout { i: string; x: number; y: number; w: number; h: number; minW?: number; minH?: number }
 type Layouts = Record<string, Layout[]>;
-import { Lock, Unlock, RotateCcw, LayoutGrid } from 'lucide-react';
+import { Lock, Unlock, RotateCcw, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react';
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary';
 import 'react-grid-layout/css/styles.css';
 
@@ -103,6 +103,21 @@ export const DraggableGrid = memo(function DraggableGrid({
   const [layouts, setLayouts] = useState<Layouts>(() => loadLayout(pageKey) ?? defaultLayouts);
   const [locked, setLocked] = useState(true);
   const [showPresets, setShowPresets] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_PREFIX + pageKey + ':collapsed');
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  });
+
+  const toggleCollapse = useCallback((id: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      localStorage.setItem(STORAGE_PREFIX + pageKey + ':collapsed', JSON.stringify([...next]));
+      return next;
+    });
+  }, [pageKey]);
 
   const handleLayoutChange = useCallback((_layout: Layout[], allLayouts: Layouts) => {
     setLayouts(allLayouts);
@@ -187,29 +202,43 @@ export const DraggableGrid = memo(function DraggableGrid({
         margin={[16, 16]}
         containerPadding={[0, 0]}
       >
-        {widgets.map(w => (
-          <div key={w.id} className="overflow-hidden">
-            <div className="card h-full flex flex-col">
-              {/* Drag handle header */}
-              <div className={`drag-handle flex items-center justify-between mb-2 ${!locked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
-                <h2 className="section-title">{w.title}</h2>
-                {!locked && (
-                  <div className="flex gap-0.5">
-                    <div className="w-1 h-1 rounded-full bg-th-muted" />
-                    <div className="w-1 h-1 rounded-full bg-th-muted" />
-                    <div className="w-1 h-1 rounded-full bg-th-muted" />
+        {widgets.map(w => {
+          const isCollapsed = collapsed.has(w.id);
+          return (
+            <div key={w.id} className="overflow-hidden">
+              <div className="card h-full flex flex-col">
+                {/* Drag handle header */}
+                <div className={`drag-handle flex items-center justify-between ${isCollapsed ? '' : 'mb-2'} ${!locked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+                  <h2 className="section-title">{w.title}</h2>
+                  <div className="flex items-center gap-1">
+                    {!locked && (
+                      <div className="flex gap-0.5 mr-1">
+                        <div className="w-1 h-1 rounded-full bg-th-muted" />
+                        <div className="w-1 h-1 rounded-full bg-th-muted" />
+                        <div className="w-1 h-1 rounded-full bg-th-muted" />
+                      </div>
+                    )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleCollapse(w.id); }}
+                      className="p-0.5 rounded text-th-dim hover:text-th-muted transition-colors"
+                      title={isCollapsed ? 'Rozwin' : 'Zwin'}
+                    >
+                      {isCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                    </button>
+                  </div>
+                </div>
+                {/* Widget content — collapsible + error boundary */}
+                {!isCollapsed && (
+                  <div className="flex-1 min-h-0 overflow-auto">
+                    <WidgetErrorBoundary widgetName={w.title}>
+                      {w.content}
+                    </WidgetErrorBoundary>
                   </div>
                 )}
               </div>
-              {/* Widget content — error boundary per widget */}
-              <div className="flex-1 min-h-0 overflow-auto">
-                <WidgetErrorBoundary widgetName={w.title}>
-                  {w.content}
-                </WidgetErrorBoundary>
-              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </ResponsiveGridLayout>
     </div>
   );
