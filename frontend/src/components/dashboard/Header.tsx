@@ -4,12 +4,13 @@
 
 import { useEffect, useState, memo } from 'react';
 import { NavLink } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon, Newspaper } from 'lucide-react';
+import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon, Newspaper, Volume2, VolumeX } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
 import { useTradingStore } from '../../store/tradingStore';
 import { ScrollProgressBar } from './ScrollProgressBar';
 import { ConnectionStatus } from '../ui/ConnectionStatus';
 import { RiskKillSwitch } from './RiskKillSwitch';
+import { useSoundAlerts } from '../../hooks/useSoundAlerts';
 import { analysisAPI } from '../../api/client';
 import { prefetchRoute } from '../../hooks/usePrefetch';
 
@@ -70,6 +71,7 @@ const NAV_ITEMS = [
 
 export function Header() {
   const { toggle: toggleTheme, isDark } = useTheme();
+  const { enabled: soundEnabled, toggle: toggleSound } = useSoundAlerts();
   const { ticker, apiConnected } = useTradingStore();
   const [prevPrice, setPrevPrice] = useState<number | null>(null);
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
@@ -170,6 +172,16 @@ export function Header() {
 
         {/* Risk Kill Switch */}
         <RiskKillSwitch />
+
+        {/* Sound toggle */}
+        <button
+          onClick={toggleSound}
+          className="p-1.5 rounded-md transition-colors hover:bg-dark-secondary"
+          style={{ color: soundEnabled ? 'var(--color-accent-green)' : 'var(--color-text-muted)' }}
+          title={soundEnabled ? 'Wylacz dzwieki' : 'Wlacz dzwieki alertow'}
+        >
+          {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+        </button>
 
         {/* Theme toggle */}
         <button
