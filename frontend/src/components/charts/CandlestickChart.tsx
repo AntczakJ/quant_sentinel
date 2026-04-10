@@ -33,7 +33,7 @@ import {
   type UTCTimestamp,
   type MouseEventParams,
 } from 'lightweight-charts';
-import { RefreshCw, AlertCircle, Layers, Trash2, Clock } from 'lucide-react';
+import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2 } from 'lucide-react';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { useTradingStore } from '../../store/tradingStore';
 import { marketAPI, signalsAPI } from '../../api/client';
@@ -49,6 +49,9 @@ import {
 import type { Drawing, DrawingTool, DrawingStyle } from './drawings';
 import { SessionOverlay } from './SessionOverlay';
 import { useIndicatorWorker } from '../../hooks/useIndicatorWorker';
+import { usePriceAlerts } from '../../hooks/usePriceAlerts';
+import type { PriceAlert } from '../../hooks/usePriceAlerts';
+import { useKeyboardShortcuts, SHORTCUT_LIST } from '../../hooks/useKeyboardShortcuts';
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /*  IndexedDB candle cache — instant chart render on reload (< 5 ms)         */
@@ -133,24 +136,76 @@ const COLORS = getChartColors();
 
 interface LegendData {
   o: number; h: number; l: number; c: number; v: number; change: number;
+  // Indicator values at crosshair position
+  ema21?: number | null;
+  bbUpper?: number | null;
+  bbMiddle?: number | null;
+  bbLower?: number | null;
+  rsi?: number | null;
+  macdVal?: number | null;
+  macdSignal?: number | null;
+  macdHist?: number | null;
+  atr?: number | null;
+  stochK?: number | null;
+  stochD?: number | null;
 }
 
-const OHLCVLegend = memo(function OHLCVLegend({ data, interval }: { data: LegendData | null; interval: string }) {
+/** Indicator value chip — colored, compact */
+function IndVal({ label, value, color, decimals = 2 }: { label: string; value: number | null | undefined; color: string; decimals?: number }) {
+  if (value === null || value === undefined) return null;
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <span className="text-[var(--chart-text)] opacity-60">{label}</span>
+      <span className={`font-mono ${color}`}>{value.toFixed(decimals)}</span>
+    </span>
+  );
+}
+
+const OHLCVLegend = memo(function OHLCVLegend({ data, interval, visibleIndicators }: {
+  data: LegendData | null;
+  interval: string;
+  visibleIndicators: { rsi: boolean; macd: boolean; atr: boolean; stoch: boolean };
+}) {
   if (!data) {return null;}
   const up = data.c >= data.o;
   const col = up ? 'text-[#26a69a]' : 'text-[#ef5350]';
   return (
-    <div className="absolute top-1 left-12 z-20 flex items-center gap-2 text-[11px] font-sans pointer-events-none select-none">
-      <span className="text-[var(--color-text-primary)] font-semibold text-[12px]">XAU/USD</span>
-      <span className="text-[var(--chart-text)]">·</span>
-      <span className="text-[var(--chart-text)] font-medium">{interval}</span>
-      <span className="text-[var(--chart-text)] ml-1">O</span><span className={col}>{data.o.toFixed(2)}</span>
-      <span className="text-[var(--chart-text)]">H</span><span className={col}>{data.h.toFixed(2)}</span>
-      <span className="text-[var(--chart-text)]">L</span><span className={col}>{data.l.toFixed(2)}</span>
-      <span className="text-[var(--chart-text)]">C</span><span className={col}>{data.c.toFixed(2)}</span>
-      <span className={`ml-1 ${col} font-medium`}>{data.change >= 0 ? '+' : ''}{data.change.toFixed(2)}%</span>
-      {data.v > 0 && <span className="text-[var(--chart-text)] ml-1">Vol {data.v.toLocaleString()}</span>}
+    <div className="absolute top-1 left-12 z-20 font-sans pointer-events-none select-none space-y-0">
+      {/* Row 1: OHLCV */}
+      <div className="flex items-center gap-2 text-[11px]">
+        <span className="text-[var(--color-text-primary)] font-semibold text-[12px]">XAU/USD</span>
+        <span className="text-[var(--chart-text)]">·</span>
+        <span className="text-[var(--chart-text)] font-medium">{interval}</span>
+        <span className="text-[var(--chart-text)] ml-1">O</span><span className={col}>{data.o.toFixed(2)}</span>
+        <span className="text-[var(--chart-text)]">H</span><span className={col}>{data.h.toFixed(2)}</span>
+        <span className="text-[var(--chart-text)]">L</span><span className={col}>{data.l.toFixed(2)}</span>
+        <span className="text-[var(--chart-text)]">C</span><span className={col}>{data.c.toFixed(2)}</span>
+        <span className={`ml-1 ${col} font-medium`}>{data.change >= 0 ? '+' : ''}{data.change.toFixed(2)}%</span>
+        {data.v > 0 && <span className="text-[var(--chart-text)] ml-1">Vol {data.v.toLocaleString()}</span>}
+      </div>
+      {/* Row 2: Overlay indicators (EMA + BB) */}
+      <div className="flex items-center gap-3 text-[10px]">
+        <IndVal label="EMA(21)" value={data.ema21} color="text-[#f0b90b]" />
+        <IndVal label="BB▲" value={data.bbUpper} color="text-[#2196f3]" />
+        <IndVal label="BB▬" value={data.bbMiddle} color="text-[#2196f3]" />
+        <IndVal label="BB▼" value={data.bbLower} color="text-[#2196f3]" />
+        {visibleIndicators.atr && <IndVal label="ATR(14)" value={data.atr} color="text-[#ff9800]" />}
+      </div>
     </div>
+  );
+});
+
+/** Sub-chart label with indicator value */
+const SubChartLabel = memo(function SubChartLabel({ label, value, color, decimals = 1 }: {
+  label: string; value: number | null | undefined; color: string; decimals?: number;
+}) {
+  return (
+    <span className="absolute top-0.5 left-2 z-20 text-[10px] font-sans pointer-events-none flex items-center gap-1.5">
+      <span className="text-[var(--chart-text)]">{label}</span>
+      {value !== null && value !== undefined && (
+        <span className={`font-mono font-medium ${color}`}>{value.toFixed(decimals)}</span>
+      )}
+    </span>
   );
 });
 
@@ -160,16 +215,29 @@ const OHLCVLegend = memo(function OHLCVLegend({ data, interval }: { data: Legend
 
 const INTERVALS = ['5m', '15m', '1h', '4h'] as const;
 
+interface VisibleIndicators { rsi: boolean; macd: boolean; atr: boolean; stoch: boolean }
+
+const INDICATOR_ITEMS: { key: keyof VisibleIndicators; label: string; color: string }[] = [
+  { key: 'rsi',   label: 'RSI(14)',      color: '#7e57c2' },
+  { key: 'macd',  label: 'MACD(12,26,9)', color: '#26a69a' },
+  { key: 'atr',   label: 'ATR(14)',      color: '#ff9800' },
+  { key: 'stoch', label: 'Stoch(14,3,3)', color: '#e91e63' },
+];
+
 const IntervalToolbar = memo(function IntervalToolbar({
   selected, onSelect, refreshing, onRefresh, smcVisible, onToggleSmc,
   sessionsVisible, onToggleSessions,
   drawingCount, onClearDrawings,
+  visibleIndicators, onToggleIndicator,
 }: {
   selected: string; onSelect: (v: string) => void; refreshing: boolean; onRefresh: () => void;
   smcVisible: boolean; onToggleSmc: () => void;
   sessionsVisible: boolean; onToggleSessions: () => void;
   drawingCount: number; onClearDrawings: () => void;
+  visibleIndicators: VisibleIndicators; onToggleIndicator: (key: keyof VisibleIndicators) => void;
 }) {
+  const [showIndMenu, setShowIndMenu] = useState(false);
+  const activeCount = Object.values(visibleIndicators).filter(Boolean).length;
   return (
     <div className="flex items-center gap-0.5 px-2 py-1 bg-[var(--chart-bg)] border-b border-[var(--chart-border)]">
       {INTERVALS.map((tf) => (
@@ -209,6 +277,45 @@ const IntervalToolbar = memo(function IntervalToolbar({
         <Layers size={11} />
         <span className="hidden sm:inline">SMC</span>
       </button>
+      {/* Indicators dropdown */}
+      <div className="relative">
+        <button
+          onClick={() => setShowIndMenu(v => !v)}
+          className={`p-1.5 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1 ${
+            activeCount > 0
+              ? 'bg-[#7e57c2]/12 text-[#7e57c2] hover:bg-[#7e57c2]/20'
+              : 'text-[var(--chart-text)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-secondary)]'
+          }`}
+          title="Toggle indicators"
+        >
+          <BarChart2 size={11} />
+          <span className="hidden sm:inline">Ind</span>
+          {activeCount > 0 && <span className="text-[9px] opacity-75">({activeCount})</span>}
+        </button>
+        {showIndMenu && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setShowIndMenu(false)} />
+            <div className="absolute top-full right-0 mt-1 z-40 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl py-1 min-w-[160px]">
+              {INDICATOR_ITEMS.map(({ key, label, color }) => (
+                <button
+                  key={key}
+                  onClick={() => onToggleIndicator(key)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] hover:bg-[var(--color-secondary)] transition-colors"
+                >
+                  <div className="w-3 h-3 rounded border flex items-center justify-center"
+                    style={{
+                      borderColor: color,
+                      backgroundColor: visibleIndicators[key] ? color + '30' : 'transparent',
+                    }}>
+                    {visibleIndicators[key] && <span style={{ color }} className="text-[9px] font-bold">✓</span>}
+                  </div>
+                  <span style={{ color: visibleIndicators[key] ? color : 'var(--chart-text)' }}>{label}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
       <button
         onClick={onToggleSessions}
         className={`p-1.5 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1 ${
@@ -239,7 +346,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
 
 export function CandlestickChart() {
   const toast = useToast();
-  const { isDark } = useTheme();
+  const { isDark, toggle: toggleTheme } = useTheme();
   const { selectedInterval, setSelectedInterval } = useTradingStore();
   const { compute: computeIndicators } = useIndicatorWorker();
 
@@ -259,6 +366,54 @@ export function CandlestickChart() {
   const bbMiddleRef = useRef<ISeriesApi<'Line'> | null>(null);
   const bbLowerRef = useRef<ISeriesApi<'Line'> | null>(null);
   const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+
+  // MACD series refs
+  const macdChartRef = useRef<IChartApi | null>(null);
+  const macdContainerRef = useRef<HTMLDivElement>(null);
+  const macdLineRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const macdSignalRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const macdHistRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+
+  // ATR series ref (shown on main chart as overlay value, no sub-chart)
+  // We store ATR data for legend display
+
+  // Stochastic series refs
+  const stochChartRef = useRef<IChartApi | null>(null);
+  const stochContainerRef = useRef<HTMLDivElement>(null);
+  const stochKRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const stochDRef = useRef<ISeriesApi<'Line'> | null>(null);
+
+  // Indicator data arrays (for crosshair legend lookup)
+  const indicatorDataRef = useRef<{
+    ema: (number | null)[];
+    bbUpper: (number | null)[];
+    bbMiddle: (number | null)[];
+    bbLower: (number | null)[];
+    rsi: (number | null)[];
+    macd: (number | null)[];
+    macdSignal: (number | null)[];
+    macdHist: (number | null)[];
+    atr: (number | null)[];
+    stochK: (number | null)[];
+    stochD: (number | null)[];
+  }>({
+    ema: [], bbUpper: [], bbMiddle: [], bbLower: [],
+    rsi: [], macd: [], macdSignal: [], macdHist: [],
+    atr: [], stochK: [], stochD: [],
+  });
+
+  // Visible sub-chart indicators
+  const [visibleIndicators, setVisibleIndicators] = useState<VisibleIndicators>({
+    rsi: true, macd: false, atr: false, stoch: false,
+  });
+
+  // Price alerts
+  const alertPriceLinesRef = useRef<Map<string, any>>(new Map());
+  const { activeAlerts, addAlert } = usePriceAlerts(
+    useCallback((alert: PriceAlert) => {
+      toast.info(`Price alert: $${alert.price.toFixed(2)} (${alert.direction})`);
+    }, [toast])
+  );
 
   // Track signal price lines so we can remove them before re-creating
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -290,6 +445,9 @@ export function CandlestickChart() {
   // Inline text input state
   const [textInput, setTextInput] = useState<{ x: number; y: number; point: { time: number; price: number } } | null>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
+
+  // Help modal
+  const [showHelp, setShowHelp] = useState(false);
 
   // State
   const [loading, setLoading] = useState(true);
@@ -464,26 +622,47 @@ export function CandlestickChart() {
       isSyncing = false;
     });
 
-    // ─── OHLCV Legend on crosshair ───
+    // ─── OHLCV + Indicator Legend on crosshair ───
     mainChart.subscribeCrosshairMove((param: MouseEventParams) => {
+      const buildLegend = (idx: number, cs: { open: number; high: number; low: number; close: number }, vol: number): LegendData => {
+        const ind = indicatorDataRef.current;
+        return {
+          o: cs.open, h: cs.high, l: cs.low, c: cs.close,
+          v: vol,
+          change: ((cs.close - cs.open) / cs.open) * 100,
+          ema21: ind.ema[idx] ?? null,
+          bbUpper: ind.bbUpper[idx] ?? null,
+          bbMiddle: ind.bbMiddle[idx] ?? null,
+          bbLower: ind.bbLower[idx] ?? null,
+          rsi: ind.rsi[idx] ?? null,
+          macdVal: ind.macd[idx] ?? null,
+          macdSignal: ind.macdSignal[idx] ?? null,
+          macdHist: ind.macdHist[idx] ?? null,
+          atr: ind.atr[idx] ?? null,
+          stochK: ind.stochK[idx] ?? null,
+          stochD: ind.stochD[idx] ?? null,
+        };
+      };
+
       if (!param.time) {
-        const last = rawCandlesRef.current[rawCandlesRef.current.length - 1];
+        const candles = rawCandlesRef.current;
+        const last = candles[candles.length - 1];
         if (last) {
-          setLegendData({
-            o: last.open, h: last.high, l: last.low, c: last.close,
-            v: 0, change: ((last.close - last.open) / last.open) * 100,
-          });
+          setLegendData(buildLegend(candles.length - 1, last, 0));
         }
         return;
       }
       const cs = param.seriesData?.get(candleSeries) as CandlestickData | undefined;
       const vs = param.seriesData?.get(volumeSeries) as HistogramData | undefined;
       if (cs) {
-        setLegendData({
-          o: cs.open, h: cs.high, l: cs.low, c: cs.close,
-          v: vs?.value ?? 0,
-          change: ((cs.close - cs.open) / cs.open) * 100,
-        });
+        // Find index by matching timestamp
+        const candles = rawCandlesRef.current;
+        const t = cs.time as number;
+        let idx = candles.length - 1;
+        for (let i = candles.length - 1; i >= 0; i--) {
+          if ((candles[i].time as number) === t) { idx = i; break; }
+        }
+        setLegendData(buildLegend(idx, cs, vs?.value ?? 0));
       }
     });
 
@@ -684,17 +863,25 @@ export function CandlestickChart() {
         .filter((c, i, arr) => i === 0 || c._ts > arr[i - 1]._ts);
 
       const closes = candleData.map((c) => c.close);
+      const highs = candleData.map((c) => c.high);
+      const lows = candleData.map((c) => c.low);
 
       // ── Compute indicators off main thread via Web Worker ──
       let ema21: (number | null)[];
       let rsi14: (number | null)[];
       let bb: { upper: (number | null)[]; middle: (number | null)[]; lower: (number | null)[] };
+      let macdData: { macd: (number | null)[]; signal: (number | null)[]; histogram: (number | null)[] };
+      let atrData: (number | null)[];
+      let stochData: { k: (number | null)[]; d: (number | null)[] };
       try {
-        const result = await computeIndicators(closes, { emaPeriod: 21, rsiPeriod: 14, bbPeriod: 20, bbMult: 2 });
+        const result = await computeIndicators(closes, highs, lows, { emaPeriod: 21, rsiPeriod: 14, bbPeriod: 20, bbMult: 2 });
         if (signal?.aborted) {return;}
         ema21 = result.ema;
         rsi14 = result.rsi;
         bb = result.bb;
+        macdData = result.macd;
+        atrData = result.atr;
+        stochData = result.stoch;
       } catch (err) {
         // Worker superseded or crashed — skip this cycle
         if ((err as Error).message === 'superseded') {return;}
@@ -727,6 +914,53 @@ export function CandlestickChart() {
       }
 
       rawCandlesRef.current = candleSd;
+
+      // ── Store indicator data for legend lookup ──
+      indicatorDataRef.current = {
+        ema: ema21,
+        bbUpper: bb.upper,
+        bbMiddle: bb.middle,
+        bbLower: bb.lower,
+        rsi: rsi14,
+        macd: macdData.macd,
+        macdSignal: macdData.signal,
+        macdHist: macdData.histogram,
+        atr: atrData,
+        stochK: stochData.k,
+        stochD: stochData.d,
+      };
+
+      // ── Build MACD series data ──
+      const macdLineSd: LineData[] = [];
+      const macdSignalSd: LineData[] = [];
+      const macdHistSd: HistogramData[] = [];
+      for (let i = 0; i < candleData.length; i++) {
+        const t = candleData[i]._ts as UTCTimestamp;
+        if (macdData.macd[i] !== null) macdLineSd.push({ time: t, value: macdData.macd[i]! });
+        if (macdData.signal[i] !== null) macdSignalSd.push({ time: t, value: macdData.signal[i]! });
+        if (macdData.histogram[i] !== null) {
+          const v = macdData.histogram[i]!;
+          macdHistSd.push({ time: t, value: v, color: v >= 0 ? 'rgba(38,166,154,0.6)' : 'rgba(239,83,80,0.6)' });
+        }
+      }
+
+      // ── Build Stochastic series data ──
+      const stochKSd: LineData[] = [];
+      const stochDSd: LineData[] = [];
+      for (let i = 0; i < candleData.length; i++) {
+        const t = candleData[i]._ts as UTCTimestamp;
+        if (stochData.k[i] !== null) stochKSd.push({ time: t, value: stochData.k[i]! });
+        if (stochData.d[i] !== null) stochDSd.push({ time: t, value: stochData.d[i]! });
+      }
+
+      // ── Apply MACD data ──
+      macdLineRef.current?.setData(macdLineSd);
+      macdSignalRef.current?.setData(macdSignalSd);
+      macdHistRef.current?.setData(macdHistSd);
+
+      // ── Apply Stochastic data ──
+      stochKRef.current?.setData(stochKSd);
+      stochDRef.current?.setData(stochDSd);
 
       // ── Feed session overlay ──
       if (sessionOverlayRef.current) {
@@ -867,13 +1101,26 @@ export function CandlestickChart() {
         rsiChartRef.current?.timeScale().setVisibleLogicalRange(range);
       }
 
-      // ── Set last candle as legend ──
-      const last = candleSd[candleSd.length - 1];
+      // ── Set last candle as legend (with indicator values) ──
+      const lastIdx = candleSd.length - 1;
+      const last = candleSd[lastIdx];
       if (last) {
+        const ind = indicatorDataRef.current;
         setLegendData({
           o: last.open, h: last.high, l: last.low, c: last.close,
           v: volumeSd[volumeSd.length - 1]?.value ?? 0,
           change: ((last.close - last.open) / last.open) * 100,
+          ema21: ind.ema[lastIdx],
+          bbUpper: ind.bbUpper[lastIdx],
+          bbMiddle: ind.bbMiddle[lastIdx],
+          bbLower: ind.bbLower[lastIdx],
+          rsi: ind.rsi[lastIdx],
+          macdVal: ind.macd[lastIdx],
+          macdSignal: ind.macdSignal[lastIdx],
+          macdHist: ind.macdHist[lastIdx],
+          atr: ind.atr[lastIdx],
+          stochK: ind.stochK[lastIdx],
+          stochD: ind.stochD[lastIdx],
         });
       }
 
@@ -940,6 +1187,153 @@ export function CandlestickChart() {
     return () => clearTimeout(timer);
   }, [isDark]);
 
+  /* ── Price alert lines — sync with activeAlerts ──────────────────────── */
+  useEffect(() => {
+    const cs = candleSeriesRef.current;
+    if (!cs) return;
+
+    // Remove old alert lines that are no longer active
+    for (const [id, pl] of alertPriceLinesRef.current) {
+      if (!activeAlerts.find(a => a.id === id)) {
+        try { cs.removePriceLine(pl); } catch { /* ok */ }
+        alertPriceLinesRef.current.delete(id);
+      }
+    }
+
+    // Add new alert lines
+    for (const alert of activeAlerts) {
+      if (!alertPriceLinesRef.current.has(alert.id)) {
+        const pl = cs.createPriceLine({
+          price: alert.price,
+          color: alert.direction === 'above' ? '#26a69a' : '#ef5350',
+          lineWidth: 1,
+          lineStyle: LineStyle.SparseDotted,
+          axisLabelVisible: true,
+          title: `⏰ ${alert.direction === 'above' ? '▲' : '▼'}`,
+        });
+        alertPriceLinesRef.current.set(alert.id, pl);
+      }
+    }
+  }, [activeAlerts]);
+
+  /* ── Alt+Click on chart = create price alert ────────────────────────── */
+  useEffect(() => {
+    const container = mainContainerRef.current;
+    const chart = mainChartRef.current;
+    const series = candleSeriesRef.current;
+    if (!container || !chart || !series) return;
+
+    const handler = (e: MouseEvent) => {
+      if (!e.altKey) return;
+      // Get price at click position
+      const rect = container.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const price = series.coordinateToPrice(y);
+      if (price === null) return;
+
+      const currentPrice = rawCandlesRef.current[rawCandlesRef.current.length - 1]?.close;
+      if (!currentPrice) return;
+
+      const priceNum = price as number;
+      const alert = addAlert(priceNum, currentPrice);
+      toast.success(`Alert set: $${priceNum.toFixed(2)} (${alert.direction})`);
+    };
+
+    container.addEventListener('click', handler);
+    return () => container.removeEventListener('click', handler);
+  }, [addAlert, toast]);
+
+  /* ── Create/destroy MACD sub-chart when toggled ──────────────────────── */
+  useEffect(() => {
+    if (!visibleIndicators.macd || !macdContainerRef.current) {
+      if (macdChartRef.current) { macdChartRef.current.remove(); macdChartRef.current = null; }
+      return;
+    }
+    const c = COLORS_FN();
+    const chart = createChart(macdContainerRef.current, {
+      autoSize: true,
+      layout: { background: { color: c.bg }, textColor: c.text, fontSize: 10, fontFamily: "'Trebuchet MS', sans-serif" },
+      grid: { vertLines: { color: c.gridLines, style: 4 as const }, horzLines: { color: c.gridLines, style: 4 as const } },
+      crosshair: { mode: CrosshairMode.Normal, vertLine: { color: c.crosshair, style: LineStyle.Dashed, width: 1 }, horzLine: { color: c.crosshair, style: LineStyle.Dashed, width: 1 } },
+      rightPriceScale: { borderColor: c.border, scaleMargins: { top: 0.1, bottom: 0.1 } },
+      timeScale: { borderColor: c.border, timeVisible: true, visible: false, barSpacing: 7, minBarSpacing: 2 },
+      handleScroll: { vertTouchDrag: false },
+    });
+    macdChartRef.current = chart;
+
+    const macdLine = chart.addLineSeries({ color: '#26a69a', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false });
+    const signalLine = chart.addLineSeries({ color: '#ef5350', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false });
+    const histSeries = chart.addHistogramSeries({ priceFormat: { type: 'price', precision: 2, minMove: 0.01 }, priceLineVisible: false, lastValueVisible: false });
+    macdLineRef.current = macdLine;
+    macdSignalRef.current = signalLine;
+    macdHistRef.current = histSeries;
+
+    // Zero line
+    macdLine.createPriceLine({ price: 0, color: 'rgba(107,114,128,0.25)', lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: '' });
+
+    // Sync with main chart timescale
+    let syncing = false;
+    const mainTs = mainChartRef.current?.timeScale();
+    if (mainTs) {
+      mainTs.subscribeVisibleLogicalRangeChange((range) => {
+        if (syncing || !range) return;
+        syncing = true;
+        chart.timeScale().setVisibleLogicalRange(range);
+        syncing = false;
+      });
+    }
+
+    // Feed existing data
+    void fetchData();
+
+    return () => { chart.remove(); macdChartRef.current = null; macdLineRef.current = null; macdSignalRef.current = null; macdHistRef.current = null; };
+  }, [visibleIndicators.macd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Create/destroy Stochastic sub-chart when toggled ───────────────── */
+  useEffect(() => {
+    if (!visibleIndicators.stoch || !stochContainerRef.current) {
+      if (stochChartRef.current) { stochChartRef.current.remove(); stochChartRef.current = null; }
+      return;
+    }
+    const c = COLORS_FN();
+    const chart = createChart(stochContainerRef.current, {
+      autoSize: true,
+      layout: { background: { color: c.bg }, textColor: c.text, fontSize: 10, fontFamily: "'Trebuchet MS', sans-serif" },
+      grid: { vertLines: { color: c.gridLines, style: 4 as const }, horzLines: { color: c.gridLines, style: 4 as const } },
+      crosshair: { mode: CrosshairMode.Normal, vertLine: { color: c.crosshair, style: LineStyle.Dashed, width: 1 }, horzLine: { color: c.crosshair, style: LineStyle.Dashed, width: 1 } },
+      rightPriceScale: { borderColor: c.border, scaleMargins: { top: 0.08, bottom: 0.08 } },
+      timeScale: { borderColor: c.border, timeVisible: true, visible: false, barSpacing: 7, minBarSpacing: 2 },
+      handleScroll: { vertTouchDrag: false },
+    });
+    stochChartRef.current = chart;
+
+    const kLine = chart.addLineSeries({ color: '#e91e63', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false });
+    const dLine = chart.addLineSeries({ color: '#ff9800', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false });
+    stochKRef.current = kLine;
+    stochDRef.current = dLine;
+
+    // Reference lines
+    kLine.createPriceLine({ price: 80, color: 'rgba(239,83,80,0.30)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
+    kLine.createPriceLine({ price: 20, color: 'rgba(38,166,154,0.30)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
+    kLine.createPriceLine({ price: 50, color: 'rgba(107,114,128,0.20)', lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: '' });
+
+    // Sync timescale
+    let syncing = false;
+    const mainTs = mainChartRef.current?.timeScale();
+    if (mainTs) {
+      mainTs.subscribeVisibleLogicalRangeChange((range) => {
+        if (syncing || !range) return;
+        syncing = true;
+        chart.timeScale().setVisibleLogicalRange(range);
+        syncing = false;
+      });
+    }
+
+    void fetchData();
+
+    return () => { chart.remove(); stochChartRef.current = null; stochKRef.current = null; stochDRef.current = null; };
+  }, [visibleIndicators.stoch]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* ── Toggle SMC overlay without refetching data ───────────────────────── */
   useEffect(() => {
     if (!smcOverlayRef.current || !rawCandlesRef.current.length) {return;}
@@ -953,6 +1347,28 @@ export function CandlestickChart() {
     }
   }, [smcVisible]);
 
+
+  /* ── Global keyboard shortcuts ────────────────────────────────────────── */
+  useKeyboardShortcuts({
+    onToggleTheme: toggleTheme,
+    onSelectInterval: (interval) => startTransition(() => setSelectedInterval(interval)),
+    onToggleDrawing: () => setActiveTool(prev => prev === 'cursor' ? 'trendline' : 'cursor'),
+    onEscDrawing: () => { setActiveTool('cursor'); setShowHelp(false); },
+    onToggleSmc: () => setSmcVisible(v => !v),
+    onToggleSessions: () => {
+      setSessionsVisible(v => {
+        const next = !v;
+        if (sessionOverlayRef.current) {
+          sessionOverlayRef.current.setVisible(next);
+          if (next && rawCandlesRef.current.length) {
+            sessionOverlayRef.current.rebuild(rawCandlesRef.current.map(c => c.time as number));
+          }
+        }
+        return next;
+      });
+    },
+    onToggleHelp: () => setShowHelp(v => !v),
+  });
 
   /* ── Render ──────────────────────────────────────────────────────────── */
   return (
@@ -977,6 +1393,8 @@ export function CandlestickChart() {
         }}
         drawingCount={drawings.length}
         onClearDrawings={handleClearAll}
+        visibleIndicators={visibleIndicators}
+        onToggleIndicator={(key) => setVisibleIndicators(prev => ({ ...prev, [key]: !prev[key] }))}
       />
 
       {/* Main candlestick + volume chart */}
@@ -998,7 +1416,7 @@ export function CandlestickChart() {
           canRedo={canRedo}
         />
 
-        <OHLCVLegend data={deferredLegend} interval={selectedInterval} />
+        <OHLCVLegend data={deferredLegend} interval={selectedInterval} visibleIndicators={visibleIndicators} />
         {refreshing && (
           <div className="absolute top-1 right-2 z-20 flex items-center gap-1 text-[10px] text-[var(--chart-text)]">
             <RefreshCw size={9} className="animate-spin" /> updating…
@@ -1077,13 +1495,61 @@ export function CandlestickChart() {
         )}
       </div>
 
-      {/* RSI sub-chart */}
-      <div className="relative shrink-0 border-t border-[var(--chart-border)]">
-        <span className="absolute top-0.5 left-2 z-20 text-[10px] text-[var(--chart-text)] font-sans pointer-events-none">
-          RSI(14)
-        </span>
-        <div ref={rsiContainerRef} className="w-full" style={{ height: 120 }} />
+      {/* RSI sub-chart — always in DOM for ref stability, hidden via style */}
+      <div className={`relative shrink-0 border-t border-[var(--chart-border)] ${visibleIndicators.rsi ? '' : 'hidden'}`}>
+        <SubChartLabel label="RSI(14)" value={deferredLegend?.rsi} color="text-[#7e57c2]" />
+        <div ref={rsiContainerRef} className="w-full" style={{ height: 100 }} />
       </div>
+
+      {/* MACD sub-chart */}
+      {visibleIndicators.macd && (
+        <div className="relative shrink-0 border-t border-[var(--chart-border)]">
+          <span className="absolute top-0.5 left-2 z-20 text-[10px] font-sans pointer-events-none flex items-center gap-2">
+            <span className="text-[var(--chart-text)]">MACD(12,26,9)</span>
+            <IndVal label="M" value={deferredLegend?.macdVal} color="text-[#26a69a]" decimals={2} />
+            <IndVal label="S" value={deferredLegend?.macdSignal} color="text-[#ef5350]" decimals={2} />
+            <IndVal label="H" value={deferredLegend?.macdHist} color={
+              (deferredLegend?.macdHist ?? 0) >= 0 ? 'text-[#26a69a]' : 'text-[#ef5350]'
+            } decimals={2} />
+          </span>
+          <div ref={macdContainerRef} className="w-full" style={{ height: 100 }} />
+        </div>
+      )}
+
+      {/* Stochastic sub-chart */}
+      {visibleIndicators.stoch && (
+        <div className="relative shrink-0 border-t border-[var(--chart-border)]">
+          <span className="absolute top-0.5 left-2 z-20 text-[10px] font-sans pointer-events-none flex items-center gap-2">
+            <span className="text-[var(--chart-text)]">Stoch(14,3,3)</span>
+            <IndVal label="%K" value={deferredLegend?.stochK} color="text-[#e91e63]" decimals={1} />
+            <IndVal label="%D" value={deferredLegend?.stochD} color="text-[#ff9800]" decimals={1} />
+          </span>
+          <div ref={stochContainerRef} className="w-full" style={{ height: 100 }} />
+        </div>
+      )}
+
+      {/* Keyboard shortcuts help modal */}
+      {showHelp && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" onClick={() => setShowHelp(false)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-2xl p-5 w-80">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold" style={{ color: 'var(--color-text-primary)' }}>Keyboard Shortcuts</h3>
+              <button onClick={() => setShowHelp(false)} className="text-xs text-[var(--chart-text)] hover:text-[var(--color-text-primary)]">Esc</button>
+            </div>
+            <div className="space-y-1.5">
+              {SHORTCUT_LIST.map(({ key, description }) => (
+                <div key={key} className="flex items-center justify-between text-xs">
+                  <span className="text-[var(--chart-text)]">{description}</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-[var(--color-secondary)] text-[var(--color-text-primary)] font-mono text-[10px] font-medium border border-[var(--color-border)]">
+                    {key}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
