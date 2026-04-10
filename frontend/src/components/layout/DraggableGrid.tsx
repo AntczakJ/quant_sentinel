@@ -16,6 +16,7 @@ const WidthProvider = (ReactGridLayout as any).WidthProvider ?? ((c: any) => c);
 interface Layout { i: string; x: number; y: number; w: number; h: number; minW?: number; minH?: number }
 type Layouts = Record<string, Layout[]>;
 import { Lock, Unlock, RotateCcw, LayoutGrid } from 'lucide-react';
+import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary';
 import 'react-grid-layout/css/styles.css';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
@@ -200,9 +201,11 @@ export const DraggableGrid = memo(function DraggableGrid({
                   </div>
                 )}
               </div>
-              {/* Widget content */}
+              {/* Widget content — error boundary per widget */}
               <div className="flex-1 min-h-0 overflow-auto">
-                {w.content}
+                <WidgetErrorBoundary widgetName={w.title}>
+                  {w.content}
+                </WidgetErrorBoundary>
               </div>
             </div>
           </div>

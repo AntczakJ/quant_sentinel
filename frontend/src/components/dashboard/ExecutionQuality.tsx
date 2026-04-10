@@ -108,7 +108,16 @@ export const ExecutionQuality = memo(function ExecutionQuality() {
   );
 
   if (isLoading && !data) {
-    return <div className="text-xs text-th-muted text-center py-4">Ladowanie raportu...</div>;
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          {[1,2,3,4].map(i => <div key={i} className="skeleton-shimmer h-16 rounded-lg" />)}
+        </div>
+        <div className="space-y-1.5">
+          {[1,2,3].map(i => <div key={i} className="skeleton-shimmer h-12 rounded-lg" />)}
+        </div>
+      </div>
+    );
   }
 
   if (!data || data.error || data.total_trades === 0) {

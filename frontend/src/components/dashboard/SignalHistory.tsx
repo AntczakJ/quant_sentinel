@@ -57,8 +57,17 @@ export const SignalHistory = memo(function SignalHistory() {
 
   if (loading && signals.length === 0) {
     return (
-      <div className="flex items-center justify-center h-40 text-th-secondary">
-        <span>Loading history...</span>
+      <div className="space-y-2">
+        {[1,2,3,4,5].map(i => (
+          <div key={i} className="flex items-center gap-3">
+            <div className="skeleton-shimmer w-6 h-6 rounded-full" />
+            <div className="flex-1 space-y-1">
+              <div className="skeleton-shimmer h-3 rounded-full" style={{ width: `${70 + (i % 3) * 10}%` }} />
+              <div className="skeleton-shimmer h-2 w-1/2 rounded-full" />
+            </div>
+            <div className="skeleton-shimmer h-5 w-12 rounded" />
+          </div>
+        ))}
       </div>
     );
   }

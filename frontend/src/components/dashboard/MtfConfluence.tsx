@@ -128,7 +128,14 @@ export const MtfConfluence = memo(function MtfConfluence() {
 
   if (isLoading && !data) {
     return (
-      <div className="text-xs text-th-muted text-center py-6">Ladowanie konfluencji MTF...</div>
+      <div className="flex items-center gap-4">
+        <div className="skeleton-shimmer w-[88px] h-[88px] rounded-full" />
+        <div className="flex-1 space-y-2">
+          <div className="skeleton-shimmer h-4 rounded-full" />
+          <div className="skeleton-shimmer h-2 rounded-full" />
+          <div className="skeleton-shimmer h-3 w-24 rounded" />
+        </div>
+      </div>
     );
   }
 

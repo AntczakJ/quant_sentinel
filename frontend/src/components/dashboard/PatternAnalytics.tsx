@@ -190,7 +190,17 @@ export const PatternAnalytics = memo(function PatternAnalytics() {
   }, [trades]);
 
   if ((statsLoading || tradesLoading) && !statsData) {
-    return <div className="text-xs text-th-muted text-center py-6">Ladowanie analityki...</div>;
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="skeleton-shimmer h-16 rounded-lg" />
+          <div className="skeleton-shimmer h-16 rounded-lg" />
+        </div>
+        <div className="space-y-1">
+          {[1,2,3,4].map(i => <div key={i} className="skeleton-shimmer h-5 rounded-full" />)}
+        </div>
+      </div>
+    );
   }
 
   return (

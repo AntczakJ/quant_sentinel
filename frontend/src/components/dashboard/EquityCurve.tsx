@@ -113,7 +113,15 @@ export const EquityCurve = memo(function EquityCurve() {
   }, [showDrawdown]);
 
   if (isLoading && !data) {
-    return <div className="text-xs text-th-muted text-center py-8">Ladowanie equity curve...</div>;
+    return (
+      <div className="space-y-2">
+        <div className="flex gap-4">
+          <div className="skeleton-shimmer h-5 w-20 rounded" />
+          <div className="skeleton-shimmer h-5 w-20 rounded" />
+        </div>
+        <div className="skeleton-shimmer h-[260px] rounded-lg" />
+      </div>
+    );
   }
 
   if (!data || !data.timestamps?.length) {

@@ -121,7 +121,7 @@ export function Header() {
         <div className="hidden md:block w-px h-6" style={{ background: 'var(--color-border)' }} />
 
         {/* Navigation — inline with header, hidden on mobile (bottom nav takes over) */}
-        <nav className="hidden md:flex items-center gap-0.5 overflow-x-auto scrollbar-none">
+        <nav aria-label="Main navigation" className="hidden md:flex items-center gap-0.5 overflow-x-auto scrollbar-none">
           {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}

@@ -2,6 +2,7 @@ import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import viteCompression from 'vite-plugin-compression'
 import { VitePWA } from 'vite-plugin-pwa'
+import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig(({ mode }) => ({
   test: {
@@ -30,6 +31,14 @@ export default defineConfig(({ mode }) => ({
       threshold: 1024,
       deleteOriginFile: false,
     }) as PluginOption,
+
+    // ── Bundle analyzer (run: npm run analyze) ──
+    ...(process.env.ANALYZE ? [visualizer({
+      open: true,
+      filename: 'dist/bundle-analysis.html',
+      gzipSize: true,
+      brotliSize: true,
+    }) as PluginOption] : []),
 
     // ── PWA + Service Worker for offline caching ──
     VitePWA({

@@ -20,7 +20,7 @@ const NAV_ITEMS = [
 
 export const MobileNav = memo(function MobileNav() {
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-md pb-[env(safe-area-inset-bottom)]"
+    <nav aria-label="Mobile navigation" className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-md pb-[env(safe-area-inset-bottom)]"
       style={{ background: 'color-mix(in srgb, var(--color-surface) 96%, transparent)', borderColor: 'var(--color-border)' }}>
       <div className="flex items-center justify-around px-1 py-1">
         {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
