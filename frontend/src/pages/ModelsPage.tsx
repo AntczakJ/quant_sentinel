@@ -3,7 +3,7 @@
  */
 
 import { useState } from 'react';
-import { ModelStats, RiskMetrics, ModelDriftAlert } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel } from '../components/dashboard';
 import { trainingAPI } from '../api/client';
 import { Play, Loader2, CheckCircle, XCircle } from 'lucide-react';
 
@@ -115,6 +115,15 @@ export default function ModelsPage() {
           <h2 className="section-title mb-3">Training</h2>
           <TrainingControls />
         </div>
+      </div>
+
+      {/* Backtesting */}
+      <div className="card">
+        <h2 className="section-title mb-3">
+          Backtesting
+          <span className="text-xs text-th-muted font-normal ml-2">— model performance on historical data</span>
+        </h2>
+        <BacktestPanel />
       </div>
 
       {/* Risk metrics row */}

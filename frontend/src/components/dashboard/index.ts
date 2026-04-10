@@ -15,4 +15,7 @@ export { RiskMetrics } from './RiskMetrics';
 export { MtfConfluence } from './MtfConfluence';
 export { ExecutionQuality } from './ExecutionQuality';
 export { ModelDriftAlert } from './ModelDriftAlert';
+export { EquityCurve } from './EquityCurve';
+export { BacktestPanel } from './BacktestPanel';
+export { RiskKillSwitch } from './RiskKillSwitch';
 
