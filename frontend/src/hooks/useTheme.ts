@@ -3,6 +3,7 @@
  *
  * Persists to localStorage. Defaults to dark.
  * Applies 'light' class to <html> element for CSS variable switching.
+ * Adds temporary 'transitioning' class for smooth color transitions.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -31,7 +32,12 @@ export function useTheme() {
   }, [theme]);
 
   const toggle = useCallback(() => {
+    const root = document.documentElement;
+    // Enable transition for smooth theme switch
+    root.classList.add('transitioning');
     setThemeState(prev => prev === 'dark' ? 'light' : 'dark');
+    // Remove transitioning class after animation completes
+    setTimeout(() => root.classList.remove('transitioning'), 300);
   }, []);
 
   return { theme, toggle, isDark: theme === 'dark' };

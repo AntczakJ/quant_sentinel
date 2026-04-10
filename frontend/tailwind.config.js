@@ -7,22 +7,33 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Modern dark theme — deeper, richer tones
-        'dark-bg': '#0a0d12',
-        'dark-surface': '#0f1318',
-        'dark-secondary': '#1a2030',
-        'dark-tertiary': '#141920',
+        /* ═══ Theme-aware surface colors ═══
+           These reference CSS variables that switch with dark/light theme.
+           Supports Tailwind alpha: bg-dark-bg/50, border-dark-secondary/30 */
+        'dark-bg':        'rgb(var(--c-bg) / <alpha-value>)',
+        'dark-surface':   'rgb(var(--c-surface) / <alpha-value>)',
+        'dark-secondary': 'rgb(var(--c-secondary) / <alpha-value>)',
+        'dark-tertiary':  'rgb(var(--c-raised) / <alpha-value>)',
 
-        // Accent colors
-        'accent-green': '#22c55e',
-        'accent-green-dark': '#16a34a',
-        'accent-red': '#ef4444',
-        'accent-red-dark': '#dc2626',
-        'accent-blue': '#3b82f6',
-        'accent-blue-dark': '#2563eb',
-        'accent-cyan': '#06b6d4',
-        'accent-purple': '#8b5cf6',
-        'accent-orange': '#f59e0b',
+        /* ═══ Theme-aware accent colors ═══ */
+        'accent-green':  'rgb(var(--c-green) / <alpha-value>)',
+        'accent-red':    'rgb(var(--c-red) / <alpha-value>)',
+        'accent-blue':   'rgb(var(--c-blue) / <alpha-value>)',
+        'accent-cyan':   'rgb(var(--c-cyan) / <alpha-value>)',
+        'accent-purple': 'rgb(var(--c-purple) / <alpha-value>)',
+        'accent-orange': 'rgb(var(--c-orange) / <alpha-value>)',
+
+        /* ═══ Theme-aware text colors ═══
+           text-th = primary, text-th-secondary, text-th-muted, text-th-dim */
+        'th':           'rgb(var(--c-text-1) / <alpha-value>)',
+        'th-secondary': 'rgb(var(--c-text-2) / <alpha-value>)',
+        'th-muted':     'rgb(var(--c-text-3) / <alpha-value>)',
+        'th-dim':       'rgb(var(--c-text-4) / <alpha-value>)',
+
+        /* ═══ Theme-aware border ═══ */
+        'th-border':    'rgb(var(--c-border) / <alpha-value>)',
+        'th-border-h':  'rgb(var(--c-border-h) / <alpha-value>)',
+        'th-hover':     'rgb(var(--c-hover) / <alpha-value>)',
       },
       fontFamily: {
         'mono': ['JetBrains Mono', 'monospace'],
@@ -43,10 +54,10 @@ export default {
         '2xl': '1rem',
       },
       boxShadow: {
-        'glow': '0 0 8px rgba(34, 197, 94, 0.15)',
-        'glow-red': '0 0 8px rgba(239, 68, 68, 0.15)',
-        'glow-blue': '0 0 8px rgba(59, 130, 246, 0.15)',
-        'panel': '0 4px 24px rgba(0, 0, 0, 0.2)',
+        'glow':      '0 0 8px rgb(var(--c-green) / 0.15)',
+        'glow-red':  '0 0 8px rgb(var(--c-red) / 0.15)',
+        'glow-blue': '0 0 8px rgb(var(--c-blue) / 0.15)',
+        'panel':     '0 4px 24px rgba(0, 0, 0, 0.2)',
       },
     },
   },

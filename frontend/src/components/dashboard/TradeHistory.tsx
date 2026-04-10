@@ -87,7 +87,7 @@ export const TradeHistory = memo(function TradeHistory() {
 
   if (isLoading && trades.length === 0) {
     return (
-      <div className="flex items-center justify-center h-40 text-gray-400">
+      <div className="flex items-center justify-center h-40 text-th-secondary">
         <span>Loading trades...</span>
       </div>
     );
@@ -98,15 +98,15 @@ export const TradeHistory = memo(function TradeHistory() {
       {/* Stats Summary + Win Rate Bar */}
       <div className="grid grid-cols-3 gap-2 text-xs">
         <div className="bg-dark-surface rounded p-2 border border-dark-secondary">
-          <div className="text-gray-400">Total</div>
+          <div className="text-th-secondary">Total</div>
           <div className="text-lg font-bold text-accent-cyan">{stats.total}</div>
         </div>
         <div className="bg-dark-surface rounded p-2 border border-accent-green/30">
-          <div className="text-gray-400">Wins</div>
+          <div className="text-th-secondary">Wins</div>
           <div className="text-lg font-bold text-accent-green">{stats.wins}</div>
         </div>
         <div className="bg-dark-surface rounded p-2 border border-accent-red/30">
-          <div className="text-gray-400">Losses</div>
+          <div className="text-th-secondary">Losses</div>
           <div className="text-lg font-bold text-accent-red">{stats.losses}</div>
         </div>
       </div>
@@ -115,15 +115,15 @@ export const TradeHistory = memo(function TradeHistory() {
       {stats.total > 0 && (
         <div className="bg-dark-surface rounded p-2 border border-dark-secondary">
           <div className="flex justify-between text-xs mb-1">
-            <span className="text-gray-400">Win Rate</span>
-            <span className={`font-bold ${winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+            <span className="text-th-secondary">Win Rate</span>
+            <span className={`font-bold ${winRate >= 50 ? 'text-accent-green' : 'text-accent-red'}`}>
               {winRate.toFixed(1)}%
             </span>
           </div>
-          <div className="relative h-1.5 bg-red-900/40 rounded-full overflow-hidden">
+          <div className="relative h-1.5 bg-accent-red/25 rounded-full overflow-hidden">
             <div
               className={`absolute left-0 top-0 h-full rounded-full transition-all duration-500 ${
-                winRate >= 50 ? 'bg-green-500' : 'bg-amber-500'
+                winRate >= 50 ? 'bg-accent-green' : 'bg-accent-orange'
               }`}
               style={{ width: `${Math.min(winRate, 100)}%` }}
             />
@@ -133,17 +133,17 @@ export const TradeHistory = memo(function TradeHistory() {
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-1">
-        <Filter size={10} className="text-gray-500" />
+        <Filter size={10} className="text-th-muted" />
         {(['ALL', 'WIN', 'LOSS', 'PENDING'] as FilterTab[]).map(tab => (
           <button
             key={tab}
             onClick={() => setFilter(tab)}
             className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
               filter === tab
-                ? tab === 'WIN' ? 'bg-green-600/30 text-green-400 border border-green-600/40'
-                : tab === 'LOSS' ? 'bg-red-600/30 text-red-400 border border-red-600/40'
-                : 'bg-blue-600/30 text-blue-400 border border-blue-600/40'
-                : 'bg-dark-secondary text-gray-500 border border-transparent hover:text-gray-400'
+                ? tab === 'WIN' ? 'bg-accent-green/30 text-accent-green border border-accent-green/40'
+                : tab === 'LOSS' ? 'bg-accent-red/30 text-accent-red border border-accent-red/40'
+                : 'bg-accent-blue/30 text-accent-blue border border-accent-blue/40'
+                : 'bg-dark-secondary text-th-muted border border-transparent hover:text-th-secondary'
             }`}
           >
             {tab}
@@ -154,7 +154,7 @@ export const TradeHistory = memo(function TradeHistory() {
       {/* Trades List */}
       <div className="space-y-2 max-h-[480px] overflow-y-auto pr-0.5 scrollbar-thin scrollbar-thumb-dark-secondary">
         {filteredTrades.length === 0 ? (
-          <div className="text-center text-gray-400 text-xs py-4">
+          <div className="text-center text-th-secondary text-xs py-4">
             {filter === 'ALL' ? 'Brak transakcji' : `Brak transakcji: ${filter}`}
           </div>
         ) : (
@@ -175,10 +175,10 @@ export const TradeHistory = memo(function TradeHistory() {
                 key={trade.id}
                 className={`border rounded p-2 text-xs ${
                   isWin
-                    ? 'bg-green-900/10 border-green-500/30'
+                    ? 'bg-accent-green/5 border-accent-green/30'
                     : isLoss
-                    ? 'bg-red-900/10 border-red-500/30'
-                    : 'bg-blue-900/10 border-blue-500/30'
+                    ? 'bg-accent-red/5 border-accent-red/30'
+                    : 'bg-accent-blue/5 border-accent-blue/30'
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
@@ -193,15 +193,15 @@ export const TradeHistory = memo(function TradeHistory() {
                     <div>
                       <div className="flex items-center gap-1.5">
                         <span className="font-bold">
-                          {trade.direction === 'LONG' ? '📈 LONG' : '📉 SHORT'}
+                          {trade.direction === 'LONG' ? 'LONG' : 'SHORT'}
                         </span>
                         {trade.timeframe && (
-                          <span className="px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-blue-900/30 text-blue-400 border border-blue-600/20">
+                          <span className="px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-accent-blue/15 text-accent-blue border border-accent-blue/20">
                             {trade.timeframe}
                           </span>
                         )}
                       </div>
-                      <div className="text-gray-500">
+                      <div className="text-th-muted">
                         Entry: {formatPrice(trade.entry)}
                       </div>
                     </div>
@@ -227,18 +227,18 @@ export const TradeHistory = memo(function TradeHistory() {
                 </div>
 
                 {/* Trade Details */}
-                <div className="grid grid-cols-3 gap-1 text-xs text-gray-500 mt-1 pt-1 border-t border-current border-opacity-20">
+                <div className="grid grid-cols-3 gap-1 text-xs text-th-muted mt-1 pt-1 border-t border-current border-opacity-20">
                   <div>SL: {formatPrice(trade.sl)}</div>
                   <div>TP: {formatPrice(trade.tp)}</div>
                   {rr > 0 && (
-                    <div className={`text-right font-mono ${rr >= 2 ? 'text-green-400' : rr >= 1 ? 'text-amber-400' : 'text-red-400'}`}>
+                    <div className={`text-right font-mono ${rr >= 2 ? 'text-accent-green' : rr >= 1 ? 'text-accent-orange' : 'text-accent-red'}`}>
                       R:R {rr.toFixed(1)}
                     </div>
                   )}
                 </div>
 
                 {/* Timestamp */}
-                <div className="text-xs text-gray-600 mt-1">
+                <div className="text-xs text-th-dim mt-1">
                   {(() => {
                     const d = safeParseDate(trade.timestamp);
                     return d

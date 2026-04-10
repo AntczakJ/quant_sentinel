@@ -1,7 +1,5 @@
 /**
- * ScrollProgressBar.tsx – cienki pasek na dole headera pokazujący postęp scrolla.
- * Osadzony wewnątrz <header> (sticky), więc pozycja jest automatycznie właściwa.
- * Uses RAF-throttled scroll listener for smooth 60fps updates.
+ * ScrollProgressBar.tsx – cienki pasek na dole headera pokazujacy postep scrolla.
  */
 
 import { useEffect, useState, memo, useRef } from 'react';
@@ -12,7 +10,7 @@ export const ScrollProgressBar = memo(function ScrollProgressBar() {
 
   useEffect(() => {
     const handleScroll = () => {
-      if (rafRef.current) {return;} // already scheduled
+      if (rafRef.current) {return;}
       rafRef.current = requestAnimationFrame(() => {
         const scrollTop = window.scrollY;
         const docHeight = document.documentElement.scrollHeight - window.innerHeight;
@@ -36,8 +34,8 @@ export const ScrollProgressBar = memo(function ScrollProgressBar() {
         className="h-full"
         style={{
           width: `${progress}%`,
-          background: 'linear-gradient(90deg, #00d4ff 0%, #00ff88 60%, #7c3aed 100%)',
-          boxShadow: progress > 1 ? '0 0 8px rgba(0,212,255,0.6)' : 'none',
+          background: `linear-gradient(90deg, rgb(var(--c-cyan)) 0%, rgb(var(--c-green)) 60%, rgb(var(--c-purple)) 100%)`,
+          boxShadow: progress > 1 ? `0 0 8px rgb(var(--c-cyan) / 0.6)` : 'none',
           willChange: 'width',
         }}
       />

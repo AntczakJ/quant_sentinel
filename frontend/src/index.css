@@ -12,74 +12,99 @@
 @tailwind utilities;
 
 /* ═══════════════════════════════════════════════════════════════
-   THEME SYSTEM — Dark (default) + Light mode
-   Toggle via .light class on <html>
+   THEME SYSTEM — RGB channel architecture
+   Dark (default) + Light mode via .light class on <html>
+
+   RGB channels (--c-*) feed Tailwind's alpha support:
+     bg-accent-green/20  →  rgb(var(--c-green) / 0.2)
+   Resolved colors (--color-*) are for inline styles:
+     style={{ color: 'var(--color-accent-green)' }}
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Dark Theme (Midnight Blue) ── */
-  --color-bg: #0c111b;
-  --color-surface: #111827;
-  --color-surface-raised: #1a2035;
-  --color-secondary: #1e293b;
-  --color-border: #293548;
-  --color-border-hover: #374a60;
-  --color-text-primary: #f1f5f9;
-  --color-text-secondary: #94a3b8;
-  --color-text-muted: #64748b;
+  /* ── Dark Theme — Deep Charcoal ─────────────────────────────
+     Inspired by TradingView, GitHub Dark, Linear              */
 
-  --color-accent-green: #34d399;
-  --color-accent-red: #f87171;
-  --color-accent-blue: #60a5fa;
-  --color-accent-cyan: #22d3ee;
-  --color-accent-purple: #a78bfa;
-  --color-accent-orange: #fbbf24;
+  /* RGB channels for Tailwind alpha */
+  --c-bg:          11 14 20;
+  --c-surface:     17 24 39;
+  --c-raised:      26 32 48;
+  --c-secondary:   30 41 59;
+  --c-border:      38 50 68;
+  --c-border-h:    55 70 92;
+  --c-hover:       34 46 64;
 
-  --color-scrollbar: #293548;
-  --color-scrollbar-hover: #374a60;
+  --c-text-1:      241 245 249;
+  --c-text-2:      156 163 175;
+  --c-text-3:      107 114 128;
+  --c-text-4:      75 85 99;
 
-  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.4);
-  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --c-green:       34 197 94;
+  --c-red:         239 68 68;
+  --c-blue:        59 130 246;
+  --c-cyan:        6 182 212;
+  --c-purple:      139 92 246;
+  --c-orange:      245 158 11;
+
+  /* Resolved colors for var() in inline styles */
+  --color-bg:              rgb(var(--c-bg));
+  --color-surface:         rgb(var(--c-surface));
+  --color-surface-raised:  rgb(var(--c-raised));
+  --color-secondary:       rgb(var(--c-secondary));
+  --color-border:          rgb(var(--c-border));
+  --color-border-hover:    rgb(var(--c-border-h));
+
+  --color-text-primary:    rgb(var(--c-text-1));
+  --color-text-secondary:  rgb(var(--c-text-2));
+  --color-text-muted:      rgb(var(--c-text-3));
+  --color-text-dim:        rgb(var(--c-text-4));
+
+  --color-accent-green:    rgb(var(--c-green));
+  --color-accent-red:      rgb(var(--c-red));
+  --color-accent-blue:     rgb(var(--c-blue));
+  --color-accent-cyan:     rgb(var(--c-cyan));
+  --color-accent-purple:   rgb(var(--c-purple));
+  --color-accent-orange:   rgb(var(--c-orange));
+
+  --color-scrollbar:       rgb(var(--c-border));
+  --color-scrollbar-hover: rgb(var(--c-border-h));
+
+  --shadow-card:     0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.5);
 
   /* Chart */
-  --chart-bg: #0c111b;
-  --chart-grid: #1e293b;
-  --chart-text: #94a3b8;
-  --chart-border: #293548;
-  --chart-crosshair: #64748b;
+  --chart-bg:        rgb(var(--c-bg));
+  --chart-grid:      rgb(var(--c-secondary));
+  --chart-text:      rgb(var(--c-text-2));
+  --chart-border:    rgb(var(--c-border));
+  --chart-crosshair: rgb(var(--c-text-3));
 }
 
-/* ── Light Theme (Clean Slate) ── */
+/* ── Light Theme — Clean Slate ────────────────────────────────
+   Inspired by Stripe, Notion, Vercel light                   */
 :root.light {
-  --color-bg: #f8fafc;
-  --color-surface: #ffffff;
-  --color-surface-raised: #ffffff;
-  --color-secondary: #f1f5f9;
-  --color-border: #e2e8f0;
-  --color-border-hover: #cbd5e1;
-  --color-text-primary: #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-muted: #94a3b8;
+  --c-bg:          245 247 250;
+  --c-surface:     255 255 255;
+  --c-raised:      240 242 245;
+  --c-secondary:   232 235 240;
+  --c-border:      210 215 224;
+  --c-border-h:    185 192 205;
+  --c-hover:       237 240 244;
 
-  --color-accent-green: #16a34a;
-  --color-accent-red: #dc2626;
-  --color-accent-blue: #2563eb;
-  --color-accent-cyan: #0891b2;
-  --color-accent-purple: #7c3aed;
-  --color-accent-orange: #d97706;
+  --c-text-1:      15 23 42;
+  --c-text-2:      55 65 81;
+  --c-text-3:      107 114 128;
+  --c-text-4:      156 163 175;
 
-  --color-scrollbar: #cbd5e1;
-  --color-scrollbar-hover: #94a3b8;
+  --c-green:       22 163 74;
+  --c-red:         220 38 38;
+  --c-blue:        37 99 235;
+  --c-cyan:        8 145 178;
+  --c-purple:      124 58 237;
+  --c-orange:      217 119 6;
 
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.08);
-
-  /* Chart (light) */
-  --chart-bg: #ffffff;
-  --chart-grid: #f1f5f9;
-  --chart-text: #64748b;
-  --chart-border: #e2e8f0;
-  --chart-crosshair: #94a3b8;
+  --shadow-card:     0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-elevated: 0 4px 20px rgba(0, 0, 0, 0.10);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -100,7 +125,7 @@ body {
   color: var(--color-text-primary);
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 :root:not(.light) body { color-scheme: dark; }
@@ -119,22 +144,25 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: var(--color-scrollbar-hover); }
 
 ::selection {
-  background-color: rgba(59, 130, 246, 0.25);
-  color: #fff;
+  background-color: rgb(var(--c-blue) / 0.25);
+  color: var(--color-text-primary);
 }
 
 /* ═══════════════════════════════════════════════════════════════
    SIGNAL COLORS
    ═══════════════════════════════════════════════════════════════ */
 
-.signal-strong-buy { @apply bg-green-950/20 text-green-400; }
+.signal-strong-buy {
+  background: rgb(var(--c-green) / 0.12);
+  color: var(--color-accent-green);
+}
 .signal-buy { color: var(--color-accent-green); }
 .signal-hold { color: var(--color-accent-blue); }
 .signal-sell { color: var(--color-accent-red); }
-.signal-strong-sell { @apply bg-red-950/20 text-red-400; }
-
-:root.light .signal-strong-buy { @apply bg-green-100 text-green-700; }
-:root.light .signal-strong-sell { @apply bg-red-100 text-red-700; }
+.signal-strong-sell {
+  background: rgb(var(--c-red) / 0.12);
+  color: var(--color-accent-red);
+}
 
 /* ═══════════════════════════════════════════════════════════════
    CARD SYSTEM
@@ -145,7 +173,7 @@ body {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-card);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.25s ease;
 }
 .card:hover {
   border-color: var(--color-border-hover);
@@ -156,7 +184,7 @@ body {
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-card);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.25s ease;
 }
 .card-elevated:hover {
   border-color: var(--color-border-hover);
@@ -190,6 +218,9 @@ body {
 .btn-secondary:hover {
   filter: brightness(1.1);
 }
+:root.light .btn-secondary:hover {
+  filter: brightness(0.95);
+}
 
 .price-display {
   font-family: 'JetBrains Mono', monospace;
@@ -212,6 +243,9 @@ body {
   border-radius: 8px;
   overflow: hidden;
 }
+:root.light .chart-container {
+  background: var(--color-surface);
+}
 
 .stats-grid {
   display: grid;
@@ -231,7 +265,7 @@ body {
   width: 6px; height: 6px;
   background: var(--color-accent-green);
   border-radius: 50%;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+  box-shadow: 0 0 6px rgb(var(--c-green) / 0.4);
 }
 .status-disconnected {
   @apply flex items-center gap-2;
@@ -242,7 +276,7 @@ body {
   width: 6px; height: 6px;
   background: var(--color-accent-red);
   border-radius: 50%;
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+  box-shadow: 0 0 6px rgb(var(--c-red) / 0.4);
 }
 
 .dashboard-grid { display: grid; gap: 1rem; grid-template-columns: 1fr; }
@@ -281,10 +315,10 @@ a:hover { text-decoration: underline; filter: brightness(1.2); }
   @apply rounded-lg p-3;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, background-color 0.25s ease;
 }
 :root.light .stat-item {
-  background: var(--color-secondary);
+  background: var(--color-surface-raised);
 }
 .stat-item:hover {
   border-color: var(--color-border-hover);
@@ -297,10 +331,26 @@ a:hover { text-decoration: underline; filter: brightness(1.2); }
   transition: all 0.15s ease;
 }
 :root.light .model-card {
-  background: var(--color-secondary);
+  background: var(--color-surface-raised);
 }
 .model-card:hover {
   border-color: var(--color-border-hover);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   THEME TRANSITION — smooth color changes on toggle
+   ═══════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: 0s;
+  transition-timing-function: ease;
+}
+
+html.transitioning *,
+html.transitioning *::before,
+html.transitioning *::after {
+  transition-duration: 0.25s !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════

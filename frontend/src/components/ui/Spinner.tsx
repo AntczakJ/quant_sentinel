@@ -9,4 +9,3 @@ export function Spinner() {
     </div>
   );
 }
-

@@ -289,7 +289,7 @@ def predict_decompose(df, model_dir='models', seq_len=60) -> Optional[float]:
 
         from tensorflow.keras.models import load_model
         model = load_model(model_path)
-        pred = model.predict([X_t, X_s, X_r], verbose=0)
+        pred = model([X_t, X_s, X_r], training=False).numpy()
 
         return float(pred.flat[0])
 

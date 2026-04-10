@@ -15,7 +15,7 @@ export function Badge({ children, variant = 'info', className = '' }: BadgeProps
   const variantStyles = {
     success: 'bg-accent-green/20 text-accent-green border border-accent-green/50',
     danger: 'bg-accent-red/20 text-accent-red border border-accent-red/50',
-    warning: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/50',
+    warning: 'bg-accent-orange/20 text-accent-orange border border-accent-orange/50',
     info: 'bg-accent-blue/20 text-accent-blue border border-accent-blue/50',
   };
 
@@ -25,4 +25,3 @@ export function Badge({ children, variant = 'info', className = '' }: BadgeProps
     </span>
   );
 }
-

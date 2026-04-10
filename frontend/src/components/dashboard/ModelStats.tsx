@@ -31,7 +31,7 @@ function StatRow({ label, value, format = 'text', color }: StatRowProps) {
 
   return (
     <div className="flex justify-between items-center text-xs">
-      <span className="text-gray-400">{label}</span>
+      <span className="text-th-secondary">{label}</span>
       <span className={color || 'text-accent-blue'}>{displayValue}</span>
     </div>
   );
@@ -63,14 +63,13 @@ export const ModelStats = memo(function ModelStats() {
 
     void fetchStats();
 
-    // Refresh every 90 seconds (model stats barely change)
     const interval = setInterval(fetchStats, 90000);
     return () => clearInterval(interval);
   }, [setModelsStats, apiConnected]);
 
   if (loading && !stats) {
     return (
-      <div className="flex items-center justify-center h-40 text-gray-400">
+      <div className="flex items-center justify-center h-40 text-th-secondary">
         <span>Loading models...</span>
       </div>
     );
@@ -78,7 +77,7 @@ export const ModelStats = memo(function ModelStats() {
 
   if (error && !stats) {
     return (
-      <div className="text-center text-red-400 text-xs">{error}</div>
+      <div className="text-center text-accent-red text-xs">{error}</div>
     );
   }
 
@@ -87,23 +86,23 @@ export const ModelStats = memo(function ModelStats() {
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div className="text-xs text-gray-400 font-bold flex items-center gap-2">
+      <div className="text-xs text-th-secondary font-bold flex items-center gap-2">
         <Brain size={14} />
         ML MODELS PERFORMANCE
       </div>
 
       {/* Ensemble Accuracy */}
       {stats.ensemble_accuracy !== undefined && (
-        <div className="bg-dark-bg border border-purple-600/20 rounded p-3">
+        <div className="bg-dark-bg border border-accent-purple/20 rounded p-3">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-gray-400">Ensemble Accuracy</span>
-            <span className="text-xl font-bold text-purple-400">
+            <span className="text-xs text-th-secondary">Ensemble Accuracy</span>
+            <span className="text-xl font-bold text-accent-purple">
               {(stats.ensemble_accuracy * 100).toFixed(1)}%
             </span>
           </div>
           <div className="bg-dark-secondary rounded-full h-1.5 overflow-hidden">
             <div
-              className="h-full bg-purple-500 transition-all"
+              className="h-full bg-accent-purple transition-all"
               style={{ width: `${Math.min(stats.ensemble_accuracy * 100, 100)}%` }}
             />
           </div>
@@ -114,11 +113,11 @@ export const ModelStats = memo(function ModelStats() {
       <div className="bg-dark-bg border border-dark-secondary rounded p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-            <span className="text-sm font-bold text-gray-300">RL Agent</span>
+            <div className="w-2 h-2 rounded-full bg-accent-blue"></div>
+            <span className="text-sm font-bold text-th-secondary">RL Agent</span>
           </div>
           {stats.rl_stats.episodes !== undefined && (
-            <span className="text-xs text-gray-500">Episodes: {stats.rl_stats.episodes}</span>
+            <span className="text-xs text-th-muted">Episodes: {stats.rl_stats.episodes}</span>
           )}
         </div>
 
@@ -152,8 +151,8 @@ export const ModelStats = memo(function ModelStats() {
       <div className="bg-dark-bg border border-dark-secondary rounded p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-purple-500"></div>
-            <span className="text-sm font-bold text-gray-300">LSTM</span>
+            <div className="w-2 h-2 rounded-full bg-accent-purple"></div>
+            <span className="text-sm font-bold text-th-secondary">LSTM</span>
           </div>
         </div>
 
@@ -187,8 +186,8 @@ export const ModelStats = memo(function ModelStats() {
       <div className="bg-dark-bg border border-dark-secondary rounded p-3">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-orange-500"></div>
-            <span className="text-sm font-bold text-gray-300">XGBoost</span>
+            <div className="w-2 h-2 rounded-full bg-accent-orange"></div>
+            <span className="text-sm font-bold text-th-secondary">XGBoost</span>
           </div>
         </div>
 
@@ -219,7 +218,7 @@ export const ModelStats = memo(function ModelStats() {
       </div>
 
       {/* Last Update */}
-      <div className="text-xs text-gray-500 pt-2 border-t border-dark-secondary text-center">
+      <div className="text-xs text-th-muted pt-2 border-t border-dark-secondary text-center">
         Updated: {new Date(stats.last_update).toLocaleTimeString('en-US', {
           hour: '2-digit',
           minute: '2-digit',
@@ -229,4 +228,3 @@ export const ModelStats = memo(function ModelStats() {
     </div>
   );
 });
-

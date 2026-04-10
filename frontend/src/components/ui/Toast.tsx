@@ -1,19 +1,5 @@
 /**
  * src/components/ui/Toast.tsx — Lightweight toast notification system
- *
- * Zero external dependencies. Manages a queue of notifications
- * that auto-dismiss after a configurable duration.
- *
- * Usage:
- *   import { useToast, ToastContainer } from '../ui/Toast';
- *
- *   function MyComponent() {
- *     const toast = useToast();
- *     toast.error('Trade failed');
- *     toast.success('Trade executed');
- *     toast.info('Market session changed');
- *     return <ToastContainer />;
- *   }
  */
 
 import { useState, useCallback, createContext, useContext, useRef, useEffect, type ReactNode } from 'react';
@@ -44,7 +30,6 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 export function useToast(): ToastContextValue {
   const ctx = useContext(ToastContext);
   if (!ctx) {
-    // Fallback: no-op when used outside provider (prevents crashes)
     return {
       success: () => {},
       error: () => {},
@@ -58,17 +43,17 @@ export function useToast(): ToastContextValue {
 // ── Styles ──
 
 const TYPE_STYLES: Record<ToastType, { bg: string; border: string; icon: typeof CheckCircle }> = {
-  success: { bg: 'bg-green-950/90', border: 'border-green-600/30', icon: CheckCircle },
-  error:   { bg: 'bg-red-950/90',   border: 'border-red-600/30',   icon: AlertCircle },
-  warning: { bg: 'bg-amber-950/90', border: 'border-amber-600/30', icon: AlertTriangle },
-  info:    { bg: 'bg-blue-950/90',  border: 'border-blue-600/30',  icon: Info },
+  success: { bg: 'bg-accent-green/12', border: 'border-accent-green/30', icon: CheckCircle },
+  error:   { bg: 'bg-accent-red/12',   border: 'border-accent-red/30',   icon: AlertCircle },
+  warning: { bg: 'bg-accent-orange/12', border: 'border-accent-orange/30', icon: AlertTriangle },
+  info:    { bg: 'bg-accent-blue/12',  border: 'border-accent-blue/30',  icon: Info },
 };
 
 const TYPE_COLORS: Record<ToastType, string> = {
-  success: 'text-green-400',
-  error:   'text-red-400',
-  warning: 'text-amber-400',
-  info:    'text-blue-400',
+  success: 'text-accent-green',
+  error:   'text-accent-red',
+  warning: 'text-accent-orange',
+  info:    'text-accent-blue',
 };
 
 // ── Single Toast Item ──
@@ -85,14 +70,14 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
 
   return (
     <div
-      className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${style.bg} ${style.border} backdrop-blur-sm shadow-lg max-w-sm animate-slide-in`}
+      className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${style.bg} ${style.border} backdrop-blur-md shadow-lg max-w-sm animate-slide-in`}
       role="alert"
     >
       <Icon size={16} className={`${color} mt-0.5 shrink-0`} />
-      <span className="text-[13px] text-gray-200 leading-snug flex-1">{toast.message}</span>
+      <span className="text-[13px] text-th leading-snug flex-1">{toast.message}</span>
       <button
         onClick={() => onDismiss(toast.id)}
-        className="text-gray-500 hover:text-gray-300 transition-colors shrink-0"
+        className="text-th-muted hover:text-th transition-colors shrink-0"
       >
         <X size={14} />
       </button>

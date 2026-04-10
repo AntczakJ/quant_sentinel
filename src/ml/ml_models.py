@@ -308,7 +308,7 @@ class MLPredictor:
                 from src.analysis.compute import onnx_predict
                 pred = onnx_predict(onnx_session, X.astype(np.float32))
             else:
-                pred = self.lstm.predict(X, verbose=0)
+                pred = self.lstm(X, training=False).numpy()
 
             if pred is None:
                 return 0.5

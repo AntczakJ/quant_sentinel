@@ -10,7 +10,7 @@ export default function AgentPage() {
       <h2 className="section-title mb-3">
         AI Agent
         {' '}
-        <span className="text-xs text-green-500 font-normal ml-1">● memory</span>
+        <span className="text-xs text-accent-green font-normal ml-1">memory</span>
       </h2>
       <AgentChat />
     </div>

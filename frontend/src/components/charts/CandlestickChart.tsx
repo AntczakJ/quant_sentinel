@@ -75,28 +75,44 @@ async function setCachedCandles(interval: string, candles: Candle[]): Promise<vo
 /*  COLOR PALETTE (matches CSS vars / TradingView dark theme)                */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
+/** Convert any CSS color (including modern `rgb(R G B)`) to hex for lightweight-charts compatibility */
+function cssColorToHex(raw: string, fallback: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return fallback;
+  // Already hex
+  if (trimmed.startsWith('#')) return trimmed;
+  // Match rgb(R G B) or rgb(R, G, B)
+  const m = trimmed.match(/^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/);
+  if (m) {
+    const [, r, g, b] = m;
+    return '#' + [r, g, b].map(c => Number(c).toString(16).padStart(2, '0')).join('');
+  }
+  return fallback;
+}
+
 function getChartColors() {
   const style = getComputedStyle(document.documentElement);
   const isLight = document.documentElement.classList.contains('light');
+  const v = (prop: string, fb: string) => cssColorToHex(style.getPropertyValue(prop), fb);
   return {
-    bg: style.getPropertyValue('--chart-bg').trim() || (isLight ? '#ffffff' : '#0c111b'),
-    gridLines: style.getPropertyValue('--chart-grid').trim() || (isLight ? '#f1f5f9' : '#1e293b'),
-    text: style.getPropertyValue('--chart-text').trim() || (isLight ? '#64748b' : '#94a3b8'),
-    crosshair: style.getPropertyValue('--chart-crosshair').trim() || (isLight ? '#94a3b8' : '#64748b'),
-    border: style.getPropertyValue('--chart-border').trim() || (isLight ? '#e2e8f0' : '#293548'),
-    candleUp: '#26a69a',
-    candleDown: '#ef5350',
-    wickUp: '#26a69a',
-    wickDown: '#ef5350',
-    volumeUp: 'rgba(38,166,154,0.28)',
-    volumeDown: 'rgba(239,83,80,0.22)',
-    ema21: '#f0b90b',
-    bbUpper: 'rgba(33,150,243,0.45)',
-    bbMiddle: 'rgba(33,150,243,0.70)',
-    bbLower: 'rgba(33,150,243,0.45)',
-    rsiLine: '#7e57c2',
-    rsiOverbought: 'rgba(239,83,80,0.35)',
-    rsiOversold: 'rgba(38,166,154,0.35)',
+    bg: v('--chart-bg', isLight ? '#ffffff' : '#0b0e14'),
+    gridLines: v('--chart-grid', isLight ? '#e5e7eb' : '#1e293b'),
+    text: v('--chart-text', isLight ? '#4b5563' : '#9ca3af'),
+    crosshair: v('--chart-crosshair', isLight ? '#9ca3af' : '#6b7280'),
+    border: v('--chart-border', isLight ? '#e5e7eb' : '#263244'),
+    candleUp: isLight ? '#16a34a' : '#26a69a',
+    candleDown: isLight ? '#dc2626' : '#ef5350',
+    wickUp: isLight ? '#16a34a' : '#26a69a',
+    wickDown: isLight ? '#dc2626' : '#ef5350',
+    volumeUp: isLight ? 'rgba(22,163,74,0.25)' : 'rgba(38,166,154,0.28)',
+    volumeDown: isLight ? 'rgba(220,38,38,0.20)' : 'rgba(239,83,80,0.22)',
+    ema21: isLight ? '#d97706' : '#f0b90b',
+    bbUpper: isLight ? 'rgba(37,99,235,0.35)' : 'rgba(33,150,243,0.45)',
+    bbMiddle: isLight ? 'rgba(37,99,235,0.55)' : 'rgba(33,150,243,0.70)',
+    bbLower: isLight ? 'rgba(37,99,235,0.35)' : 'rgba(33,150,243,0.45)',
+    rsiLine: isLight ? '#7c3aed' : '#7e57c2',
+    rsiOverbought: isLight ? 'rgba(220,38,38,0.30)' : 'rgba(239,83,80,0.35)',
+    rsiOversold: isLight ? 'rgba(22,163,74,0.30)' : 'rgba(38,166,154,0.35)',
     priceLine: isLight ? '#334155' : '#d1d4dc',
     slLine: '#ef5350',
     tpLine: '#26a69a',
@@ -105,7 +121,9 @@ function getChartColors() {
   };
 }
 
-// Default colors (used during initial render)
+// Chart colors — re-computed on every access to pick up theme changes
+function COLORS_FN() { return getChartColors(); }
+// Initial snapshot for chart creation (before any theme toggle)
 const COLORS = getChartColors();
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -292,8 +310,8 @@ export function CandlestickChart() {
       grid: commonGrid,
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#2a2e39' },
-        horzLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#2a2e39' },
+        vertLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: COLORS.bg },
+        horzLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: COLORS.bg },
       },
       rightPriceScale: {
         borderColor: COLORS.border,
@@ -370,8 +388,8 @@ export function CandlestickChart() {
       grid: commonGrid,
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#2a2e39' },
-        horzLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: '#2a2e39' },
+        vertLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: COLORS.bg },
+        horzLine: { color: COLORS.crosshair, style: LineStyle.Dashed, width: 1, labelBackgroundColor: COLORS.bg },
       },
       rightPriceScale: {
         borderColor: COLORS.border,
@@ -673,7 +691,8 @@ export function CandlestickChart() {
         const up = c.close >= c.open;
 
         candleSd.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
-        volumeSd.push({ time: t, value: c.volume, color: up ? COLORS.volumeUp : COLORS.volumeDown });
+        const currentColors = COLORS_FN();
+        volumeSd.push({ time: t, value: c.volume, color: up ? currentColors.volumeUp : currentColors.volumeDown });
 
         if (ema21[i] !== null) {emaSd.push({ time: t, value: ema21[i]! });}
         if (rsi14[i] !== null) {rsiSd.push({ time: t, value: rsi14[i]! });}
@@ -855,14 +874,35 @@ export function CandlestickChart() {
   /* ── Update chart colors on theme change ──────────────────────────────── */
   useEffect(() => {
     if (!mainChartRef.current || !rsiChartRef.current) return;
-    const c = getChartColors();
-    const layout = { background: { color: c.bg }, textColor: c.text };
-    const grid = {
-      vertLines: { color: c.gridLines, style: 4 as const },
-      horzLines: { color: c.gridLines, style: 4 as const },
-    };
-    mainChartRef.current.applyOptions({ layout, grid, rightPriceScale: { borderColor: c.border }, timeScale: { borderColor: c.border } });
-    rsiChartRef.current.applyOptions({ layout, grid, rightPriceScale: { borderColor: c.border }, timeScale: { borderColor: c.border } });
+    // Small delay to let CSS variables settle after class toggle
+    const timer = setTimeout(() => {
+      const c = getChartColors();
+      const layout = { background: { color: c.bg }, textColor: c.text };
+      const grid = {
+        vertLines: { color: c.gridLines, style: 4 as const },
+        horzLines: { color: c.gridLines, style: 4 as const },
+      };
+      const crosshair = {
+        vertLine: { color: c.crosshair, labelBackgroundColor: c.bg },
+        horzLine: { color: c.crosshair, labelBackgroundColor: c.bg },
+      };
+      mainChartRef.current?.applyOptions({ layout, grid, crosshair, rightPriceScale: { borderColor: c.border }, timeScale: { borderColor: c.border } });
+      rsiChartRef.current?.applyOptions({ layout, grid, crosshair, rightPriceScale: { borderColor: c.border }, timeScale: { borderColor: c.border } });
+
+      // Update candlestick colors
+      candleSeriesRef.current?.applyOptions({
+        upColor: c.candleUp, downColor: c.candleDown,
+        wickUpColor: c.wickUp, wickDownColor: c.wickDown,
+      });
+
+      // Update EMA + indicator line colors
+      emaSeriesRef.current?.applyOptions({ color: c.ema21 });
+      bbUpperRef.current?.applyOptions({ color: c.bbUpper });
+      bbMiddleRef.current?.applyOptions({ color: c.bbMiddle });
+      bbLowerRef.current?.applyOptions({ color: c.bbLower });
+      rsiSeriesRef.current?.applyOptions({ color: c.rsiLine });
+    }, 50);
+    return () => clearTimeout(timer);
   }, [isDark]);
 
   /* ── Toggle SMC overlay without refetching data ───────────────────────── */

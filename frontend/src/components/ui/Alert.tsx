@@ -24,7 +24,7 @@ export function Alert({
   const variantStyles = {
     success: 'bg-accent-green/10 border border-accent-green/50 text-accent-green',
     error: 'bg-accent-red/10 border border-accent-red/50 text-accent-red',
-    warning: 'bg-yellow-500/10 border border-yellow-500/50 text-yellow-400',
+    warning: 'bg-accent-orange/10 border border-accent-orange/50 text-accent-orange',
     info: 'bg-accent-blue/10 border border-accent-blue/50 text-accent-blue',
   };
 
@@ -58,4 +58,3 @@ export function Alert({
     </div>
   );
 }
-

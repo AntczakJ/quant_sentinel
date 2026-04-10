@@ -23,12 +23,12 @@ interface SessionInfo {
 }
 
 const SESSION_COLORS: Record<string, string> = {
-  london:    'text-blue-400 border-blue-500/40 bg-blue-500/10',
-  overlap:   'text-purple-400 border-purple-500/40 bg-purple-500/10',
-  new_york:  'text-green-400 border-green-500/40 bg-green-500/10',
-  asian:     'text-amber-400 border-amber-500/40 bg-amber-500/10',
-  off_hours: 'text-gray-500 border-gray-600/40 bg-gray-700/10',
-  weekend:   'text-red-400/60 border-red-500/20 bg-red-500/5',
+  london:    'text-accent-blue border-accent-blue/40 bg-accent-blue/10',
+  overlap:   'text-accent-purple border-accent-purple/40 bg-accent-purple/10',
+  new_york:  'text-accent-green border-accent-green/40 bg-accent-green/10',
+  asian:     'text-accent-orange border-accent-orange/40 bg-accent-orange/10',
+  off_hours: 'text-th-muted border-th-muted/40 bg-th-muted/10',
+  weekend:   'text-accent-red/60 border-accent-red/20 bg-accent-red/5',
 };
 
 const SESSION_LABELS: Record<string, string> = {
@@ -149,12 +149,12 @@ export function Header() {
         <div className="flex-1" />
 
         {/* Price — compact, right-aligned */}
-        <div className={`flex items-center gap-3 transition-colors duration-200 ${priceFlash === 'up' ? 'text-green-400' : priceFlash === 'down' ? 'text-red-400' : ''}`}>
+        <div className={`flex items-center gap-3 transition-colors duration-200 ${priceFlash === 'up' ? 'text-accent-green' : priceFlash === 'down' ? 'text-accent-red' : ''}`}>
           <div className="text-right">
             <div className="text-lg font-bold font-mono leading-tight" style={{ color: 'var(--color-text-primary)' }}>
               ${ticker.price.toFixed(2)}
             </div>
-            <div className={`flex items-center justify-end gap-1 text-[10px] font-medium leading-tight ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+            <div className={`flex items-center justify-end gap-1 text-[10px] font-medium leading-tight ${isPositive ? 'text-accent-green' : 'text-accent-red'}`}>
               {isPositive ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
               <span>
                 {isPositive ? '+' : ''}{ticker.change.toFixed(2)} ({isPositive ? '+' : ''}{ticker.change_pct.toFixed(2)}%)
@@ -169,7 +169,7 @@ export function Header() {
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}
-          className="p-1.5 rounded-md transition-colors"
+          className="p-1.5 rounded-md transition-colors hover:bg-dark-secondary"
           style={{ color: 'var(--color-text-muted)' }}
           title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
         >

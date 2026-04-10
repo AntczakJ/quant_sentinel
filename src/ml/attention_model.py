@@ -234,7 +234,7 @@ def predict_attention(df, model_dir='models', seq_len=60):
     try:
         from tensorflow.keras.models import load_model
         model = load_model(model_path)
-        pred = model.predict(X, verbose=0)
+        pred = model(X, training=False).numpy()
         if isinstance(pred, np.ndarray):
             return float(pred.flat[0])
     except Exception as e:

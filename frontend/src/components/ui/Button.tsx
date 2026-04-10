@@ -25,13 +25,13 @@ export function Button({
   type = 'button',
 }: ButtonProps) {
   const baseStyles =
-    'font-medium rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed';
+    'font-medium rounded transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed';
 
   const variantStyles = {
-    primary: 'bg-accent-blue text-white hover:bg-blue-600',
-    secondary: 'bg-dark-secondary text-gray-300 hover:bg-dark-surface',
-    danger: 'bg-accent-red text-white hover:bg-red-600',
-    success: 'bg-accent-green text-white hover:bg-green-600',
+    primary: 'bg-accent-blue text-white hover:brightness-110',
+    secondary: 'bg-dark-secondary text-th-secondary hover:bg-dark-surface',
+    danger: 'bg-accent-red text-white hover:brightness-110',
+    success: 'bg-accent-green text-white hover:brightness-110',
   };
 
   const sizeStyles = {
@@ -51,4 +51,3 @@ export function Button({
     </button>
   );
 }
-

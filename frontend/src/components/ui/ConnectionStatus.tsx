@@ -1,8 +1,5 @@
 /**
  * src/components/ui/ConnectionStatus.tsx — Rich connection status indicator
- *
- * Shows API connection, data freshness, and mock data warnings.
- * Replaces the simple green/red dot in the header with actionable info.
  */
 
 import { useState, useEffect, memo, useCallback } from 'react';
@@ -32,7 +29,6 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
     try {
       await healthAPI.check();
       const latency = Math.round(performance.now() - start);
-      // Also check if market data is mock
       let isMock = false;
       try {
         const marketStatus = await marketAPI.getStatus();
@@ -47,12 +43,10 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
     }
   }, [setApiConnected]);
 
-  // Sync from global store (App.tsx runs the primary health check)
   useEffect(() => {
     setStatus(prev => ({ ...prev, api: apiConnected }));
   }, [apiConnected]);
 
-  // Only run our own detailed check every 60s (App.tsx does the fast health ping)
   useEffect(() => {
     void checkStatus();
     const interval = setInterval(checkStatus, 60_000);
@@ -60,12 +54,12 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
   }, [checkStatus]);
 
   const dotColor = status.api
-    ? status.isMock ? 'bg-amber-400' : 'bg-green-400'
-    : 'bg-red-400';
+    ? status.isMock ? 'bg-accent-orange' : 'bg-accent-green'
+    : 'bg-accent-red';
 
   const textColor = status.api
-    ? status.isMock ? 'text-amber-400' : 'text-green-400'
-    : 'text-red-400';
+    ? status.isMock ? 'text-accent-orange' : 'text-accent-green'
+    : 'text-accent-red';
 
   const label = status.api
     ? status.isMock ? 'Mock' : 'Live'
@@ -92,7 +86,7 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
           <div className="space-y-2">
             {/* API status */}
             <div className="flex items-center justify-between">
-              <span className="text-gray-400 flex items-center gap-1">
+              <span className="text-th-secondary flex items-center gap-1">
                 {status.api ? <Wifi size={10} /> : <WifiOff size={10} />}
                 Backend API
               </span>
@@ -102,9 +96,9 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
             {/* Data source */}
             {status.api && (
               <div className="flex items-center justify-between">
-                <span className="text-gray-400">Data source</span>
-                <span className={status.isMock ? 'text-amber-400' : 'text-green-400'}>
-                  {status.isMock ? '⚠ Mock' : '● Live'}
+                <span className="text-th-secondary">Data source</span>
+                <span className={status.isMock ? 'text-accent-orange' : 'text-accent-green'}>
+                  {status.isMock ? 'Mock' : 'Live'}
                 </span>
               </div>
             )}
@@ -112,10 +106,10 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
             {/* Latency */}
             {status.latencyMs !== null && (
               <div className="flex items-center justify-between">
-                <span className="text-gray-400">Latency</span>
+                <span className="text-th-secondary">Latency</span>
                 <span className={`font-mono ${
-                  status.latencyMs < 200 ? 'text-green-400' :
-                  status.latencyMs < 500 ? 'text-amber-400' : 'text-red-400'
+                  status.latencyMs < 200 ? 'text-accent-green' :
+                  status.latencyMs < 500 ? 'text-accent-orange' : 'text-accent-red'
                 }`}>
                   {status.latencyMs}ms
                 </span>
@@ -124,7 +118,7 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
 
             {/* Last check */}
             {status.lastCheck && (
-              <div className="flex items-center justify-between text-gray-500">
+              <div className="flex items-center justify-between text-th-muted">
                 <span className="flex items-center gap-1"><Clock size={9} /> Last check</span>
                 <span>{status.lastCheck.toLocaleTimeString('pl-PL')}</span>
               </div>
@@ -132,7 +126,7 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
 
             {/* Mock data warning */}
             {status.isMock && (
-              <div className="mt-1 p-1.5 bg-amber-900/20 border border-amber-700/30 rounded text-amber-400/80 flex items-start gap-1.5">
+              <div className="mt-1 p-1.5 bg-accent-orange/10 border border-accent-orange/25 rounded text-accent-orange/80 flex items-start gap-1.5">
                 <AlertTriangle size={10} className="mt-0.5 shrink-0" />
                 <span className="text-[10px] leading-tight">
                   Dane z cache — API rate limit lub brak połączenia z Twelve Data
@@ -145,4 +139,3 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
     </div>
   );
 });
-
