@@ -14,6 +14,7 @@ import { NotificationCenter } from './NotificationCenter';
 import { useSoundAlerts } from '../../hooks/useSoundAlerts';
 import { analysisAPI } from '../../api/client';
 import { Sparkline } from '../ui/Sparkline';
+import { AnimatedNumber } from '../ui/AnimatedNumber';
 import { prefetchRoute } from '../../hooks/usePrefetch';
 import { useScrollDirection } from '../../hooks/useScrollDirection';
 
@@ -198,9 +199,8 @@ export function Header() {
             <Sparkline data={sparklineData} width={48} height={20} strokeWidth={1.2} fill={false} className="hidden lg:block opacity-70" />
           )}
           <div className="text-right">
-            <div className="text-lg font-bold font-mono leading-tight" style={{ color: 'var(--color-text-primary)' }}>
-              ${ticker.price.toFixed(2)}
-            </div>
+            <AnimatedNumber value={ticker.price} decimals={2} prefix="$" duration={300}
+              className="text-lg font-bold font-mono leading-tight" />
             <div className={`flex items-center justify-end gap-1 text-[10px] font-medium leading-tight ${isPositive ? 'text-accent-green' : 'text-accent-red'}`}>
               {isPositive ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
               <span>
@@ -212,6 +212,24 @@ export function Header() {
 
         {/* Session badge */}
         {sessionInfo && <SessionBadge session={sessionInfo} />}
+
+        {/* Volatility regime badge */}
+        {sessionInfo?.volatility_expected && (
+          <div className={`hidden lg:flex items-center gap-1 px-2 py-1 rounded border text-[10px] font-medium ${
+            sessionInfo.volatility_expected === 'high'
+              ? 'text-accent-red border-accent-red/30 bg-accent-red/8'
+              : sessionInfo.volatility_expected === 'medium'
+              ? 'text-accent-orange border-accent-orange/30 bg-accent-orange/8'
+              : 'text-th-muted border-th-muted/20 bg-th-muted/5'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              sessionInfo.volatility_expected === 'high' ? 'bg-accent-red animate-pulse'
+              : sessionInfo.volatility_expected === 'medium' ? 'bg-accent-orange'
+              : 'bg-th-muted'
+            }`} />
+            Vol: {sessionInfo.volatility_expected}
+          </div>
+        )}
 
         {/* Notification center */}
         <NotificationCenter />
