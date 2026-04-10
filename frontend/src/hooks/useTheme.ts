@@ -1,44 +1,70 @@
 /**
- * src/hooks/useTheme.ts — Theme management (dark/light mode)
+ * src/hooks/useTheme.ts — Theme management (dark/light/system mode)
  *
- * Persists to localStorage. Defaults to dark.
+ * Priority: localStorage override > system preference > dark default.
  * Applies 'light' class to <html> element for CSS variable switching.
  * Adds temporary 'transitioning' class for smooth color transitions.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 
-type Theme = 'dark' | 'light';
+type ThemePref = 'dark' | 'light' | 'system';
+type ResolvedTheme = 'dark' | 'light';
 
 const STORAGE_KEY = 'qs-theme';
 
-function getInitialTheme(): Theme {
+function getSystemTheme(): ResolvedTheme {
+  if (typeof window === 'undefined') return 'dark';
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function getInitialPref(): ThemePref {
   const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') return stored;
+  if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
   return 'dark';
 }
 
-export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>(getInitialTheme);
+function resolve(pref: ThemePref): ResolvedTheme {
+  return pref === 'system' ? getSystemTheme() : pref;
+}
 
+export function useTheme() {
+  const [pref, setPref] = useState<ThemePref>(getInitialPref);
+  const [resolved, setResolved] = useState<ResolvedTheme>(() => resolve(pref));
+
+  // Listen for system theme changes
   useEffect(() => {
+    if (pref !== 'system') return;
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const handler = () => setResolved(getSystemTheme());
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [pref]);
+
+  // Apply theme class
+  useEffect(() => {
+    const theme = resolve(pref);
+    setResolved(theme);
     const root = document.documentElement;
     if (theme === 'light') {
       root.classList.add('light');
     } else {
       root.classList.remove('light');
     }
-    localStorage.setItem(STORAGE_KEY, theme);
-  }, [theme]);
+    localStorage.setItem(STORAGE_KEY, pref);
+  }, [pref]);
 
   const toggle = useCallback(() => {
     const root = document.documentElement;
-    // Enable transition for smooth theme switch
     root.classList.add('transitioning');
-    setThemeState(prev => prev === 'dark' ? 'light' : 'dark');
-    // Remove transitioning class after animation completes
+    // Cycle: dark → light → system → dark
+    setPref(prev => {
+      if (prev === 'dark') return 'light';
+      if (prev === 'light') return 'system';
+      return 'dark';
+    });
     setTimeout(() => root.classList.remove('transitioning'), 300);
   }, []);
 
-  return { theme, toggle, isDark: theme === 'dark' };
+  return { theme: resolved, pref, toggle, isDark: resolved === 'dark' };
 }

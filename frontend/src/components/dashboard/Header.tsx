@@ -4,15 +4,17 @@
 
 import { useEffect, useState, memo } from 'react';
 import { NavLink } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon, Newspaper, Volume2, VolumeX } from 'lucide-react';
+import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon, Monitor, Newspaper, Volume2, VolumeX } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
 import { useTradingStore } from '../../store/tradingStore';
 import { ScrollProgressBar } from './ScrollProgressBar';
 import { ConnectionStatus } from '../ui/ConnectionStatus';
 import { RiskKillSwitch } from './RiskKillSwitch';
+import { NotificationCenter } from './NotificationCenter';
 import { useSoundAlerts } from '../../hooks/useSoundAlerts';
 import { analysisAPI } from '../../api/client';
 import { prefetchRoute } from '../../hooks/usePrefetch';
+import { useScrollDirection } from '../../hooks/useScrollDirection';
 
 interface SessionInfo {
   session: string;
@@ -99,8 +101,9 @@ const NAV_ITEMS = [
 ] as const;
 
 export function Header() {
-  const { toggle: toggleTheme, isDark } = useTheme();
+  const { toggle: toggleTheme, isDark, pref: themePref } = useTheme();
   const { enabled: soundEnabled, toggle: toggleSound } = useSoundAlerts();
+  const scrollDir = useScrollDirection();
   const { ticker, apiConnected } = useTradingStore();
   const [prevPrice, setPrevPrice] = useState<number | null>(null);
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
@@ -139,7 +142,7 @@ export function Header() {
   const isPositive = ticker.change >= 0;
 
   return (
-    <header className="sticky top-0 z-50 backdrop-blur-md border-b" style={{ background: `color-mix(in srgb, var(--color-surface) 95%, transparent)`, borderColor: 'var(--color-border)' }}>
+    <header className={`sticky top-0 z-50 backdrop-blur-md border-b transition-transform duration-300 ${scrollDir === 'down' ? '-translate-y-full' : 'translate-y-0'}`} style={{ background: `color-mix(in srgb, var(--color-surface) 95%, transparent)`, borderColor: 'var(--color-border)' }}>
       {/* Single row: logo + nav + price + session + status */}
       <div className="px-4 lg:px-6 py-0 flex items-center gap-2 lg:gap-4">
         {/* Logo */}
@@ -199,6 +202,9 @@ export function Header() {
         {/* Session badge */}
         {sessionInfo && <SessionBadge session={sessionInfo} />}
 
+        {/* Notification center */}
+        <NotificationCenter />
+
         {/* Risk Kill Switch */}
         <RiskKillSwitch />
 
@@ -212,14 +218,14 @@ export function Header() {
           {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
         </button>
 
-        {/* Theme toggle */}
+        {/* Theme toggle (dark → light → system → dark) */}
         <button
           onClick={toggleTheme}
           className="p-1.5 rounded-md transition-colors hover:bg-dark-secondary"
-          style={{ color: 'var(--color-text-muted)' }}
-          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          style={{ color: themePref === 'system' ? 'var(--color-accent-blue)' : 'var(--color-text-muted)' }}
+          title={themePref === 'dark' ? 'Light mode' : themePref === 'light' ? 'System mode' : 'Dark mode'}
         >
-          {isDark ? <Sun size={14} /> : <Moon size={14} />}
+          {themePref === 'system' ? <Monitor size={14} /> : isDark ? <Sun size={14} /> : <Moon size={14} />}
         </button>
 
         {/* Status */}

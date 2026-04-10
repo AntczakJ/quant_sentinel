@@ -17,6 +17,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { useBrowserNotifications } from './hooks/useBrowserNotifications';
 import { useDocumentTitle } from './hooks/useDocumentTitle';
 import { useFaviconBadge } from './hooks/useFaviconBadge';
+import { pushNotification } from './components/dashboard/NotificationCenter';
 import { RefreshCw } from 'lucide-react';
 import './index.css';
 
@@ -126,6 +127,11 @@ function AppContent() {
         setCurrentSignal(data as any);
         if (data.direction && data.direction !== 'WAIT') {
           notifySignal(data.direction, data.entry_price);
+          pushNotification({
+            type: 'signal',
+            title: `Nowy sygnal: ${data.direction}`,
+            message: data.entry_price ? `Entry: $${data.entry_price.toFixed(2)}` : 'Sprawdz dashboard',
+          });
         }
       }
     },

@@ -9,6 +9,7 @@ import { useState, useMemo, memo, useCallback, useDeferredValue } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Filter, ArrowUpDown, X, Search, ExternalLink } from 'lucide-react';
 import { useTradingStore } from '../../store/tradingStore';
+import { TradeDetailModal } from './TradeDetailModal';
 import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { analysisAPI } from '../../api/client';
 
@@ -147,6 +148,7 @@ function TradeMiniChart({ entry, sl, tp, direction, isWin }: {
 export const TradeHistory = memo(function TradeHistory() {
   const navigate = useNavigate();
   const setSelectedInterval = useTradingStore(s => s.setSelectedInterval);
+  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [resultFilter, setResultFilter] = useState<ResultFilter>('ALL');
   const [dirFilter, setDirFilter] = useState<DirectionFilter>('ALL');
   const [sessionFilter, setSessionFilter] = useState<string>('ALL');
@@ -457,7 +459,8 @@ export const TradeHistory = memo(function TradeHistory() {
             return (
               <div
                 key={trade.id}
-                className={`border rounded p-2 text-xs ${
+                onClick={() => setSelectedTrade(trade)}
+                className={`border rounded p-2 text-xs cursor-pointer hover:brightness-110 transition-all ${
                   isWin ? 'bg-accent-green/5 border-accent-green/30'
                   : isLoss ? 'bg-accent-red/5 border-accent-red/30'
                   : 'bg-accent-blue/5 border-accent-blue/30'
@@ -531,7 +534,8 @@ export const TradeHistory = memo(function TradeHistory() {
                     </div>
                   </div>
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       if (trade.timeframe) setSelectedInterval(trade.timeframe);
                       navigate('/');
                     }}
@@ -547,6 +551,11 @@ export const TradeHistory = memo(function TradeHistory() {
           })
         )}
       </div>
+
+      {/* Trade detail modal */}
+      {selectedTrade && (
+        <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
+      )}
     </div>
   );
 });
