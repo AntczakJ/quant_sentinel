@@ -33,7 +33,7 @@ import {
   type UTCTimestamp,
   type MouseEventParams,
 } from 'lightweight-charts';
-import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2, Maximize2, Minimize2 } from 'lucide-react';
+import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2, Maximize2, Minimize2, Camera } from 'lucide-react';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { useTradingStore } from '../../store/tradingStore';
 import { marketAPI, signalsAPI } from '../../api/client';
@@ -54,6 +54,7 @@ import type { PriceAlert } from '../../hooks/usePriceAlerts';
 import { useBrowserNotifications } from '../../hooks/useBrowserNotifications';
 import { useSoundAlerts } from '../../hooks/useSoundAlerts';
 import { useKeyboardShortcuts, SHORTCUT_LIST } from '../../hooks/useKeyboardShortcuts';
+import { ChartContextMenu } from './ChartContextMenu';
 import { useFullscreen } from '../../hooks/useFullscreen';
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -232,7 +233,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
   sessionsVisible, onToggleSessions,
   drawingCount, onClearDrawings,
   visibleIndicators, onToggleIndicator,
-  isFullscreen, onToggleFullscreen,
+  isFullscreen, onToggleFullscreen, onScreenshot,
 }: {
   selected: string; onSelect: (v: string) => void; refreshing: boolean; onRefresh: () => void;
   smcVisible: boolean; onToggleSmc: () => void;
@@ -240,6 +241,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
   drawingCount: number; onClearDrawings: () => void;
   visibleIndicators: VisibleIndicators; onToggleIndicator: (key: keyof VisibleIndicators) => void;
   isFullscreen: boolean; onToggleFullscreen: () => void;
+  onScreenshot: () => void;
 }) {
   const [showIndMenu, setShowIndMenu] = useState(false);
   const activeCount = Object.values(visibleIndicators).filter(Boolean).length;
@@ -340,6 +342,13 @@ const IntervalToolbar = memo(function IntervalToolbar({
         title="Refresh"
       >
         <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+      </button>
+      <button
+        onClick={onScreenshot}
+        className="p-1.5 rounded-md text-[var(--chart-text)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-secondary)] transition-all duration-150"
+        title="Zapisz wykres jako PNG"
+      >
+        <Camera size={12} />
       </button>
       <button
         onClick={onToggleFullscreen}
@@ -468,6 +477,9 @@ export function CandlestickChart() {
 
   // Help modal
   const [showHelp, setShowHelp] = useState(false);
+
+  // Context menu
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; price: number | null } | null>(null);
 
   // State
   const [loading, setLoading] = useState(true);
@@ -1368,6 +1380,47 @@ export function CandlestickChart() {
   }, [smcVisible]);
 
 
+  /* ── Right-click context menu ─────────────────────────────────────────── */
+  useEffect(() => {
+    const container = mainContainerRef.current;
+    const series = candleSeriesRef.current;
+    if (!container || !series) return;
+
+    const handler = (e: MouseEvent) => {
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const price = series.coordinateToPrice(y) as number | null;
+      setContextMenu({ x: e.clientX, y: e.clientY, price });
+    };
+
+    container.addEventListener('contextmenu', handler);
+    return () => container.removeEventListener('contextmenu', handler);
+  }, []);
+
+  /* ── Chart screenshot ────────────────────────────────────────────────── */
+  const handleScreenshot = useCallback(() => {
+    const chart = mainChartRef.current;
+    if (!chart) return;
+    try {
+      const canvas = chart.takeScreenshot();
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `qs-chart-${selectedInterval}-${new Date().toISOString().slice(0, 16).replace(':', '')}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast.success('Screenshot saved');
+      });
+    } catch {
+      toast.error('Screenshot failed');
+    }
+  }, [selectedInterval, toast]);
+
   /* ── Global keyboard shortcuts ────────────────────────────────────────── */
   useKeyboardShortcuts({
     onToggleTheme: toggleTheme,
@@ -1417,6 +1470,7 @@ export function CandlestickChart() {
         onToggleIndicator={(key) => setVisibleIndicators(prev => ({ ...prev, [key]: !prev[key] }))}
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
+        onScreenshot={handleScreenshot}
       />
 
       {/* Main candlestick + volume chart */}
@@ -1548,6 +1602,41 @@ export function CandlestickChart() {
           </span>
           <div ref={stochContainerRef} className="w-full" style={{ height: 100 }} />
         </div>
+      )}
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <ChartContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          price={contextMenu.price}
+          onClose={() => setContextMenu(null)}
+          onSetAlert={(price) => {
+            const current = rawCandlesRef.current[rawCandlesRef.current.length - 1]?.close;
+            if (current) {
+              const alert = addAlert(price, current);
+              toast.success(`Alert: $${price.toFixed(2)} (${alert.direction})`);
+            }
+          }}
+          onCopyPrice={(price) => {
+            void navigator.clipboard.writeText(price.toFixed(2));
+            toast.success('Cena skopiowana');
+          }}
+          onScreenshot={handleScreenshot}
+          onToggleSmc={() => setSmcVisible(v => !v)}
+          onToggleSessions={() => {
+            setSessionsVisible(v => {
+              const next = !v;
+              if (sessionOverlayRef.current) {
+                sessionOverlayRef.current.setVisible(next);
+                if (next && rawCandlesRef.current.length) {
+                  sessionOverlayRef.current.rebuild(rawCandlesRef.current.map(c => c.time as number));
+                }
+              }
+              return next;
+            });
+          }}
+        />
       )}
 
       {/* Keyboard shortcuts help modal */}

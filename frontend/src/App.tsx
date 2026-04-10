@@ -18,7 +18,7 @@ import { useBrowserNotifications } from './hooks/useBrowserNotifications';
 import { useDocumentTitle } from './hooks/useDocumentTitle';
 import { useFaviconBadge } from './hooks/useFaviconBadge';
 import { pushNotification } from './components/dashboard/NotificationCenter';
-import { RefreshCw } from 'lucide-react';
+// RefreshCw removed — PageLoader now uses branded QS logo
 import './index.css';
 
 /* ── Lazy-loaded pages (code-split chunks) ─────────────────────────────── */
@@ -43,9 +43,20 @@ const queryClient = new QueryClient({
 
 function PageLoader() {
   return (
-    <div className="flex items-center justify-center h-64 text-th-muted text-sm gap-2">
-      <RefreshCw size={14} className="animate-spin" />
-      Loading…
+    <div className="flex flex-col items-center justify-center h-64 gap-3">
+      <div className="flex items-center gap-1.5 animate-pulse">
+        <span className="text-sm font-bold tracking-wider" style={{ color: 'var(--color-text-primary)' }}>QUANT</span>
+        <span className="text-sm font-bold tracking-wider" style={{ color: 'var(--color-accent-green)' }}>SENTINEL</span>
+      </div>
+      <div className="flex gap-1">
+        {[0, 1, 2].map(i => (
+          <div
+            key={i}
+            className="w-1.5 h-1.5 rounded-full bg-accent-green"
+            style={{ animation: `pulse 1s ease-in-out ${i * 0.2}s infinite` }}
+          />
+        ))}
+      </div>
     </div>
   );
 }
