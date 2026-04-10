@@ -3,7 +3,7 @@
  */
 
 import { useState } from 'react';
-import { ModelStats, RiskMetrics } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert } from '../components/dashboard';
 import { trainingAPI } from '../api/client';
 import { Play, Loader2, CheckCircle, XCircle } from 'lucide-react';
 
@@ -96,6 +96,15 @@ function TrainingControls() {
 export default function ModelsPage() {
   return (
     <div className="space-y-4 max-w-[1600px] mx-auto">
+      {/* Model Health Alert — full width banner */}
+      <div className="card">
+        <h2 className="section-title mb-3">
+          Model Health Monitor
+          <span className="text-xs text-th-muted font-normal ml-2">— drift, accuracy, calibration</span>
+        </h2>
+        <ModelDriftAlert />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="card">
           <h2 className="section-title mb-3">ML Models</h2>

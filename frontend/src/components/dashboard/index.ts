@@ -12,4 +12,7 @@ export { SignalHistory } from './SignalHistory';
 export { TradeHistory } from './TradeHistory';
 export { AgentChat } from './AgentChat';
 export { RiskMetrics } from './RiskMetrics';
+export { MtfConfluence } from './MtfConfluence';
+export { ExecutionQuality } from './ExecutionQuality';
+export { ModelDriftAlert } from './ModelDriftAlert';
 

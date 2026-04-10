@@ -33,7 +33,7 @@ import {
   type UTCTimestamp,
   type MouseEventParams,
 } from 'lightweight-charts';
-import { RefreshCw, AlertCircle, Layers, Trash2 } from 'lucide-react';
+import { RefreshCw, AlertCircle, Layers, Trash2, Clock } from 'lucide-react';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { useTradingStore } from '../../store/tradingStore';
 import { marketAPI, signalsAPI } from '../../api/client';
@@ -47,6 +47,7 @@ import {
   DEFAULT_STYLE,
 } from './drawings';
 import type { Drawing, DrawingTool, DrawingStyle } from './drawings';
+import { SessionOverlay } from './SessionOverlay';
 import { useIndicatorWorker } from '../../hooks/useIndicatorWorker';
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -161,10 +162,12 @@ const INTERVALS = ['5m', '15m', '1h', '4h'] as const;
 
 const IntervalToolbar = memo(function IntervalToolbar({
   selected, onSelect, refreshing, onRefresh, smcVisible, onToggleSmc,
+  sessionsVisible, onToggleSessions,
   drawingCount, onClearDrawings,
 }: {
   selected: string; onSelect: (v: string) => void; refreshing: boolean; onRefresh: () => void;
   smcVisible: boolean; onToggleSmc: () => void;
+  sessionsVisible: boolean; onToggleSessions: () => void;
   drawingCount: number; onClearDrawings: () => void;
 }) {
   return (
@@ -205,6 +208,18 @@ const IntervalToolbar = memo(function IntervalToolbar({
       >
         <Layers size={11} />
         <span className="hidden sm:inline">SMC</span>
+      </button>
+      <button
+        onClick={onToggleSessions}
+        className={`p-1.5 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1 ${
+          sessionsVisible
+            ? 'bg-[#3b82f6]/12 text-[#3b82f6] hover:bg-[#3b82f6]/20'
+            : 'text-[var(--chart-text)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-secondary)]'
+        }`}
+        title={sessionsVisible ? 'Ukryj sesje' : 'Pokaz sesje (Asian/London/NY)'}
+      >
+        <Clock size={11} />
+        <span className="hidden sm:inline">Sessions</span>
       </button>
       <button
         onClick={onRefresh}
@@ -252,6 +267,10 @@ export function CandlestickChart() {
   // SMC overlay primitive
   const smcOverlayRef = useRef<SmcZonesOverlay | null>(null);
   const [smcVisible, setSmcVisible] = useState(true);
+
+  // Session overlay
+  const sessionOverlayRef = useRef<SessionOverlay | null>(null);
+  const [sessionsVisible, setSessionsVisible] = useState(true);
 
   // Drawing tools
   const drawingsOverlayRef = useRef<DrawingsOverlay | null>(null);
@@ -415,6 +434,11 @@ export function CandlestickChart() {
     rsiSeries.createPriceLine({ price: 30, color: COLORS.rsiOversold, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
     rsiSeries.createPriceLine({ price: 50, color: 'rgba(107,114,128,0.25)', lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: '' });
 
+    // ─── Attach session background overlay (below everything) ───
+    const sessionOverlay = new SessionOverlay();
+    candleSeries.attachPrimitive(sessionOverlay);
+    sessionOverlayRef.current = sessionOverlay;
+
     // ─── Attach SMC zones overlay to candle series ───
     const smcOverlay = new SmcZonesOverlay();
     candleSeries.attachPrimitive(smcOverlay);
@@ -465,6 +489,7 @@ export function CandlestickChart() {
 
     return () => {
       // Detach overlays before removing chart
+      try { candleSeries.detachPrimitive(sessionOverlay); } catch { /* ok */ }
       try { candleSeries.detachPrimitive(smcOverlay); } catch { /* ok */ }
       try { candleSeries.detachPrimitive(drawingsOverlay); } catch { /* ok */ }
       mainChart.remove();
@@ -703,6 +728,11 @@ export function CandlestickChart() {
 
       rawCandlesRef.current = candleSd;
 
+      // ── Feed session overlay ──
+      if (sessionOverlayRef.current) {
+        sessionOverlayRef.current.setCandles(candleSd.map(c => c.time as number));
+      }
+
       // ── Apply data to series ──
       candleSeriesRef.current?.setData(candleSd);
       volumeSeriesRef.current?.setData(volumeSd);
@@ -901,6 +931,11 @@ export function CandlestickChart() {
       bbMiddleRef.current?.applyOptions({ color: c.bbMiddle });
       bbLowerRef.current?.applyOptions({ color: c.bbLower });
       rsiSeriesRef.current?.applyOptions({ color: c.rsiLine });
+
+      // Rebuild session overlay with theme-adjusted opacity
+      if (sessionOverlayRef.current && rawCandlesRef.current.length) {
+        sessionOverlayRef.current.rebuild(rawCandlesRef.current.map(candle => candle.time as number));
+      }
     }, 50);
     return () => clearTimeout(timer);
   }, [isDark]);
@@ -929,6 +964,17 @@ export function CandlestickChart() {
         onRefresh={() => void fetchData()}
         smcVisible={smcVisible}
         onToggleSmc={() => setSmcVisible(v => !v)}
+        sessionsVisible={sessionsVisible}
+        onToggleSessions={() => {
+          const next = !sessionsVisible;
+          setSessionsVisible(next);
+          if (sessionOverlayRef.current) {
+            sessionOverlayRef.current.setVisible(next);
+            if (next && rawCandlesRef.current.length) {
+              sessionOverlayRef.current.rebuild(rawCandlesRef.current.map(c => c.time as number));
+            }
+          }
+        }}
         drawingCount={drawings.length}
         onClearDrawings={handleClearAll}
       />
