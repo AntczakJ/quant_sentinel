@@ -4,8 +4,8 @@
  * Shows entry/SL/TP chart, pattern info, timing, P&L breakdown.
  */
 
-import { memo, useCallback } from 'react';
-import { X, TrendingUp, TrendingDown, Clock, Target, Shield, Zap, Copy } from 'lucide-react';
+import { memo, useCallback, useState } from 'react';
+import { X, TrendingUp, TrendingDown, Clock, Target, Shield, Zap, Copy, StickyNote, Save } from 'lucide-react';
 
 interface Trade {
   id: number;
@@ -39,7 +39,30 @@ interface Props {
   onClose: () => void;
 }
 
+const NOTES_KEY = 'qs:trade-notes';
+
+function loadNote(tradeId: number): string {
+  try { return JSON.parse(localStorage.getItem(NOTES_KEY) ?? '{}')[tradeId] ?? ''; }
+  catch { return ''; }
+}
+
+function saveNote(tradeId: number, note: string) {
+  try {
+    const all = JSON.parse(localStorage.getItem(NOTES_KEY) ?? '{}');
+    if (note.trim()) all[tradeId] = note; else delete all[tradeId];
+    localStorage.setItem(NOTES_KEY, JSON.stringify(all));
+  } catch { /* quota */ }
+}
+
 export const TradeDetailModal = memo(function TradeDetailModal({ trade, onClose }: Props) {
+  const [note, setNote] = useState(() => loadNote(trade.id));
+  const [noteSaved, setNoteSaved] = useState(true);
+
+  const handleSaveNote = useCallback(() => {
+    saveNote(trade.id, note);
+    setNoteSaved(true);
+  }, [trade.id, note]);
+
   const copyToClipboard = useCallback(() => {
     const lines = [
       `📊 Trade #${trade.id} — ${trade.direction} ${trade.result}`,
@@ -167,6 +190,27 @@ export const TradeDetailModal = memo(function TradeDetailModal({ trade, onClose 
               <div className="text-xs text-th-secondary mt-0.5">{trade.pattern}</div>
             </div>
           )}
+
+          {/* Personal notes */}
+          <div className="stat-item !p-2">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-1 text-[9px] text-th-dim"><StickyNote size={8} />Notatka</div>
+              {!noteSaved && (
+                <button onClick={handleSaveNote}
+                  className="flex items-center gap-0.5 text-[9px] text-accent-green hover:underline">
+                  <Save size={8} />Zapisz
+                </button>
+              )}
+            </div>
+            <textarea
+              value={note}
+              onChange={e => { setNote(e.target.value); setNoteSaved(false); }}
+              onBlur={handleSaveNote}
+              placeholder="Dodaj notatke do tej transakcji..."
+              rows={2}
+              className="w-full bg-dark-tertiary border border-dark-secondary rounded px-2 py-1 text-[10px] text-th-secondary outline-none resize-none focus:border-accent-blue/40"
+            />
+          </div>
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1 text-[10px] text-th-dim">
