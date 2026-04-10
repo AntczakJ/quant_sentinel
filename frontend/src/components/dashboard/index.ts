@@ -20,4 +20,5 @@ export { BacktestPanel } from './BacktestPanel';
 export { RiskKillSwitch } from './RiskKillSwitch';
 export { PatternAnalytics } from './PatternAnalytics';
 export { ExportButtons } from './ExportButtons';
+export { TradeHeatmap } from './TradeHeatmap';
 

@@ -17,6 +17,7 @@ interface Layout { i: string; x: number; y: number; w: number; h: number; minW?:
 type Layouts = Record<string, Layout[]>;
 import { Lock, Unlock, RotateCcw, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react';
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary';
+import { FreshnessIndicator } from '../ui/FreshnessIndicator';
 import 'react-grid-layout/css/styles.css';
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
@@ -29,6 +30,8 @@ export interface GridWidget {
   content: ReactNode;
   /** Default layout for lg breakpoint */
   defaultLayout: { x: number; y: number; w: number; h: number; minW?: number; minH?: number };
+  /** Optional: last update timestamp for freshness indicator */
+  lastUpdated?: Date | number | null;
 }
 
 export interface PresetLayout {
@@ -211,6 +214,7 @@ export const DraggableGrid = memo(function DraggableGrid({
                 <div className={`drag-handle flex items-center justify-between ${isCollapsed ? '' : 'mb-2'} ${!locked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                   <h2 className="section-title">{w.title}</h2>
                   <div className="flex items-center gap-1">
+                    {w.lastUpdated && <FreshnessIndicator lastUpdated={w.lastUpdated} />}
                     {!locked && (
                       <div className="flex gap-0.5 mr-1">
                         <div className="w-1 h-1 rounded-full bg-th-muted" />
