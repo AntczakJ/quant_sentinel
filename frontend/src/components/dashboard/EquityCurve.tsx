@@ -11,6 +11,7 @@ import { createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from 
 import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { portfolioAPI } from '../../api/client';
 import { useTheme } from '../../hooks/useTheme';
+import { EmptyState } from '../ui/EmptyState';
 
 interface HistoryData {
   timestamps: string[];
@@ -126,9 +127,11 @@ export const EquityCurve = memo(function EquityCurve() {
 
   if (!data || !data.timestamps?.length) {
     return (
-      <div className="text-xs text-th-muted text-center py-8">
-        Brak historii equity — pojawi sie po pierwszych zamknietych transakcjach
-      </div>
+      <EmptyState
+        icon="chart"
+        message="Brak historii equity"
+        description="Wykres pojawi sie po pierwszych zamknietych transakcjach"
+      />
     );
   }
 

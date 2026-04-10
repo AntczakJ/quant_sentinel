@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, memo, useCallback } from 'react';
-import { Wifi, WifiOff, Clock, AlertTriangle } from 'lucide-react';
+import { Wifi, WifiOff, Clock, AlertTriangle, Radio } from 'lucide-react';
 import { useTradingStore } from '../../store/tradingStore';
 import { healthAPI, marketAPI } from '../../api/client';
 
@@ -15,7 +15,7 @@ interface StatusInfo {
 }
 
 export const ConnectionStatus = memo(function ConnectionStatus() {
-  const { apiConnected, setApiConnected } = useTradingStore();
+  const { apiConnected, setApiConnected, wsConnected } = useTradingStore();
   const [status, setStatus] = useState<StatusInfo>({
     api: apiConnected,
     isMock: false,
@@ -62,7 +62,7 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
     : 'text-accent-red';
 
   const label = status.api
-    ? status.isMock ? 'Mock' : 'Live'
+    ? wsConnected ? 'WS Live' : status.isMock ? 'Mock' : 'Live'
     : 'Offline';
 
   return (
@@ -92,6 +92,19 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
               </span>
               <span className={textColor}>{status.api ? 'Connected' : 'Disconnected'}</span>
             </div>
+
+            {/* WebSocket status */}
+            {status.api && (
+              <div className="flex items-center justify-between">
+                <span className="text-th-secondary flex items-center gap-1">
+                  <Radio size={10} />
+                  Price Feed
+                </span>
+                <span className={wsConnected ? 'text-accent-green' : 'text-accent-orange'}>
+                  {wsConnected ? 'WebSocket' : 'HTTP Polling'}
+                </span>
+              </div>
+            )}
 
             {/* Data source */}
             {status.api && (

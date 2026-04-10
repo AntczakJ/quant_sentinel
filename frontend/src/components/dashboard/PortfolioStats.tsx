@@ -192,7 +192,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
       {/* Position */}
       {portfolio.has_position ? (
         <div className="stat-item !border-accent-blue/20">
-          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-2">Active Position</div>
+          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-2">Aktywna Pozycja</div>
           <div className="flex items-center justify-between">
             <span className={`text-base font-bold ${portfolio.position_type === 'LONG' ? 'text-accent-green' : 'text-accent-red'}`}>
               {portfolio.position_type}
@@ -200,12 +200,12 @@ export const PortfolioStats = memo(function PortfolioStats() {
             <span className="text-xs text-th-muted font-mono">${portfolio.position_entry?.toFixed(2)}</span>
           </div>
           <div className={`text-sm font-bold mt-1.5 font-mono ${(portfolio.position_unrealized_pnl ?? 0) >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-            Unrealized: {(portfolio.position_unrealized_pnl ?? 0) >= 0 ? '+' : ''}{portfolio.position_unrealized_pnl?.toFixed(2)}
+            Niezreal.: {(portfolio.position_unrealized_pnl ?? 0) >= 0 ? '+' : ''}{portfolio.position_unrealized_pnl?.toFixed(2)}
           </div>
         </div>
       ) : (
         <div className="stat-item text-center">
-          <span className="text-xs text-th-dim">No Active Position</span>
+          <span className="text-xs text-th-dim">Brak aktywnej pozycji</span>
         </div>
       )}
 

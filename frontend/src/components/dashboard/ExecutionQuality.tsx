@@ -9,6 +9,7 @@ import { memo } from 'react';
 import { Activity, Crosshair, Award, TrendingUp } from 'lucide-react';
 import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { exportAPI } from '../../api/client';
+import { EmptyState } from '../ui/EmptyState';
 
 interface GradeStats {
   wins: number;
@@ -122,9 +123,11 @@ export const ExecutionQuality = memo(function ExecutionQuality() {
 
   if (!data || data.error || data.total_trades === 0) {
     return (
-      <div className="text-xs text-th-muted text-center py-4">
-        {data?.error ?? 'Brak danych — raport pojawi sie po pierwszych zamknietych transakcjach'}
-      </div>
+      <EmptyState
+        icon="report"
+        message={data?.error ?? 'Brak danych o egzekucji'}
+        description="Raport pojawi sie po pierwszych zamknietych transakcjach"
+      />
     );
   }
 
