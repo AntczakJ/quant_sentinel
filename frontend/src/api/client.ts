@@ -475,5 +475,48 @@ export const agentAPI = {
   },
 };
 
+// Export endpoints
+export const exportAPI = {
+  /** Trade execution quality report: fill rate, slippage, win rate by grade */
+  getExecutionQuality: async (days: number = 30) => {
+    const response = await client.get<{
+      period_days: number;
+      total_trades: number;
+      wins: number;
+      losses: number;
+      win_rate: number;
+      total_pnl: number;
+      avg_pnl: number;
+      fill_rate: number;
+      avg_slippage: number;
+      slippage_samples: number;
+      by_grade: Record<string, {
+        wins: number;
+        losses: number;
+        pnl: number;
+        win_rate: number;
+        total: number;
+      }>;
+      error?: string;
+    }>('/export/execution-quality', { params: { days } });
+    return response.data;
+  },
+};
+
+// Model monitoring
+export const modelMonitorAPI = {
+  /** Model drift, rolling accuracy, calibration status, alerts */
+  getMonitor: async () => {
+    const response = await client.get<{
+      drift: Record<string, { psi: number; status: string; baseline_mean?: number; current_mean?: number }>;
+      accuracy: Record<string, { rolling_accuracy: number; window: number; trend: string }>;
+      calibration: Record<string, unknown>;
+      alerts: string[];
+      healthy: boolean;
+    }>('/models/monitor');
+    return response.data;
+  },
+};
+
 export default client;
 
