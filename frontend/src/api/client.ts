@@ -475,8 +475,34 @@ export const agentAPI = {
   },
 };
 
-// Export endpoints
+// Export & Download endpoints
 export const exportAPI = {
+  /** Download trades as CSV or JSON */
+  downloadTrades: async (format: 'csv' | 'json' = 'csv', status: string = 'all') => {
+    const response = await client.get(`/export/trades`, {
+      params: { format, status },
+      responseType: format === 'csv' ? 'blob' : 'json',
+    });
+    return response;
+  },
+
+  /** Download equity curve */
+  downloadEquity: async (format: 'csv' | 'json' = 'csv') => {
+    const response = await client.get(`/export/equity`, {
+      params: { format },
+      responseType: format === 'csv' ? 'blob' : 'json',
+    });
+    return response;
+  },
+
+  /** Download daily report */
+  getDailyReport: async (date?: string) => {
+    const response = await client.get('/export/daily-report', {
+      params: date ? { date } : {},
+    });
+    return response.data;
+  },
+
   /** Trade execution quality report: fill rate, slippage, win rate by grade */
   getExecutionQuality: async (days: number = 30) => {
     const response = await client.get<{

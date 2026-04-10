@@ -18,4 +18,6 @@ export { ModelDriftAlert } from './ModelDriftAlert';
 export { EquityCurve } from './EquityCurve';
 export { BacktestPanel } from './BacktestPanel';
 export { RiskKillSwitch } from './RiskKillSwitch';
+export { PatternAnalytics } from './PatternAnalytics';
+export { ExportButtons } from './ExportButtons';
 

@@ -2,8 +2,8 @@
  * AgentChat.tsx — Quant Sentinel Gold Trader Agent chat interface.
  */
 
-import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Wrench, RefreshCw, Trash2, AlertTriangle } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Bot, User, Wrench, RefreshCw, Trash2, AlertTriangle, History, Plus, ChevronLeft } from 'lucide-react';
 import { agentAPI } from '../../api/client';
 import { useTradingStore } from '../../store/tradingStore';
 import { MarkdownText } from '../ui/MarkdownText';
@@ -16,6 +16,23 @@ interface Message {
 }
 
 const THREAD_STORAGE_KEY = 'qs_agent_thread_id';
+const THREADS_LIST_KEY = 'qs_agent_threads';
+
+interface ThreadInfo {
+  id: string;
+  label: string;
+  lastUsed: number;
+}
+
+function loadThreads(): ThreadInfo[] {
+  try {
+    return JSON.parse(localStorage.getItem(THREADS_LIST_KEY) ?? '[]');
+  } catch { return []; }
+}
+
+function saveThreads(threads: ThreadInfo[]) {
+  localStorage.setItem(THREADS_LIST_KEY, JSON.stringify(threads.slice(0, 20)));
+}
 
 const QUICK_ACTIONS = [
   { label: 'Analiza M15', message: 'Przeanalizuj XAU/USD na M15 i ocen aktualny setup SMC.' },
@@ -47,6 +64,8 @@ export function AgentChat() {
     () => localStorage.getItem(THREAD_STORAGE_KEY) ?? undefined
   );
   const [agentAvailable, setAgentAvailable] = useState<boolean | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [threads, setThreads] = useState<ThreadInfo[]>(loadThreads);
   const apiConnected = useTradingStore((s) => s.apiConnected);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -111,6 +130,14 @@ export function AgentChat() {
       if (result.thread_id) {
         setThreadId(result.thread_id);
         localStorage.setItem(THREAD_STORAGE_KEY, result.thread_id);
+        // Track thread in history
+        setThreads(prev => {
+          const existing = prev.filter(t => t.id !== result.thread_id);
+          const label = text.trim().slice(0, 40) + (text.trim().length > 40 ? '...' : '');
+          const updated = [{ id: result.thread_id, label, lastUsed: Date.now() }, ...existing];
+          saveThreads(updated);
+          return updated;
+        });
       }
 
       const assistantMessage: Message = {
@@ -149,6 +176,45 @@ export function AgentChat() {
     }
   };
 
+  const loadThread = useCallback(async (tid: string) => {
+    try {
+      setLoading(true);
+      const history = await agentAPI.getThreadHistory(tid, 50);
+      const msgs: Message[] = history.messages.map((m: { role: string; content: string; created_at: number }) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        timestamp: new Date(m.created_at * 1000),
+      }));
+      setMessages(msgs.length > 0 ? msgs : [{
+        role: 'assistant' as const,
+        content: 'Watek zaladowany — brak wiadomosci do wyswietlenia.',
+        timestamp: new Date(),
+      }]);
+      setThreadId(tid);
+      localStorage.setItem(THREAD_STORAGE_KEY, tid);
+      setShowHistory(false);
+    } catch {
+      setMessages(prev => [...prev, {
+        role: 'assistant' as const,
+        content: 'Nie udalo sie zaladowac watku.',
+        timestamp: new Date(),
+      }]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const startNewThread = useCallback(() => {
+    localStorage.removeItem(THREAD_STORAGE_KEY);
+    setThreadId(undefined);
+    setMessages([{
+      role: 'assistant' as const,
+      content: 'Nowy watek — zaczynam od nowa!',
+      timestamp: new Date(),
+    }]);
+    setShowHistory(false);
+  }, []);
+
   const resetThread = () => {
     localStorage.removeItem(THREAD_STORAGE_KEY);
     setThreadId(undefined);
@@ -181,13 +247,31 @@ export function AgentChat() {
             </span>
           )}
         </div>
-        <button
-          onClick={resetThread}
-          title="Wyczysc historie rozmowy"
-          className="text-th-muted hover:text-accent-red transition-colors"
-        >
-          <Trash2 size={14} />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {threads.length > 0 && (
+            <button
+              onClick={() => setShowHistory(v => !v)}
+              title="Historia watkow"
+              className={`p-1 rounded transition-colors ${showHistory ? 'text-accent-blue bg-accent-blue/10' : 'text-th-muted hover:text-th-secondary'}`}
+            >
+              <History size={14} />
+            </button>
+          )}
+          <button
+            onClick={startNewThread}
+            title="Nowy watek"
+            className="text-th-muted hover:text-accent-green transition-colors"
+          >
+            <Plus size={14} />
+          </button>
+          <button
+            onClick={resetThread}
+            title="Wyczysc historie rozmowy"
+            className="text-th-muted hover:text-accent-red transition-colors"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Quick Action Buttons */}
@@ -203,6 +287,32 @@ export function AgentChat() {
           </button>
         ))}
       </div>
+
+      {/* Thread history sidebar */}
+      {showHistory && (
+        <div className="mb-3 bg-dark-bg border border-dark-secondary rounded-lg p-2 max-h-48 overflow-y-auto space-y-1">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] text-th-muted uppercase tracking-wider font-medium">Poprzednie watki</span>
+            <button onClick={() => setShowHistory(false)} className="text-th-dim hover:text-th-muted">
+              <ChevronLeft size={12} />
+            </button>
+          </div>
+          {threads.map(t => (
+            <button
+              key={t.id}
+              onClick={() => void loadThread(t.id)}
+              className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors hover:bg-dark-secondary ${
+                t.id === threadId ? 'bg-accent-blue/10 text-accent-blue border border-accent-blue/20' : 'text-th-secondary'
+              }`}
+            >
+              <div className="truncate font-medium">{t.label || t.id.slice(-8)}</div>
+              <div className="text-[9px] text-th-dim">
+                {new Date(t.lastUsed).toLocaleString('pl-PL', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-3 mb-3 min-h-0 max-h-[60vh] pr-1">
