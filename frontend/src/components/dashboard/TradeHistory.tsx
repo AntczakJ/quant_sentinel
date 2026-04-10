@@ -6,7 +6,9 @@
  */
 
 import { useState, useMemo, memo, useCallback } from 'react';
-import { TrendingUp, TrendingDown, Filter, ArrowUpDown, X, Search } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { TrendingUp, TrendingDown, Filter, ArrowUpDown, X, Search, ExternalLink } from 'lucide-react';
+import { useTradingStore } from '../../store/tradingStore';
 import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { analysisAPI } from '../../api/client';
 
@@ -97,7 +99,54 @@ const GRADE_COLORS: Record<string, string> = {
   'B': 'text-accent-blue', 'C': 'text-accent-orange', 'D': 'text-accent-red',
 };
 
+/** Mini SVG chart showing Entry/SL/TP levels */
+function TradeMiniChart({ entry, sl, tp, direction, isWin }: {
+  entry: number; sl: number; tp: number; direction: string; isWin: boolean | undefined;
+}) {
+  if (!entry || !sl || !tp || entry === 0) return null;
+  const prices = [sl, entry, tp];
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = max - min || 1;
+  const w = 80;
+  const h = 32;
+  const pad = 2;
+
+  const yOf = (p: number) => pad + ((max - p) / range) * (h - pad * 2);
+
+  const entryY = yOf(entry);
+  const slY = yOf(sl);
+  const tpY = yOf(tp);
+
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="flex-shrink-0">
+      {/* TP zone */}
+      <rect x={0} y={Math.min(entryY, tpY)} width={w} height={Math.abs(tpY - entryY)}
+        fill={isWin ? 'rgba(34,197,94,0.12)' : 'rgba(34,197,94,0.06)'} />
+      {/* SL zone */}
+      <rect x={0} y={Math.min(entryY, slY)} width={w} height={Math.abs(slY - entryY)}
+        fill="rgba(239,68,68,0.08)" />
+      {/* Lines */}
+      <line x1={0} y1={tpY} x2={w} y2={tpY} stroke="rgb(34,197,94)" strokeWidth={1} strokeDasharray="3,2" />
+      <line x1={0} y1={entryY} x2={w} y2={entryY} stroke="rgb(59,130,246)" strokeWidth={1.5} />
+      <line x1={0} y1={slY} x2={w} y2={slY} stroke="rgb(239,68,68)" strokeWidth={1} strokeDasharray="3,2" />
+      {/* Labels */}
+      <text x={2} y={tpY - 2} fill="rgb(34,197,94)" fontSize="7" fontFamily="monospace">TP</text>
+      <text x={2} y={entryY - 2} fill="rgb(59,130,246)" fontSize="7" fontFamily="monospace">E</text>
+      <text x={2} y={slY + 8} fill="rgb(239,68,68)" fontSize="7" fontFamily="monospace">SL</text>
+      {/* Direction arrow */}
+      {direction === 'LONG' ? (
+        <polygon points={`${w-8},${entryY} ${w-4},${entryY-6} ${w},${entryY}`} fill="rgb(34,197,94)" opacity={0.7} />
+      ) : (
+        <polygon points={`${w-8},${entryY} ${w-4},${entryY+6} ${w},${entryY}`} fill="rgb(239,68,68)" opacity={0.7} />
+      )}
+    </svg>
+  );
+}
+
 export const TradeHistory = memo(function TradeHistory() {
+  const navigate = useNavigate();
+  const setSelectedInterval = useTradingStore(s => s.setSelectedInterval);
   const [resultFilter, setResultFilter] = useState<ResultFilter>('ALL');
   const [dirFilter, setDirFilter] = useState<DirectionFilter>('ALL');
   const [sessionFilter, setSessionFilter] = useState<string>('ALL');
@@ -455,18 +504,32 @@ export const TradeHistory = memo(function TradeHistory() {
                   )}
                 </div>
 
-                {/* Pattern + Timestamp */}
-                <div className="flex items-center justify-between mt-1 text-xs text-th-dim">
-                  {trade.pattern && <span className="truncate max-w-[60%]">{trade.pattern}</span>}
-                  <span className="ml-auto">
-                    {(() => {
-                      const d = safeParseDate(trade.timestamp);
-                      return d ? d.toLocaleString('pl-PL', {
-                        year: 'numeric', month: '2-digit', day: '2-digit',
-                        hour: '2-digit', minute: '2-digit',
-                      }) : '—';
-                    })()}
-                  </span>
+                {/* Mini chart + Pattern + Timestamp + Nav button */}
+                <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-current border-opacity-10">
+                  <TradeMiniChart entry={entry} sl={sl} tp={tp} direction={trade.direction} isWin={isWin} />
+                  <div className="flex-1 min-w-0 text-xs text-th-dim">
+                    {trade.pattern && <div className="truncate">{trade.pattern}</div>}
+                    <div>
+                      {(() => {
+                        const d = safeParseDate(trade.timestamp);
+                        return d ? d.toLocaleString('pl-PL', {
+                          year: 'numeric', month: '2-digit', day: '2-digit',
+                          hour: '2-digit', minute: '2-digit',
+                        }) : '—';
+                      })()}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (trade.timeframe) setSelectedInterval(trade.timeframe);
+                      navigate('/');
+                    }}
+                    className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] text-accent-blue hover:bg-accent-blue/10 transition-colors flex-shrink-0"
+                    title="Otworz wykres w tym momencie"
+                  >
+                    <ExternalLink size={8} />
+                    Chart
+                  </button>
                 </div>
               </div>
             );

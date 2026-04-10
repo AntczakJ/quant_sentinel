@@ -3,7 +3,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, User, Wrench, RefreshCw, Trash2, AlertTriangle, History, Plus, ChevronLeft } from 'lucide-react';
+import { Send, Bot, User, Wrench, RefreshCw, Trash2, AlertTriangle, History, Plus, ChevronLeft, Mic, MicOff } from 'lucide-react';
 import { agentAPI } from '../../api/client';
 import { useTradingStore } from '../../store/tradingStore';
 import { MarkdownText } from '../ui/MarkdownText';
@@ -71,6 +71,41 @@ export function AgentChat() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isAbortedRef = useRef(false);
+
+  // Voice input (Web Speech API)
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const speechSupported = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+
+  const toggleVoice = useCallback(() => {
+    if (listening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setListening(false);
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'pl-PL';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInput(prev => prev ? prev + ' ' + transcript : transcript);
+      setListening(false);
+    };
+
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setListening(true);
+  }, [listening]);
 
   useEffect(() => {
     if (!apiConnected) { setAgentAvailable(false); return; }
@@ -398,6 +433,20 @@ export function AgentChat() {
           rows={2}
           className="flex-1 bg-dark-secondary border border-dark-secondary focus:border-accent-green/50 rounded-lg px-3 py-2 text-sm text-th placeholder-th-dim resize-none transition-colors outline-none disabled:opacity-40"
         />
+        {speechSupported && (
+          <button
+            onClick={toggleVoice}
+            disabled={loading || !agentAvailable}
+            className={`self-end px-2.5 py-2 rounded-lg transition-all disabled:opacity-40 ${
+              listening
+                ? 'bg-accent-red text-white animate-pulse'
+                : 'bg-dark-secondary text-th-muted hover:text-th-secondary'
+            }`}
+            title={listening ? 'Stop nagrywania' : 'Mow do agenta'}
+          >
+            {listening ? <MicOff size={16} /> : <Mic size={16} />}
+          </button>
+        )}
         <button
           onClick={() => void sendMessage(input)}
           disabled={loading || !input.trim() || !agentAvailable}
