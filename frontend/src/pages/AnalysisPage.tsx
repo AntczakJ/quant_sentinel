@@ -1,8 +1,8 @@
 /**
- * pages/AnalysisPage.tsx — QUANT PRO Analysis + MTF Confluence + Signal History
+ * pages/AnalysisPage.tsx — QUANT PRO Analysis + MTF Confluence + Signal History + Pattern Analytics
  */
 
-import { AnalysisPanel, SignalHistory } from '../components/dashboard';
+import { AnalysisPanel, SignalHistory, PatternAnalytics } from '../components/dashboard';
 
 export default function AnalysisPage() {
   return (
@@ -16,8 +16,15 @@ export default function AnalysisPage() {
           <SignalHistory />
         </div>
       </div>
+
+      {/* Pattern Performance Analytics */}
+      <div className="card">
+        <h2 className="section-title mb-3">
+          Pattern Performance
+          <span className="text-xs text-th-muted font-normal ml-2">— win rate by pattern, session x direction heatmap</span>
+        </h2>
+        <PatternAnalytics />
+      </div>
     </div>
   );
 }
-
-
