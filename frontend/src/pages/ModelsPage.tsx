@@ -1,9 +1,11 @@
 /**
  * pages/ModelsPage.tsx — ML Models performance + training controls + Ensemble
+ * Uses DraggableGrid for customizable panel layout.
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel } from '../components/dashboard';
+import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
 import { trainingAPI } from '../api/client';
 import { Play, Loader2, CheckCircle, XCircle } from 'lucide-react';
 
@@ -48,45 +50,13 @@ function TrainingControls() {
 
       <div className="space-y-3 text-sm text-th-secondary">
         <div className="bg-dark-bg rounded p-3 border border-dark-secondary">
-          <div className="text-xs text-th-muted mb-2 font-medium uppercase tracking-wider">Jak trenowac</div>
-          <div className="space-y-1.5 text-xs">
-            <p><code>python train_all.py --rl-episodes 200</code></p>
-            <p className="text-th-muted">Trenuje XGBoost &rarr; LSTM &rarr; DQN &rarr; Bayesian Opt &rarr; Backtest</p>
-          </div>
-        </div>
-
-        <div className="bg-dark-bg rounded p-3 border border-dark-secondary">
           <div className="text-xs text-th-muted mb-2 font-medium uppercase tracking-wider">Pipeline</div>
           <div className="space-y-1 text-xs text-th-muted">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-accent-orange" />
-              <span>XGBoost — feature importance + walk-forward</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-accent-purple" />
-              <span>LSTM — sequence prediction + validation</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-accent-blue" />
-              <span>DQN RL Agent — reward-based episodes</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-accent-orange" />
-              <span>Bayesian Optimization — risk param tuning</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-accent-green" />
-              <span>Backtest — full equity simulation</span>
-            </div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-accent-orange" /><span>XGBoost — feature importance</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-accent-purple" /><span>LSTM — sequence prediction</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-accent-blue" /><span>DQN RL Agent — reward-based</span></div>
+            <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-accent-green" /><span>Backtest — equity simulation</span></div>
           </div>
-        </div>
-
-        <div className="bg-dark-bg rounded p-3 border border-dark-secondary">
-          <div className="text-xs text-th-muted mb-2 font-medium uppercase tracking-wider">Self-Learning</div>
-          <p className="text-xs text-th-muted">
-            System automatycznie uczy sie z wynikow transakcji — aktualizuje wagi wzorcow,
-            czynnikow i parametrow ryzyka co 15 min przez scheduled jobs.
-          </p>
         </div>
       </div>
     </div>
@@ -94,46 +64,42 @@ function TrainingControls() {
 }
 
 export default function ModelsPage() {
+  const widgets: GridWidget[] = useMemo(() => [
+    {
+      id: 'health-monitor',
+      title: 'Model Health Monitor',
+      content: <ModelDriftAlert />,
+      defaultLayout: { x: 0, y: 0, w: 12, h: 3, minW: 6, minH: 2 },
+    },
+    {
+      id: 'ml-models',
+      title: 'ML Models',
+      content: <ModelStats />,
+      defaultLayout: { x: 0, y: 3, w: 6, h: 5, minW: 4, minH: 3 },
+    },
+    {
+      id: 'training',
+      title: 'Training',
+      content: <TrainingControls />,
+      defaultLayout: { x: 6, y: 3, w: 6, h: 5, minW: 4, minH: 3 },
+    },
+    {
+      id: 'backtesting',
+      title: 'Backtesting',
+      content: <BacktestPanel />,
+      defaultLayout: { x: 0, y: 8, w: 12, h: 5, minW: 6, minH: 3 },
+    },
+    {
+      id: 'performance',
+      title: 'Trading Performance',
+      content: <RiskMetrics />,
+      defaultLayout: { x: 0, y: 13, w: 12, h: 5, minW: 6, minH: 3 },
+    },
+  ], []);
+
   return (
-    <div className="space-y-4 max-w-[1600px] mx-auto">
-      {/* Model Health Alert — full width banner */}
-      <div className="card">
-        <h2 className="section-title mb-3">
-          Model Health Monitor
-          <span className="text-xs text-th-muted font-normal ml-2">— drift, accuracy, calibration</span>
-        </h2>
-        <ModelDriftAlert />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="card">
-          <h2 className="section-title mb-3">ML Models</h2>
-          <ModelStats />
-        </div>
-
-        <div className="card">
-          <h2 className="section-title mb-3">Training</h2>
-          <TrainingControls />
-        </div>
-      </div>
-
-      {/* Backtesting */}
-      <div className="card">
-        <h2 className="section-title mb-3">
-          Backtesting
-          <span className="text-xs text-th-muted font-normal ml-2">— model performance on historical data</span>
-        </h2>
-        <BacktestPanel />
-      </div>
-
-      {/* Risk metrics row */}
-      <div className="card">
-        <h2 className="section-title mb-3">
-          Trading Performance
-          <span className="text-xs text-th-muted font-normal ml-2">— ML-enhanced metrics</span>
-        </h2>
-        <RiskMetrics />
-      </div>
+    <div className="max-w-[1600px] mx-auto">
+      <DraggableGrid pageKey="models" widgets={widgets} rowHeight={70} />
     </div>
   );
 }

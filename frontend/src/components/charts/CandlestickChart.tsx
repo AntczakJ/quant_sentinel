@@ -33,7 +33,7 @@ import {
   type UTCTimestamp,
   type MouseEventParams,
 } from 'lightweight-charts';
-import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2 } from 'lucide-react';
+import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2, Maximize2, Minimize2 } from 'lucide-react';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { useTradingStore } from '../../store/tradingStore';
 import { marketAPI, signalsAPI } from '../../api/client';
@@ -52,6 +52,7 @@ import { useIndicatorWorker } from '../../hooks/useIndicatorWorker';
 import { usePriceAlerts } from '../../hooks/usePriceAlerts';
 import type { PriceAlert } from '../../hooks/usePriceAlerts';
 import { useKeyboardShortcuts, SHORTCUT_LIST } from '../../hooks/useKeyboardShortcuts';
+import { useFullscreen } from '../../hooks/useFullscreen';
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /*  IndexedDB candle cache — instant chart render on reload (< 5 ms)         */
@@ -229,12 +230,14 @@ const IntervalToolbar = memo(function IntervalToolbar({
   sessionsVisible, onToggleSessions,
   drawingCount, onClearDrawings,
   visibleIndicators, onToggleIndicator,
+  isFullscreen, onToggleFullscreen,
 }: {
   selected: string; onSelect: (v: string) => void; refreshing: boolean; onRefresh: () => void;
   smcVisible: boolean; onToggleSmc: () => void;
   sessionsVisible: boolean; onToggleSessions: () => void;
   drawingCount: number; onClearDrawings: () => void;
   visibleIndicators: VisibleIndicators; onToggleIndicator: (key: keyof VisibleIndicators) => void;
+  isFullscreen: boolean; onToggleFullscreen: () => void;
 }) {
   const [showIndMenu, setShowIndMenu] = useState(false);
   const activeCount = Object.values(visibleIndicators).filter(Boolean).length;
@@ -336,6 +339,13 @@ const IntervalToolbar = memo(function IntervalToolbar({
       >
         <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
       </button>
+      <button
+        onClick={onToggleFullscreen}
+        className="p-1.5 rounded-md text-[var(--chart-text)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-secondary)] transition-all duration-150"
+        title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+      >
+        {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+      </button>
     </div>
   );
 });
@@ -349,6 +359,10 @@ export function CandlestickChart() {
   const { isDark, toggle: toggleTheme } = useTheme();
   const { selectedInterval, setSelectedInterval } = useTradingStore();
   const { compute: computeIndicators } = useIndicatorWorker();
+
+  // Fullscreen
+  const chartWrapperRef = useRef<HTMLDivElement>(null);
+  const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(chartWrapperRef);
 
   // Refs for chart DOM containers
   const mainContainerRef = useRef<HTMLDivElement>(null);
@@ -1372,7 +1386,7 @@ export function CandlestickChart() {
 
   /* ── Render ──────────────────────────────────────────────────────────── */
   return (
-    <div className="flex flex-col h-full w-full">
+    <div ref={chartWrapperRef} className="flex flex-col h-full w-full bg-[var(--chart-bg)]">
       <IntervalToolbar
         selected={selectedInterval}
         onSelect={(v) => startTransition(() => setSelectedInterval(v))}
@@ -1395,6 +1409,8 @@ export function CandlestickChart() {
         onClearDrawings={handleClearAll}
         visibleIndicators={visibleIndicators}
         onToggleIndicator={(key) => setVisibleIndicators(prev => ({ ...prev, [key]: !prev[key] }))}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={toggleFullscreen}
       />
 
       {/* Main candlestick + volume chart */}
