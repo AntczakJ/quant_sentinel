@@ -9,6 +9,7 @@ import { Header } from './Header';
 import { MobileNav } from '../layout/MobileNav';
 import { OfflineBanner } from '../ui/OfflineBanner';
 import { LoadingBar } from '../ui/LoadingBar';
+import { CommandPalette } from '../ui/CommandPalette';
 
 export function Dashboard() {
   const location = useLocation();
@@ -31,6 +32,7 @@ export function Dashboard() {
         <Outlet />
       </main>
       <MobileNav />
+      <CommandPalette />
     </div>
   );
 }
