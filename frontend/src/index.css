@@ -366,6 +366,20 @@ html.transitioning *::after {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   LOADING BAR
+   ═══════════════════════════════════════════════════════════════ */
+
+@keyframes loading-bar {
+  0%   { width: 0%; left: 0; }
+  50%  { width: 60%; left: 20%; }
+  100% { width: 0%; left: 100%; }
+}
+.loading-bar-animate {
+  animation: loading-bar 1.5s ease-in-out infinite;
+  position: relative;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    ACCESSIBILITY
    ═══════════════════════════════════════════════════════════════ */
 

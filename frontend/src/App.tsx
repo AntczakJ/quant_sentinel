@@ -15,6 +15,7 @@ import { useCachedFetch } from './hooks/useApiCache';
 import { prefetchAllRoutes } from './hooks/usePrefetchRoutes';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useBrowserNotifications } from './hooks/useBrowserNotifications';
+import { useDocumentTitle } from './hooks/useDocumentTitle';
 import { RefreshCw } from 'lucide-react';
 import './index.css';
 
@@ -49,6 +50,9 @@ function PageLoader() {
 
 function AppContent() {
   const { setTicker, setCurrentSignal, setPortfolio, setModelsStats, setApiConnected, setWsConnected, apiConnected } = useTradingStore();
+
+  // Dynamic browser tab title with live price
+  useDocumentTitle();
 
   // Ukryj splash screen gdy React się zamontuje + prefetch routes
   useEffect(() => {
