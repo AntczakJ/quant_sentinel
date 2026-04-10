@@ -33,6 +33,10 @@ interface TradingStore {
   apiConnected: boolean;
   setApiConnected: (connected: boolean) => void;
 
+  // WebSocket status
+  wsConnected: boolean;
+  setWsConnected: (connected: boolean) => void;
+
   // Price history for charts
   priceHistory: { time: string; price: number }[];
   addPriceHistory: (time: string, price: number) => void;
@@ -65,6 +69,10 @@ export const useTradingStore = create<TradingStore>()(
       // API status
       apiConnected: false,
       setApiConnected: (connected) => set({ apiConnected: connected }),
+
+      // WebSocket status
+      wsConnected: false,
+      setWsConnected: (connected) => set({ wsConnected: connected }),
 
       // Price history
       priceHistory: [],

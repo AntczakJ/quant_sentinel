@@ -14,6 +14,7 @@ import { marketAPI, portfolioAPI, modelsAPI, healthAPI } from './api/client';
 import { useCachedFetch } from './hooks/useApiCache';
 import { prefetchAllRoutes } from './hooks/usePrefetchRoutes';
 import { useWebSocket } from './hooks/useWebSocket';
+import { useBrowserNotifications } from './hooks/useBrowserNotifications';
 import { RefreshCw } from 'lucide-react';
 import './index.css';
 
@@ -47,7 +48,7 @@ function PageLoader() {
 }
 
 function AppContent() {
-  const { setTicker, setCurrentSignal, setPortfolio, setModelsStats, setApiConnected, apiConnected } = useTradingStore();
+  const { setTicker, setCurrentSignal, setPortfolio, setModelsStats, setApiConnected, setWsConnected, apiConnected } = useTradingStore();
 
   // Ukryj splash screen gdy React się zamontuje + prefetch routes
   useEffect(() => {
@@ -101,17 +102,31 @@ function AppContent() {
     }
   }, apiConnected);
 
-  // WS signal feed — instant signal notifications
-  useWebSocket<{ type: string; [k: string]: unknown }>(
+  // Browser notifications — request permission on first API connection
+  const { notifySignal, requestPermission } = useBrowserNotifications();
+  useEffect(() => {
+    if (apiConnected) void requestPermission();
+  }, [apiConnected, requestPermission]);
+
+  // WS signal feed — instant signal notifications + browser push
+  useWebSocket<{ type: string; direction?: string; entry_price?: number; [k: string]: unknown }>(
     '/ws/signals',
     (data) => {
-      if (data.type === 'signal') setCurrentSignal(data as any);
+      if (data.type === 'signal') {
+        setCurrentSignal(data as any);
+        if (data.direction && data.direction !== 'WAIT') {
+          notifySignal(data.direction, data.entry_price);
+        }
+      }
     },
     apiConnected,
   );
 
-  // Ticker HTTP polling — fallback when WS is disconnected, longer interval
+  // Track WS connection in store for header indicator
   const wsConnected = wsPriceStatus === 'connected';
+  useEffect(() => { setWsConnected(wsConnected); }, [wsConnected, setWsConnected]);
+
+  // Ticker HTTP polling — fallback when WS is disconnected, longer interval
   useCachedFetch('ticker', () => marketAPI.getTicker(), {
     ttl: wsConnected ? 120_000 : 20_000, // Slow down when WS is active
     enabled: apiConnected,

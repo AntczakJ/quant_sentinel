@@ -9,6 +9,7 @@ import { memo } from 'react';
 import { BarChart2, Zap, Clock } from 'lucide-react';
 import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { analysisAPI } from '../../api/client';
+import { EmptyState } from '../ui/EmptyState';
 
 interface MtfData {
   confluence_score: number;
@@ -141,7 +142,7 @@ export const MtfConfluence = memo(function MtfConfluence() {
 
   if (!data || !data.timeframes) {
     return (
-      <div className="text-xs text-th-muted text-center py-6">Brak danych MTF</div>
+      <EmptyState icon="chart" message="Brak danych MTF" description="Dane pojawia sie po polaczeniu z API" />
     );
   }
 

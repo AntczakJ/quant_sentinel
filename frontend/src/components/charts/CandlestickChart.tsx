@@ -51,6 +51,7 @@ import { SessionOverlay } from './SessionOverlay';
 import { useIndicatorWorker } from '../../hooks/useIndicatorWorker';
 import { usePriceAlerts } from '../../hooks/usePriceAlerts';
 import type { PriceAlert } from '../../hooks/usePriceAlerts';
+import { useBrowserNotifications } from '../../hooks/useBrowserNotifications';
 import { useKeyboardShortcuts, SHORTCUT_LIST } from '../../hooks/useKeyboardShortcuts';
 import { useFullscreen } from '../../hooks/useFullscreen';
 
@@ -421,12 +422,14 @@ export function CandlestickChart() {
     rsi: true, macd: false, atr: false, stoch: false,
   });
 
-  // Price alerts
+  // Price alerts + browser notifications
   const alertPriceLinesRef = useRef<Map<string, any>>(new Map());
+  const { notifyPriceAlert } = useBrowserNotifications();
   const { activeAlerts, addAlert } = usePriceAlerts(
     useCallback((alert: PriceAlert) => {
       toast.info(`Price alert: $${alert.price.toFixed(2)} (${alert.direction})`);
-    }, [toast])
+      notifyPriceAlert(alert.price, alert.direction);
+    }, [toast, notifyPriceAlert])
   );
 
   // Track signal price lines so we can remove them before re-creating
