@@ -10,6 +10,7 @@ import { ShieldOff, ShieldCheck, Loader2, AlertTriangle, Clock, Activity } from 
 import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { riskAPI } from '../../api/client';
 import { useToast } from '../ui/Toast';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 
 interface RiskStatus {
   halted: boolean;
@@ -28,6 +29,7 @@ export const RiskKillSwitch = memo(function RiskKillSwitch() {
   const toast = useToast();
   const [actionLoading, setActionLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [confirmHalt, setConfirmHalt] = useState(false);
 
   const { data, isLoading, refetch } = usePollingQuery<RiskStatus>(
     'risk-status',
@@ -182,7 +184,7 @@ export const RiskKillSwitch = memo(function RiskKillSwitch() {
                 </button>
               ) : (
                 <button
-                  onClick={() => void handleHalt()}
+                  onClick={() => setConfirmHalt(true)}
                   disabled={actionLoading}
                   className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all bg-accent-red/15 text-accent-red border border-accent-red/30 hover:bg-accent-red/25 disabled:opacity-50"
                 >
@@ -194,6 +196,17 @@ export const RiskKillSwitch = memo(function RiskKillSwitch() {
           </div>
         </>
       )}
+
+      {/* Confirm halt dialog */}
+      <ConfirmDialog
+        open={confirmHalt}
+        title="Zatrzymac trading?"
+        description="Wszystkie nowe transakcje beda zablokowane do momentu recznego wznowienia. Aktywne pozycje NIE zostana zamkniete."
+        confirmLabel="HALT"
+        variant="danger"
+        onConfirm={() => { setConfirmHalt(false); void handleHalt(); }}
+        onCancel={() => setConfirmHalt(false)}
+      />
     </div>
   );
 });

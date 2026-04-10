@@ -16,6 +16,7 @@ import { prefetchAllRoutes } from './hooks/usePrefetchRoutes';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useBrowserNotifications } from './hooks/useBrowserNotifications';
 import { useDocumentTitle } from './hooks/useDocumentTitle';
+import { useFaviconBadge } from './hooks/useFaviconBadge';
 import { RefreshCw } from 'lucide-react';
 import './index.css';
 
@@ -53,6 +54,11 @@ function AppContent() {
 
   // Dynamic browser tab title with live price
   useDocumentTitle();
+
+  // Favicon badge when there's an active signal
+  const currentSignal = useTradingStore(s => s.currentSignal);
+  const hasActiveSignal = !!(currentSignal && (currentSignal as any).direction && (currentSignal as any).direction !== 'WAIT');
+  useFaviconBadge(hasActiveSignal);
 
   // Ukryj splash screen gdy React się zamontuje + prefetch routes
   useEffect(() => {

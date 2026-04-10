@@ -3,6 +3,7 @@
  * Mobile: bottom nav bar, reduced padding, safe-area margins
  */
 
+import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { MobileNav } from '../layout/MobileNav';
@@ -11,6 +12,11 @@ import { LoadingBar } from '../ui/LoadingBar';
 
 export function Dashboard() {
   const location = useLocation();
+
+  // Scroll to top on route change
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+  }, [location.pathname]);
 
   return (
     <div className="min-h-screen font-sans flex flex-col" style={{ background: 'var(--color-bg)', color: 'var(--color-text-primary)' }}>
