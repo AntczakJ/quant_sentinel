@@ -4,8 +4,8 @@
  * Shows entry/SL/TP chart, pattern info, timing, P&L breakdown.
  */
 
-import { memo } from 'react';
-import { X, TrendingUp, TrendingDown, Clock, Target, Shield, Zap } from 'lucide-react';
+import { memo, useCallback } from 'react';
+import { X, TrendingUp, TrendingDown, Clock, Target, Shield, Zap, Copy } from 'lucide-react';
 
 interface Trade {
   id: number;
@@ -40,6 +40,18 @@ interface Props {
 }
 
 export const TradeDetailModal = memo(function TradeDetailModal({ trade, onClose }: Props) {
+  const copyToClipboard = useCallback(() => {
+    const lines = [
+      `📊 Trade #${trade.id} — ${trade.direction} ${trade.result}`,
+      `Entry: ${formatPrice(trade.entry)} | SL: ${formatPrice(trade.sl)} | TP: ${formatPrice(trade.tp)}`,
+      `R:R: ${(Math.abs(parsePrice(trade.tp) - parsePrice(trade.entry)) / (Math.abs(parsePrice(trade.entry) - parsePrice(trade.sl)) || 1)).toFixed(2)}`,
+      trade.profit != null ? `P&L: ${formatPrice(trade.profit)}` : '',
+      trade.pattern ? `Pattern: ${trade.pattern}` : '',
+      trade.timeframe ? `TF: ${trade.timeframe}` : '',
+      `Time: ${trade.timestamp}`,
+    ].filter(Boolean).join('\n');
+    void navigator.clipboard.writeText(lines);
+  }, [trade]);
   const isWin = trade.result?.includes('WIN');
   const isLoss = trade.result?.includes('LOSS');
   const entry = parsePrice(trade.entry);
@@ -156,15 +168,25 @@ export const TradeDetailModal = memo(function TradeDetailModal({ trade, onClose 
             </div>
           )}
 
-          <div className="flex items-center gap-1 text-[10px] text-th-dim">
-            <Clock size={9} />
-            {(() => {
-              let iso = trade.timestamp.trim();
-              iso = iso.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
-              if (!/[Zz+\-]/.test(iso.slice(-6))) iso += 'Z';
-              const d = new Date(iso);
-              return isNaN(d.getTime()) ? trade.timestamp : d.toLocaleString('pl-PL');
-            })()}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1 text-[10px] text-th-dim">
+              <Clock size={9} />
+              {(() => {
+                let iso = trade.timestamp.trim();
+                iso = iso.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
+                if (!/[Zz+\-]/.test(iso.slice(-6))) iso += 'Z';
+                const d = new Date(iso);
+                return isNaN(d.getTime()) ? trade.timestamp : d.toLocaleString('pl-PL');
+              })()}
+            </div>
+            <button
+              onClick={copyToClipboard}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[9px] text-accent-blue hover:bg-accent-blue/10 transition-colors"
+              title="Kopiuj podsumowanie"
+            >
+              <Copy size={9} />
+              Kopiuj
+            </button>
           </div>
         </div>
       </div>

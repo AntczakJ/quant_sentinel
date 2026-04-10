@@ -15,7 +15,7 @@ const WidthProvider = (ReactGridLayout as any).WidthProvider ?? ((c: any) => c);
 
 interface Layout { i: string; x: number; y: number; w: number; h: number; minW?: number; minH?: number }
 type Layouts = Record<string, Layout[]>;
-import { Lock, Unlock, RotateCcw, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react';
+import { Lock, Unlock, RotateCcw, LayoutGrid, ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react';
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary';
 import { FreshnessIndicator } from '../ui/FreshnessIndicator';
 import 'react-grid-layout/css/styles.css';
@@ -106,6 +106,26 @@ export const DraggableGrid = memo(function DraggableGrid({
   const [layouts, setLayouts] = useState<Layouts>(() => loadLayout(pageKey) ?? defaultLayouts);
   const [locked, setLocked] = useState(true);
   const [showPresets, setShowPresets] = useState(false);
+  const [showWidgetMenu, setShowWidgetMenu] = useState(false);
+  const [hiddenWidgets, setHiddenWidgets] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_PREFIX + pageKey + ':hidden');
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  });
+
+  const toggleWidgetVisibility = useCallback((id: string) => {
+    setHiddenWidgets(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      localStorage.setItem(STORAGE_PREFIX + pageKey + ':hidden', JSON.stringify([...next]));
+      return next;
+    });
+  }, [pageKey]);
+
+  const visibleWidgets = widgets.filter(w => !hiddenWidgets.has(w.id));
+  const hiddenCount = hiddenWidgets.size;
+
   const [collapsed, setCollapsed] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_PREFIX + pageKey + ':collapsed');
@@ -169,6 +189,36 @@ export const DraggableGrid = memo(function DraggableGrid({
             )}
           </div>
         )}
+        {/* Widget visibility toggle */}
+        <div className="relative">
+          <button
+            onClick={() => setShowWidgetMenu(v => !v)}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+              hiddenCount > 0 ? 'text-accent-orange' : 'text-th-muted hover:text-th-secondary'
+            }`}
+          >
+            {hiddenCount > 0 ? <EyeOff size={10} /> : <Eye size={10} />}
+            {hiddenCount > 0 && <span>{hiddenCount} hidden</span>}
+          </button>
+          {showWidgetMenu && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setShowWidgetMenu(false)} />
+              <div className="absolute right-0 top-full mt-1 z-40 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl py-1 min-w-[160px]">
+                {widgets.map(w => (
+                  <button
+                    key={w.id}
+                    onClick={() => toggleWidgetVisibility(w.id)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] hover:bg-[var(--color-secondary)] transition-colors"
+                    style={{ color: hiddenWidgets.has(w.id) ? 'var(--color-text-muted)' : 'var(--color-text-primary)' }}
+                  >
+                    {hiddenWidgets.has(w.id) ? <EyeOff size={10} className="text-th-dim" /> : <Eye size={10} className="text-accent-green" />}
+                    <span className={hiddenWidgets.has(w.id) ? 'line-through opacity-50' : ''}>{w.title}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <button
           onClick={resetLayout}
           className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-th-muted hover:text-th-secondary transition-colors"
@@ -205,7 +255,7 @@ export const DraggableGrid = memo(function DraggableGrid({
         margin={[16, 16]}
         containerPadding={[0, 0]}
       >
-        {widgets.map(w => {
+        {visibleWidgets.map(w => {
           const isCollapsed = collapsed.has(w.id);
           return (
             <div key={w.id} className="overflow-hidden">

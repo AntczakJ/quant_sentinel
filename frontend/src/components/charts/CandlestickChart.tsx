@@ -36,7 +36,7 @@ import {
 import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2, Maximize2, Minimize2, Camera, Bell } from 'lucide-react';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { useTradingStore } from '../../store/tradingStore';
-import { marketAPI, signalsAPI } from '../../api/client';
+import { marketAPI, signalsAPI, analysisAPI } from '../../api/client';
 import type { Candle } from '../../types/trading';
 import { detectAllSmcZones, buildPositionZones } from './smcDetector';
 import { SmcZonesOverlay } from './SmcOverlay';
@@ -1139,6 +1139,32 @@ export function CandlestickChart() {
           // VP is optional
         }
       }, isFirstLoad.current ? 3000 : 500);
+
+      // ── Trade markers — show historical trades as markers on candles ──
+      try {
+        const tradesResp = await analysisAPI.getRecentTrades(30);
+        if (!signal?.aborted && tradesResp?.trades?.length && candleSeriesRef.current) {
+          const markers = tradesResp.trades
+            .filter((t: any) => t.timestamp && t.direction && (t.result?.includes('WIN') || t.result?.includes('LOSS')))
+            .map((t: any) => {
+              let ts = t.timestamp.trim();
+              ts = ts.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
+              if (!/[Zz+\-]/.test(ts.slice(-6))) ts += 'Z';
+              const time = Math.floor(new Date(ts).getTime() / 1000) as UTCTimestamp;
+              const isWin = t.result?.includes('WIN');
+              const isLong = t.direction === 'LONG';
+              return {
+                time,
+                position: isLong ? 'belowBar' as const : 'aboveBar' as const,
+                color: isWin ? '#22c55e' : '#ef4444',
+                shape: isLong ? 'arrowUp' as const : 'arrowDown' as const,
+                text: isWin ? 'W' : 'L',
+              };
+            })
+            .sort((a: any, b: any) => (a.time as number) - (b.time as number));
+          if (markers.length) candleSeriesRef.current.setMarkers(markers);
+        }
+      } catch { /* trade markers are optional */ }
 
       // ── Scroll to latest candle on first load (show last ~80 bars) ──
       if (isFirstLoad.current) {
