@@ -33,7 +33,7 @@ import {
   type UTCTimestamp,
   type MouseEventParams,
 } from 'lightweight-charts';
-import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2, Maximize2, Minimize2, Camera, Bell } from 'lucide-react';
+import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2, Maximize2, Minimize2, Camera, Bell, Calculator } from 'lucide-react';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { useTradingStore } from '../../store/tradingStore';
 import { marketAPI, signalsAPI, analysisAPI } from '../../api/client';
@@ -48,6 +48,7 @@ import {
 } from './drawings';
 import type { Drawing, DrawingTool, DrawingStyle } from './drawings';
 import { SessionOverlay } from './SessionOverlay';
+import { VolumeProfileOverlay } from './VolumeProfileOverlay';
 import { useIndicatorWorker } from '../../hooks/useIndicatorWorker';
 import { usePriceAlerts } from '../../hooks/usePriceAlerts';
 import type { PriceAlert } from '../../hooks/usePriceAlerts';
@@ -56,6 +57,7 @@ import { useSoundAlerts } from '../../hooks/useSoundAlerts';
 import { useKeyboardShortcuts, SHORTCUT_LIST } from '../../hooks/useKeyboardShortcuts';
 import { ChartContextMenu } from './ChartContextMenu';
 import { AlertManager } from './AlertManager';
+import { RiskCalculator } from '../dashboard/RiskCalculator';
 import { useFullscreen } from '../../hooks/useFullscreen';
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -450,6 +452,7 @@ export function CandlestickChart() {
   // Price alerts + browser notifications + sound
   const alertPriceLinesRef = useRef<Map<string, any>>(new Map());
   const [showAlertManager, setShowAlertManager] = useState(false);
+  const [showRiskCalc, setShowRiskCalc] = useState(false);
   const { notifyPriceAlert } = useBrowserNotifications();
   const { chimeUp, chimeDown } = useSoundAlerts();
   const { alerts: allAlerts, activeAlerts, addAlert, removeAlert, clearTriggered } = usePriceAlerts(
@@ -470,6 +473,9 @@ export function CandlestickChart() {
 
   // Session overlay
   const sessionOverlayRef = useRef<SessionOverlay | null>(null);
+
+  // Volume Profile overlay
+  const vpOverlayRef = useRef<VolumeProfileOverlay | null>(null);
   const [sessionsVisible, setSessionsVisible] = useState(true);
 
   // Drawing tools
@@ -645,6 +651,12 @@ export function CandlestickChart() {
     candleSeries.attachPrimitive(sessionOverlay);
     sessionOverlayRef.current = sessionOverlay;
 
+    // ─── Attach Volume Profile overlay ───
+    const vpOverlay = new VolumeProfileOverlay();
+    candleSeries.attachPrimitive(vpOverlay);
+    vpOverlay.setSeries(candleSeries);
+    vpOverlayRef.current = vpOverlay;
+
     // ─── Attach SMC zones overlay to candle series ───
     const smcOverlay = new SmcZonesOverlay();
     candleSeries.attachPrimitive(smcOverlay);
@@ -716,6 +728,7 @@ export function CandlestickChart() {
 
     return () => {
       // Detach overlays before removing chart
+      try { candleSeries.detachPrimitive(vpOverlay); } catch { /* ok */ }
       try { candleSeries.detachPrimitive(sessionOverlay); } catch { /* ok */ }
       try { candleSeries.detachPrimitive(smcOverlay); } catch { /* ok */ }
       try { candleSeries.detachPrimitive(drawingsOverlay); } catch { /* ok */ }
@@ -1112,6 +1125,10 @@ export function CandlestickChart() {
         try {
           const vp = await marketAPI.getVolumeProfile('XAU/USD', selectedInterval, 100);
           if (!signal?.aborted && vp && candleSeriesRef.current) {
+            // Feed volume profile overlay with histogram data
+            if (vpOverlayRef.current && vp.histogram?.length) {
+              vpOverlayRef.current.setData(vp);
+            }
             const cs = candleSeriesRef.current;
             if (vp.poc) {
               signalPriceLinesRef.current.push(cs.createPriceLine({
@@ -1537,6 +1554,14 @@ export function CandlestickChart() {
         />
 
         <OHLCVLegend data={deferredLegend} interval={selectedInterval} visibleIndicators={visibleIndicators} />
+        {/* Risk calculator floating button */}
+        <button
+          onClick={() => setShowRiskCalc(true)}
+          className="absolute top-1 right-24 z-20 p-1.5 rounded-md text-[var(--chart-text)] hover:text-accent-blue hover:bg-[var(--color-secondary)] transition-all"
+          title="Kalkulator ryzyka (position size)"
+        >
+          <Calculator size={12} />
+        </button>
         {refreshing && (
           <div className="absolute top-1 right-2 z-20 flex items-center gap-1 text-[10px] text-[var(--chart-text)]">
             <RefreshCw size={9} className="animate-spin" /> updating…
@@ -1681,6 +1706,11 @@ export function CandlestickChart() {
             });
           }}
         />
+      )}
+
+      {/* Risk calculator */}
+      {showRiskCalc && (
+        <RiskCalculator onClose={() => setShowRiskCalc(false)} />
       )}
 
       {/* Alert manager */}
