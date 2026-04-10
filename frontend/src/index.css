@@ -364,3 +364,42 @@ html.transitioning *::after {
 .animate-slide-in {
   animation: slide-in 0.25s ease-out;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Cards: tighter padding on mobile */
+@media (max-width: 767px) {
+  .card {
+    @apply p-3;
+  }
+  .section-title {
+    @apply text-xs;
+  }
+  .stat-item {
+    @apply p-2;
+  }
+}
+
+/* Fullscreen chart background */
+div:fullscreen {
+  background: var(--color-bg);
+}
+
+/* react-grid-layout: style overrides */
+.react-grid-item.react-grid-placeholder {
+  background: var(--color-accent-blue) !important;
+  opacity: 0.12 !important;
+  border-radius: 0.75rem;
+}
+.react-grid-item > .react-resizable-handle::after {
+  border-color: var(--color-text-muted) !important;
+}
+
+/* Safe area for bottom nav on iOS */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
