@@ -13,6 +13,7 @@ import { RiskKillSwitch } from './RiskKillSwitch';
 import { NotificationCenter } from './NotificationCenter';
 import { useSoundAlerts } from '../../hooks/useSoundAlerts';
 import { analysisAPI } from '../../api/client';
+import { Sparkline } from '../ui/Sparkline';
 import { prefetchRoute } from '../../hooks/usePrefetch';
 import { useScrollDirection } from '../../hooks/useScrollDirection';
 
@@ -104,10 +105,17 @@ export function Header() {
   const { toggle: toggleTheme, isDark, pref: themePref } = useTheme();
   const { enabled: soundEnabled, toggle: toggleSound } = useSoundAlerts();
   const scrollDir = useScrollDirection();
-  const { ticker, apiConnected } = useTradingStore();
+  const { ticker, apiConnected, priceHistory, addPriceHistory } = useTradingStore();
   const [prevPrice, setPrevPrice] = useState<number | null>(null);
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
+
+  // Track price history for sparkline
+  useEffect(() => {
+    if (ticker?.price) addPriceHistory(new Date().toISOString(), ticker.price);
+  }, [ticker?.price]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sparklineData = priceHistory.slice(-30).map(p => p.price);
 
   // Poll session info every 60s — only when API is up, staggered to avoid burst
   useEffect(() => {
@@ -184,8 +192,11 @@ export function Header() {
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Price — compact, right-aligned */}
-        <div className={`flex items-center gap-3 transition-colors duration-200 ${priceFlash === 'up' ? 'text-accent-green' : priceFlash === 'down' ? 'text-accent-red' : ''}`}>
+        {/* Price — compact, right-aligned + sparkline */}
+        <div className={`flex items-center gap-2 transition-colors duration-200 ${priceFlash === 'up' ? 'text-accent-green' : priceFlash === 'down' ? 'text-accent-red' : ''}`}>
+          {sparklineData.length >= 3 && (
+            <Sparkline data={sparklineData} width={48} height={20} strokeWidth={1.2} fill={false} className="hidden lg:block opacity-70" />
+          )}
           <div className="text-right">
             <div className="text-lg font-bold font-mono leading-tight" style={{ color: 'var(--color-text-primary)' }}>
               ${ticker.price.toFixed(2)}

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { analysisAPI } from '../../api/client';
+import { Tooltip } from '../ui/Tooltip';
 
 interface RiskData {
   total: number;
@@ -92,19 +93,23 @@ function StreakDots({ count, maxDisplay, color }: { count: number; maxDisplay: n
 }
 
 /* ── Main metric card ────────────────────────────────────────────────── */
-function MetricCard({ label, value, icon: Icon, color, subtitle, highlight }: {
+function MetricCard({ label, value, icon: Icon, color, subtitle, highlight, tooltip }: {
   label: string;
   value: string;
   icon: typeof Shield;
   color: string;
   subtitle?: string;
   highlight?: boolean;
+  tooltip?: string;
 }) {
+  const labelEl = (
+    <span className="text-[10px] text-th-muted uppercase tracking-wider font-medium">{label}</span>
+  );
   return (
     <div className={`stat-item ${highlight ? 'ring-1 ring-accent-green/20' : ''}`}>
       <div className="flex items-center gap-1.5 mb-1">
         <Icon size={10} className={color} />
-        <span className="text-[10px] text-th-muted uppercase tracking-wider font-medium">{label}</span>
+        {tooltip ? <Tooltip content={tooltip}>{labelEl}</Tooltip> : labelEl}
       </div>
       <div className={`text-sm font-bold font-mono ${color}`}>{value}</div>
       {subtitle && <div className="text-[9px] text-th-dim mt-0.5">{subtitle}</div>}
@@ -216,6 +221,7 @@ export const RiskMetrics = memo(function RiskMetrics() {
           color={expColor}
           subtitle="Oczekiwana wartosc / trade"
           highlight={data.expectancy > 0}
+          tooltip="Sredni zysk na transakcje = (WR × avgWin) - ((1-WR) × avgLoss)"
         />
         <MetricCard
           label="Max Drawdown"
@@ -223,6 +229,7 @@ export const RiskMetrics = memo(function RiskMetrics() {
           icon={TrendingDown}
           color="text-accent-red"
           subtitle="Najglebsze obsuniecie"
+          tooltip="Maksymalne obsuniecie od szczytu equity do dolka"
         />
         <MetricCard
           label="Total P&L"
@@ -230,6 +237,7 @@ export const RiskMetrics = memo(function RiskMetrics() {
           icon={data.total_profit >= 0 ? TrendingUp : TrendingDown}
           color={data.total_profit >= 0 ? 'text-accent-green' : 'text-accent-red'}
           highlight={data.total_profit > 0}
+          tooltip="Calkowity zysk/strata ze wszystkich zamknietych transakcji"
         />
       </div>
 

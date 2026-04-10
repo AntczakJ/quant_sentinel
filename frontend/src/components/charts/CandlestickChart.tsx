@@ -33,7 +33,7 @@ import {
   type UTCTimestamp,
   type MouseEventParams,
 } from 'lightweight-charts';
-import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2, Maximize2, Minimize2, Camera } from 'lucide-react';
+import { RefreshCw, AlertCircle, Layers, Trash2, Clock, BarChart2, Maximize2, Minimize2, Camera, Bell } from 'lucide-react';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { useTradingStore } from '../../store/tradingStore';
 import { marketAPI, signalsAPI } from '../../api/client';
@@ -55,6 +55,7 @@ import { useBrowserNotifications } from '../../hooks/useBrowserNotifications';
 import { useSoundAlerts } from '../../hooks/useSoundAlerts';
 import { useKeyboardShortcuts, SHORTCUT_LIST } from '../../hooks/useKeyboardShortcuts';
 import { ChartContextMenu } from './ChartContextMenu';
+import { AlertManager } from './AlertManager';
 import { useFullscreen } from '../../hooks/useFullscreen';
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -234,6 +235,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
   drawingCount, onClearDrawings,
   visibleIndicators, onToggleIndicator,
   isFullscreen, onToggleFullscreen, onScreenshot,
+  alertCount, onOpenAlerts,
 }: {
   selected: string; onSelect: (v: string) => void; refreshing: boolean; onRefresh: () => void;
   smcVisible: boolean; onToggleSmc: () => void;
@@ -242,6 +244,7 @@ const IntervalToolbar = memo(function IntervalToolbar({
   visibleIndicators: VisibleIndicators; onToggleIndicator: (key: keyof VisibleIndicators) => void;
   isFullscreen: boolean; onToggleFullscreen: () => void;
   onScreenshot: () => void;
+  alertCount: number; onOpenAlerts: () => void;
 }) {
   const [showIndMenu, setShowIndMenu] = useState(false);
   const activeCount = Object.values(visibleIndicators).filter(Boolean).length;
@@ -344,6 +347,18 @@ const IntervalToolbar = memo(function IntervalToolbar({
         <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
       </button>
       <button
+        onClick={onOpenAlerts}
+        className={`p-1.5 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1 ${
+          alertCount > 0
+            ? 'bg-[#f59e0b]/12 text-[#f59e0b] hover:bg-[#f59e0b]/20'
+            : 'text-[var(--chart-text)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-secondary)]'
+        }`}
+        title="Zarzadzaj alertami cenowymi"
+      >
+        <Bell size={11} />
+        {alertCount > 0 && <span className="text-[9px]">{alertCount}</span>}
+      </button>
+      <button
         onClick={onScreenshot}
         className="p-1.5 rounded-md text-[var(--chart-text)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-secondary)] transition-all duration-150"
         title="Zapisz wykres jako PNG"
@@ -434,9 +449,10 @@ export function CandlestickChart() {
 
   // Price alerts + browser notifications + sound
   const alertPriceLinesRef = useRef<Map<string, any>>(new Map());
+  const [showAlertManager, setShowAlertManager] = useState(false);
   const { notifyPriceAlert } = useBrowserNotifications();
   const { chimeUp, chimeDown } = useSoundAlerts();
-  const { activeAlerts, addAlert } = usePriceAlerts(
+  const { alerts: allAlerts, activeAlerts, addAlert, removeAlert, clearTriggered } = usePriceAlerts(
     useCallback((alert: PriceAlert) => {
       toast.info(`Price alert: $${alert.price.toFixed(2)} (${alert.direction})`);
       notifyPriceAlert(alert.price, alert.direction);
@@ -1471,6 +1487,8 @@ export function CandlestickChart() {
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
         onScreenshot={handleScreenshot}
+        alertCount={activeAlerts.length}
+        onOpenAlerts={() => setShowAlertManager(true)}
       />
 
       {/* Main candlestick + volume chart */}
@@ -1636,6 +1654,16 @@ export function CandlestickChart() {
               return next;
             });
           }}
+        />
+      )}
+
+      {/* Alert manager */}
+      {showAlertManager && (
+        <AlertManager
+          alerts={allAlerts}
+          onRemove={removeAlert}
+          onClearTriggered={clearTriggered}
+          onClose={() => setShowAlertManager(false)}
         />
       )}
 
