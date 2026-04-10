@@ -16,7 +16,7 @@ export default function TradesPage() {
         <div className="lg:col-span-2 card">
           <h2 className="section-title mb-3">
             Trade History
-            <span className="text-xs text-gray-500 font-normal ml-2">— wszystkie</span>
+            <span className="text-xs text-th-muted font-normal ml-2">— wszystkie</span>
           </h2>
           <TradeHistory />
         </div>
@@ -26,7 +26,7 @@ export default function TradesPage() {
       <div className="card">
         <h2 className="section-title mb-3">
           Risk & Performance Metrics
-          <span className="text-xs text-gray-500 font-normal ml-2">— drawdown, profit factor, expectancy</span>
+          <span className="text-xs text-th-muted font-normal ml-2">— drawdown, profit factor, expectancy</span>
         </h2>
         <RiskMetrics />
       </div>

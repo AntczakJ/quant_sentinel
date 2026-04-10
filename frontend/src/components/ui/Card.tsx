@@ -26,4 +26,3 @@ export function Card({ children, title, className = '', variant = 'default' }: C
     </div>
   );
 }
-

@@ -1,8 +1,5 @@
 /**
  * src/components/dashboard/RiskMetrics.tsx — Professional risk analytics widget
- *
- * Shows: profit factor, expectancy, max drawdown, consecutive streaks.
- * Polls every 2 minutes (metrics rarely change).
  */
 
 import { memo } from 'react';
@@ -36,10 +33,10 @@ function MetricCard({ label, value, icon: Icon, color, subtitle }: {
     <div className="bg-dark-bg rounded p-2 border border-dark-secondary">
       <div className="flex items-center gap-1.5 mb-1">
         <Icon size={10} className={color} />
-        <span className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</span>
+        <span className="text-[10px] text-th-muted uppercase tracking-wider">{label}</span>
       </div>
       <div className={`text-sm font-bold font-mono ${color}`}>{value}</div>
-      {subtitle && <div className="text-[9px] text-gray-600 mt-0.5">{subtitle}</div>}
+      {subtitle && <div className="text-[9px] text-th-dim mt-0.5">{subtitle}</div>}
     </div>
   );
 }
@@ -48,28 +45,28 @@ export const RiskMetrics = memo(function RiskMetrics() {
   const { data, isLoading } = usePollingQuery<RiskData>(
     'risk-metrics',
     () => analysisAPI.getRiskMetrics(),
-    60_000, // 1 minute
+    60_000,
   );
 
   if (isLoading && !data) {
     return (
-      <div className="text-xs text-gray-500 text-center py-4">Ładowanie metryk...</div>
+      <div className="text-xs text-th-muted text-center py-4">Ladowanie metryk...</div>
     );
   }
 
   if (!data || data.total === 0) {
     return (
-      <div className="text-xs text-gray-500 text-center py-4">
-        Brak danych — metryki pojawią się po pierwszych zamkniętych transakcjach
+      <div className="text-xs text-th-muted text-center py-4">
+        Brak danych — metryki pojawia sie po pierwszych zamknietych transakcjach
       </div>
     );
   }
 
-  const pfColor = data.profit_factor >= 2 ? 'text-green-400'
-    : data.profit_factor >= 1 ? 'text-amber-400'
-    : 'text-red-400';
+  const pfColor = data.profit_factor >= 2 ? 'text-accent-green'
+    : data.profit_factor >= 1 ? 'text-accent-orange'
+    : 'text-accent-red';
 
-  const expColor = data.expectancy > 0 ? 'text-green-400' : 'text-red-400';
+  const expColor = data.expectancy > 0 ? 'text-accent-green' : 'text-accent-red';
 
   return (
     <div className="space-y-2">
@@ -87,14 +84,14 @@ export const RiskMetrics = memo(function RiskMetrics() {
           value={`$${data.expectancy.toFixed(2)}`}
           icon={Zap}
           color={expColor}
-          subtitle="Oczekiwana wartość / trade"
+          subtitle="Oczekiwana wartosc / trade"
         />
         <MetricCard
           label="Max Drawdown"
           value={`$${data.max_drawdown.toFixed(2)}`}
           icon={TrendingDown}
-          color="text-red-400"
-          subtitle="Najgłębsze obsunięcie"
+          color="text-accent-red"
+          subtitle="Najglebsze obsuniecie"
         />
       </div>
 
@@ -104,38 +101,37 @@ export const RiskMetrics = memo(function RiskMetrics() {
           label="Avg Win"
           value={`$${data.avg_win.toFixed(2)}`}
           icon={TrendingUp}
-          color="text-green-400"
+          color="text-accent-green"
         />
         <MetricCard
           label="Avg Loss"
           value={`$${data.avg_loss.toFixed(2)}`}
           icon={TrendingDown}
-          color="text-red-400"
+          color="text-accent-red"
         />
         <MetricCard
           label="Win Streak"
           value={`${data.max_consecutive_wins}`}
           icon={Flame}
-          color="text-green-400"
-          subtitle="Max pod rząd"
+          color="text-accent-green"
+          subtitle="Max pod rzad"
         />
         <MetricCard
           label="Loss Streak"
           value={`${data.max_consecutive_losses}`}
           icon={Shield}
-          color="text-red-400"
-          subtitle="Max pod rząd"
+          color="text-accent-red"
+          subtitle="Max pod rzad"
         />
       </div>
 
       {/* Total P&L */}
       <div className="bg-dark-bg rounded p-2 border border-dark-secondary flex items-center justify-between">
-        <span className="text-xs text-gray-400">Total P&L</span>
-        <span className={`text-sm font-bold font-mono ${data.total_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+        <span className="text-xs text-th-secondary">Total P&L</span>
+        <span className={`text-sm font-bold font-mono ${data.total_profit >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
           {data.total_profit >= 0 ? '+' : ''}${data.total_profit.toFixed(2)}
         </span>
       </div>
     </div>
   );
 });
-

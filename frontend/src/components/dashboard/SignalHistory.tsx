@@ -50,7 +50,6 @@ export const SignalHistory = memo(function SignalHistory() {
       }
     };
 
-    // Stagger by 2s to avoid request burst on page load
     const initTimer = setTimeout(() => void fetchData(), 2000);
     const interval = setInterval(fetchData, 45000);
     return () => { clearTimeout(initTimer); clearInterval(interval); };
@@ -58,26 +57,26 @@ export const SignalHistory = memo(function SignalHistory() {
 
   if (loading && signals.length === 0) {
     return (
-      <div className="flex items-center justify-center h-40 text-gray-400">
+      <div className="flex items-center justify-center h-40 text-th-secondary">
         <span>Loading history...</span>
       </div>
     );
   }
 
   if (error && signals.length === 0) {
-    return <div className="text-center text-red-400 text-xs">{error}</div>;
+    return <div className="text-center text-accent-red text-xs">{error}</div>;
   }
 
   return (
     <div className="space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="text-xs text-gray-400 font-bold flex items-center gap-2">
+        <div className="text-xs text-th-secondary font-bold flex items-center gap-2">
           <History size={14} />
           SIGNAL HISTORY
         </div>
         {stats.total > 0 && (
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-th-muted">
             WR:{' '}
             <span className={stats.win_rate >= 0.5 ? 'text-accent-green font-bold' : 'text-accent-red font-bold'}>
               {(stats.win_rate * 100).toFixed(0)}%
@@ -90,7 +89,7 @@ export const SignalHistory = memo(function SignalHistory() {
       {/* Signals List */}
       <div className="space-y-2 max-h-[480px] overflow-y-auto pr-0.5">
         {signals.length === 0 ? (
-          <div className="text-center text-gray-400 text-xs py-4">
+          <div className="text-center text-th-secondary text-xs py-4">
             No signals yet — scanner runs every 15 min
           </div>
         ) : (
@@ -109,12 +108,12 @@ export const SignalHistory = memo(function SignalHistory() {
                 : 'text-accent-blue';
 
             const cardColor = isWin
-              ? 'bg-green-900/10 border-green-500/30'
+              ? 'bg-accent-green/5 border-accent-green/30'
               : isLoss
-              ? 'bg-red-900/10 border-red-500/30'
+              ? 'bg-accent-red/5 border-accent-red/30'
               : isLong
-              ? 'bg-green-900/5 border-green-500/20'
-              : 'bg-red-900/5 border-red-500/20';
+              ? 'bg-accent-green/3 border-accent-green/20'
+              : 'bg-accent-red/3 border-accent-red/20';
 
             return (
               <div
@@ -133,7 +132,7 @@ export const SignalHistory = memo(function SignalHistory() {
                       {sig.direction ?? '?'}
                     </span>
                     {sig.structure && (
-                      <span className="text-gray-500 text-xs">· {sig.structure}</span>
+                      <span className="text-th-muted text-xs">{sig.structure}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
@@ -141,35 +140,35 @@ export const SignalHistory = memo(function SignalHistory() {
                       <span
                         className={`px-1.5 py-0.5 rounded text-xs font-bold ${
                           isWin
-                            ? 'bg-green-900/30 text-accent-green'
+                            ? 'bg-accent-green/15 text-accent-green'
                             : isLoss
-                            ? 'bg-red-900/30 text-accent-red'
-                            : 'bg-blue-900/30 text-blue-400'
+                            ? 'bg-accent-red/15 text-accent-red'
+                            : 'bg-accent-blue/15 text-accent-blue'
                         }`}
                       >
                         {sig.result}
                       </span>
                     )}
-                    <span className="text-gray-600">{timeAgo}</span>
+                    <span className="text-th-dim">{timeAgo}</span>
                   </div>
                 </div>
 
                 {/* Entry / SL / TP grid */}
                 <div className="grid grid-cols-3 gap-1 text-xs">
                   <div className="bg-dark-bg/50 rounded px-1.5 py-1 text-center">
-                    <div className="text-gray-500 text-xs leading-none mb-0.5">Entry</div>
+                    <div className="text-th-muted text-xs leading-none mb-0.5">Entry</div>
                     <div className="font-mono font-semibold text-accent-blue">
                       ${fmt(sig.entry_price)}
                     </div>
                   </div>
                   <div className="bg-dark-bg/50 rounded px-1.5 py-1 text-center">
-                    <div className="text-gray-500 text-xs leading-none mb-0.5">SL</div>
+                    <div className="text-th-muted text-xs leading-none mb-0.5">SL</div>
                     <div className="font-mono font-semibold text-accent-red">
                       ${fmt(sig.sl)}
                     </div>
                   </div>
                   <div className="bg-dark-bg/50 rounded px-1.5 py-1 text-center">
-                    <div className="text-gray-500 text-xs leading-none mb-0.5">TP</div>
+                    <div className="text-th-muted text-xs leading-none mb-0.5">TP</div>
                     <div className="font-mono font-semibold text-accent-green">
                       ${fmt(sig.tp)}
                     </div>
@@ -179,7 +178,7 @@ export const SignalHistory = memo(function SignalHistory() {
                 {/* RSI badge */}
                 {sig.rsi != null && (
                   <div className="mt-1.5 flex items-center gap-1 text-xs">
-                    <span className="text-gray-500">RSI:</span>
+                    <span className="text-th-muted">RSI:</span>
                     <span className={`font-bold ${rsiColor}`}>{fmt(sig.rsi, 1)}</span>
                     {(sig.rsi ?? 50) > 70 && (
                       <span className="text-accent-red">Overbought</span>
@@ -197,7 +196,7 @@ export const SignalHistory = memo(function SignalHistory() {
 
       {/* Footer stats */}
       {signals.length > 0 && (
-        <div className="text-xs text-gray-500 pt-2 border-t border-dark-secondary flex justify-between">
+        <div className="text-xs text-th-muted pt-2 border-t border-dark-secondary flex justify-between">
           <span>{signals.length} signals shown</span>
           <span>
             {signals.filter((s) => s.direction === 'LONG').length}L /{' '}

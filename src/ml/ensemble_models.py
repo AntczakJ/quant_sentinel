@@ -269,7 +269,7 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
             from src.analysis.compute import onnx_predict
             pred = onnx_predict(model, X.astype(np.float32))
         else:
-            pred = model.predict(X, verbose=0)
+            pred = model(X, training=False).numpy()
 
         if pred is None:
             return None
@@ -378,7 +378,7 @@ def predict_dqn_action(close_prices: np.ndarray, balance: float = 1.0, position:
         else:
             # Keras agent — uzyskaj Q-values bezpośrednio
             state = model.build_state(close_prices, balance, position)
-            q_values = model.model.predict(state.reshape(1, -1), verbose=0)
+            q_values = model.model(state.reshape(1, -1), training=False).numpy()
             action = int(np.argmax(q_values[0]))
             q = q_values[0]
             exp_q = np.exp(q - np.max(q))

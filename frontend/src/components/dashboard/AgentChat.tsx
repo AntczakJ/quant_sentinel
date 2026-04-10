@@ -1,7 +1,5 @@
 /**
  * AgentChat.tsx — Quant Sentinel Gold Trader Agent chat interface.
- * Komunikuje się z /api/agent/chat i utrzymuje thread_id w localStorage
- * żeby agent pamiętał rozmowę między odświeżeniami strony.
  */
 
 import { useState, useRef, useEffect } from 'react';
@@ -20,11 +18,11 @@ interface Message {
 const THREAD_STORAGE_KEY = 'qs_agent_thread_id';
 
 const QUICK_ACTIONS = [
-  { label: '📊 Analiza M15', message: 'Przeanalizuj XAU/USD na M15 i oceń aktualny setup SMC.' },
-  { label: '🎯 Sygnał', message: 'Wygeneruj sygnał tradingowy na M15 z kapitałem 10000 USD.' },
-  { label: '📰 Newsy', message: 'Pobierz najnowsze newsy i zinterpretuj ich wpływ na złoto.' },
-  { label: '📅 Kalendarz', message: 'Sprawdź nadchodzące wydarzenia makro USD (NFP, CPI, FOMC).' },
-  { label: '📈 Portfolio', message: 'Pokaż statystyki portfela i ostatnie wyniki.' },
+  { label: 'Analiza M15', message: 'Przeanalizuj XAU/USD na M15 i ocen aktualny setup SMC.' },
+  { label: 'Sygnal', message: 'Wygeneruj sygnal tradingowy na M15 z kapitalem 10000 USD.' },
+  { label: 'Newsy', message: 'Pobierz najnowsze newsy i zinterpretuj ich wplyw na zloto.' },
+  { label: 'Kalendarz', message: 'Sprawdz nadchodzace wydarzenia makro USD (NFP, CPI, FOMC).' },
+  { label: 'Portfolio', message: 'Pokaz statystyki portfela i ostatnie wyniki.' },
 ];
 
 export function AgentChat() {
@@ -32,13 +30,13 @@ export function AgentChat() {
     {
       role: 'assistant',
       content:
-        'Cześć! Jestem **Quant Sentinel Gold Trader** — Twój asystent tradingowy XAU/USD z pamięcią.\n\n' +
-        'Mam dostęp do:\n' +
+        'Czesc! Jestem **Quant Sentinel Gold Trader** — Twoj asystent tradingowy XAU/USD z pamiecia.\n\n' +
+        'Mam dostep do:\n' +
         '- Analizy SMC (Liquidity Grab, MSS, FVG, Order Blocks)\n' +
-        '- Generowania sygnałów z entry/SL/TP\n' +
-        '- Newsów i kalendarza ekonomicznego\n' +
+        '- Generowania sygnalow z entry/SL/TP\n' +
+        '- Newsow i kalendarza ekonomicznego\n' +
         '- Statystyk portfela\n\n' +
-        'Pamiętam naszą rozmowę — możesz pytać o kontekst poprzednich analiz!',
+        'Pamietam nasza rozmowe — mozesz pytac o kontekst poprzednich analiz!',
       timestamp: new Date(),
     },
   ]);
@@ -53,9 +51,8 @@ export function AgentChat() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isAbortedRef = useRef(false);   // prevents double-message race condition
+  const isAbortedRef = useRef(false);
 
-  // Sprawdź czy agent jest dostępny — only when API is up
   useEffect(() => {
     if (!apiConnected) { setAgentAvailable(false); return; }
     void agentAPI.getInfo().then((info) => {
@@ -63,7 +60,6 @@ export function AgentChat() {
     }).catch(() => setAgentAvailable(false));
   }, [apiConnected]);
 
-  // Auto-scroll do ostatniej wiadomości
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -83,12 +79,10 @@ export function AgentChat() {
     setLoadingTime(0);
     isAbortedRef.current = false;
 
-    // Timer — pokazuje ile sekund agent pracuje
     timerRef.current = setInterval(() => {
       setLoadingTime((t) => t + 1);
     }, 1000);
 
-    // Timeout 120s — jeśli agent nie odpowie, pokaż błąd
     const timeoutId = setTimeout(() => {
       if (!isAbortedRef.current) {
         isAbortedRef.current = true;
@@ -99,7 +93,7 @@ export function AgentChat() {
           ...prev,
           {
             role: 'assistant',
-            content: '⏱️ **Przekroczono czas oczekiwania** (120s)\n\nAgent prawdopodobnie czeka na dane z zewnętrznego API. Spróbuj ponownie za chwilę.',
+            content: '**Przekroczono czas oczekiwania** (120s)\n\nAgent prawdopodobnie czeka na dane z zewnetrznego API. Sprobuj ponownie za chwile.',
             timestamp: new Date(),
           },
         ]);
@@ -111,9 +105,8 @@ export function AgentChat() {
       clearTimeout(timeoutId);
       if (timerRef.current) {clearInterval(timerRef.current);}
 
-      // If timeout already fired and set isAborted, discard late response
       if (isAbortedRef.current) {return;}
-      isAbortedRef.current = true; // mark as handled
+      isAbortedRef.current = true;
 
       if (result.thread_id) {
         setThreadId(result.thread_id);
@@ -137,7 +130,7 @@ export function AgentChat() {
           ...prev,
           {
             role: 'assistant',
-            content: '❌ **Błąd połączenia z agentem.**\n\nSprawdź czy API jest uruchomione (`python api/main.py`).',
+            content: '**Blad polaczenia z agentem.**\n\nSprawdz czy API jest uruchomione (`python api/main.py`).',
             timestamp: new Date(),
           },
         ]);
@@ -162,7 +155,7 @@ export function AgentChat() {
     setMessages([
       {
         role: 'assistant',
-        content: '🔄 Pamięć rozmowy wyczyszczona. Zaczynam od nowa!',
+        content: 'Pamiec rozmowy wyczyszczona. Zaczynam od nowa!',
         timestamp: new Date(),
       },
     ]);
@@ -174,24 +167,24 @@ export function AgentChat() {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Bot size={16} className="text-accent-green" />
-          <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">
+          <span className="text-xs text-th-secondary font-semibold uppercase tracking-wider">
             AI Agent
           </span>
           {!agentAvailable && (
-            <span className="text-xs text-accent-red bg-red-900/20 px-2 py-0.5 rounded">
+            <span className="text-xs text-accent-red bg-accent-red/15 px-2 py-0.5 rounded">
               Offline
             </span>
           )}
           {agentAvailable && threadId && (
-            <span className="text-xs text-accent-green bg-green-900/20 px-2 py-0.5 rounded">
-              Pamięć aktywna
+            <span className="text-xs text-accent-green bg-accent-green/15 px-2 py-0.5 rounded">
+              Pamiec aktywna
             </span>
           )}
         </div>
         <button
           onClick={resetThread}
-          title="Wyczyść historię rozmowy"
-          className="text-gray-500 hover:text-accent-red transition-colors"
+          title="Wyczysc historie rozmowy"
+          className="text-th-muted hover:text-accent-red transition-colors"
         >
           <Trash2 size={14} />
         </button>
@@ -204,7 +197,7 @@ export function AgentChat() {
             key={action.label}
             onClick={() => void sendMessage(action.message)}
             disabled={loading}
-            className="text-xs px-2 py-1 bg-dark-secondary hover:bg-dark-secondary/70 text-gray-300 rounded-md transition-all disabled:opacity-40 border border-dark-secondary hover:border-accent-green/30"
+            className="text-xs px-2 py-1 bg-dark-secondary hover:bg-th-hover text-th-secondary rounded-md transition-all disabled:opacity-40 border border-dark-secondary hover:border-accent-green/30"
           >
             {action.label}
           </button>
@@ -230,8 +223,8 @@ export function AgentChat() {
             <div
               className={`max-w-[85%] rounded-lg px-3 py-2 text-sm leading-relaxed ${
                 msg.role === 'user'
-                  ? 'bg-green-950/15 border border-green-600/15 text-gray-200'
-                  : 'bg-dark-bg border border-dark-secondary text-gray-300'
+                  ? 'bg-accent-green/10 border border-accent-green/15 text-th'
+                  : 'bg-dark-bg border border-dark-secondary text-th-secondary'
               }`}
             >
               <MarkdownText text={msg.content} />
@@ -242,7 +235,7 @@ export function AgentChat() {
                   {msg.toolCalls.map((tc, i) => (
                     <span
                       key={i}
-                      className="inline-flex items-center gap-1 text-xs text-accent-blue bg-blue-900/20 px-1.5 py-0.5 rounded"
+                      className="inline-flex items-center gap-1 text-xs text-accent-blue bg-accent-blue/15 px-1.5 py-0.5 rounded"
                     >
                       <Wrench size={10} />
                       {tc.name}
@@ -251,7 +244,7 @@ export function AgentChat() {
                 </div>
               )}
 
-              <div className="text-xs text-gray-600 mt-1">
+              <div className="text-xs text-th-dim mt-1">
                 {msg.timestamp.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}
               </div>
             </div>
@@ -265,15 +258,15 @@ export function AgentChat() {
               <Bot size={12} className="text-accent-purple" />
             </div>
             <div className="bg-dark-secondary/50 border border-dark-secondary rounded-lg px-3 py-2">
-              <div className="flex items-center gap-1.5 text-gray-400 text-xs">
+              <div className="flex items-center gap-1.5 text-th-secondary text-xs">
                 <RefreshCw size={12} className="animate-spin" />
                 Agent analizuje rynek...
-                <span className="text-gray-600 ml-1">{loadingTime}s</span>
+                <span className="text-th-dim ml-1">{loadingTime}s</span>
               </div>
               {loadingTime > 15 && (
-                <div className="flex items-center gap-1 text-xs text-amber-500/70 mt-1">
+                <div className="flex items-center gap-1 text-xs text-accent-orange/70 mt-1">
                   <AlertTriangle size={10} />
-                  {loadingTime > 60 ? 'Złożona analiza z narzędziami...' : 'Pobieranie danych rynkowych...'}
+                  {loadingTime > 60 ? 'Zlozona analiza z narzedziami...' : 'Pobieranie danych rynkowych...'}
                 </div>
               )}
             </div>
@@ -290,15 +283,15 @@ export function AgentChat() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={!agentAvailable ? 'Agent offline — sprawdź API' : 'Zapytaj agenta... (Enter = wyślij)'}
+          placeholder={!agentAvailable ? 'Agent offline — sprawdz API' : 'Zapytaj agenta... (Enter = wyslij)'}
           disabled={loading || !agentAvailable}
           rows={2}
-          className="flex-1 bg-dark-secondary border border-dark-secondary focus:border-accent-green/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 resize-none transition-colors outline-none disabled:opacity-40"
+          className="flex-1 bg-dark-secondary border border-dark-secondary focus:border-accent-green/50 rounded-lg px-3 py-2 text-sm text-th placeholder-th-dim resize-none transition-colors outline-none disabled:opacity-40"
         />
         <button
           onClick={() => void sendMessage(input)}
           disabled={loading || !input.trim() || !agentAvailable}
-          className="self-end px-3 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white rounded-lg transition-colors"
+          className="self-end px-3 py-2 bg-accent-green hover:brightness-110 disabled:opacity-40 text-white rounded-lg transition-all"
         >
           <Send size={16} />
         </button>
@@ -306,11 +299,10 @@ export function AgentChat() {
 
       {/* Memory info */}
       {threadId && (
-        <div className="text-xs text-gray-600 mt-1 text-center">
-          🧠 Wątek: {threadId.slice(-8)} — agent pamięta tę rozmowę
+        <div className="text-xs text-th-dim mt-1 text-center">
+          Watek: {threadId.slice(-8)} — agent pamieta te rozmowe
         </div>
       )}
     </div>
   );
 }
-

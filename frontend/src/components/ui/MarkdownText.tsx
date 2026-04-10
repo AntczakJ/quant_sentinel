@@ -11,13 +11,12 @@ interface Props {
 }
 
 function parseInline(line: string): React.ReactNode[] {
-  // Podziel po **bold**, *italic*, `code`
   const parts = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**'))
-      {return <strong key={i} className="text-white font-semibold">{part.slice(2, -2)}</strong>;}
+      {return <strong key={i} className="text-th font-semibold">{part.slice(2, -2)}</strong>;}
     if (part.startsWith('*') && part.endsWith('*'))
-      {return <em key={i} className="text-gray-300 italic">{part.slice(1, -1)}</em>;}
+      {return <em key={i} className="text-th-secondary italic">{part.slice(1, -1)}</em>;}
     if (part.startsWith('`') && part.endsWith('`'))
       {return <code key={i} className="bg-dark-bg text-accent-green px-1.5 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;}
     return <span key={i}>{part}</span>;
@@ -35,7 +34,7 @@ export function MarkdownText({ text, className = '' }: Props) {
         result.push(
           <ul key={key} className="space-y-1 my-1.5 pl-3">
             {listItems.map((item, i) => (
-              <li key={i} className="flex gap-2 text-gray-300 text-sm">
+              <li key={i} className="flex gap-2 text-th-secondary text-sm">
                 <span className="text-accent-green flex-shrink-0 mt-0.5">•</span>
                 <span>{parseInline(item)}</span>
               </li>
@@ -49,14 +48,12 @@ export function MarkdownText({ text, className = '' }: Props) {
     lines.forEach((line, idx) => {
       const trimmed = line.trim();
 
-      // Pusta linia — separator
       if (!trimmed) {
         flushList(`list-${idx}`);
         result.push(<div key={`br-${idx}`} className="h-1.5" />);
         return;
       }
 
-      // ### Heading 3
       if (trimmed.startsWith('### ')) {
         flushList(`list-${idx}`);
         result.push(
@@ -67,7 +64,6 @@ export function MarkdownText({ text, className = '' }: Props) {
         return;
       }
 
-      // ## Heading 2
       if (trimmed.startsWith('## ')) {
         flushList(`list-${idx}`);
         result.push(
@@ -78,27 +74,24 @@ export function MarkdownText({ text, className = '' }: Props) {
         return;
       }
 
-      // # Heading 1
       if (trimmed.startsWith('# ')) {
         flushList(`list-${idx}`);
         result.push(
-          <h1 key={idx} className="text-white font-bold text-base mt-3 mb-1">
+          <h1 key={idx} className="text-th font-bold text-base mt-3 mb-1">
             {parseInline(trimmed.slice(2))}
           </h1>
         );
         return;
       }
 
-      // - List item
       if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
         listItems.push(trimmed.slice(2));
         return;
       }
 
-      // Zwykły akapit
       flushList(`list-${idx}`);
       result.push(
-        <p key={idx} className="text-gray-300 text-sm leading-relaxed">
+        <p key={idx} className="text-th-secondary text-sm leading-relaxed">
           {parseInline(trimmed)}
         </p>
       );
@@ -114,4 +107,3 @@ export function MarkdownText({ text, className = '' }: Props) {
     </div>
   );
 }
-

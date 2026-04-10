@@ -81,7 +81,6 @@ export const PortfolioStats = memo(function PortfolioStats() {
       }
     } catch (err) {
       toast.error('Balance update failed');
-      toast.error('Balance update failed');
     }
   };
 
@@ -107,26 +106,26 @@ export const PortfolioStats = memo(function PortfolioStats() {
   };
 
   if (loading && !portfolio) {
-    return <div className="flex items-center justify-center h-32 text-gray-500 text-sm">Loading portfolio...</div>;
+    return <div className="flex items-center justify-center h-32 text-th-muted text-sm">Loading portfolio...</div>;
   }
   if (error && !portfolio) {
-    return <div className="flex items-center justify-center h-32 text-red-400 text-xs">{error}</div>;
+    return <div className="flex items-center justify-center h-32 text-accent-red text-xs">{error}</div>;
   }
   if (!portfolio) {return null;}
 
   const pnlPositive = portfolio.pnl >= 0;
-  const pnlColor = pnlPositive ? 'text-green-400' : 'text-red-400';
+  const pnlColor = pnlPositive ? 'text-accent-green' : 'text-accent-red';
   const returnPct = ((portfolio.pnl / portfolio.initial_balance) * 100).toFixed(2);
 
   return (
     <div className="space-y-4">
       {/* Header with Add Trade */}
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-gray-500 font-medium uppercase tracking-widest">Status</span>
+        <span className="text-[10px] text-th-muted font-medium uppercase tracking-widest">Status</span>
         <button
           onClick={() => { void handleAddTrade(); }}
           disabled={addingTrade}
-          className="text-[11px] bg-green-600/10 hover:bg-green-600/20 border border-green-600/25 rounded-lg px-3 py-1 text-green-400 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50"
+          className="text-[11px] bg-accent-green/10 hover:bg-accent-green/20 border border-accent-green/25 rounded-lg px-3 py-1 text-accent-green transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50"
         >
           {addingTrade ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
           {addingTrade ? 'Wait...' : 'Quick Trade'}
@@ -138,38 +137,38 @@ export const PortfolioStats = memo(function PortfolioStats() {
         {/* Balance */}
         <div className="stat-item">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] text-gray-500 font-medium uppercase tracking-widest">Balance</span>
-            <button onClick={() => setShowEditBalance(!showEditBalance)} className="text-gray-600 hover:text-gray-400 transition-colors">
+            <span className="text-[10px] text-th-muted font-medium uppercase tracking-widest">Balance</span>
+            <button onClick={() => setShowEditBalance(!showEditBalance)} className="text-th-dim hover:text-th-secondary transition-colors">
               <Edit2 size={10} />
             </button>
           </div>
           {showEditBalance ? (
             <div className="flex gap-1.5">
               <input type="number" value={newBalance} onChange={e => setNewBalance(e.target.value)}
-                className="flex-1 bg-[#141920] border border-[#1e2736] rounded-lg px-2.5 py-1.5 text-xs text-white focus:border-blue-500/50 outline-none transition-colors" />
+                className="flex-1 bg-dark-tertiary border border-dark-secondary rounded-lg px-2.5 py-1.5 text-xs text-th focus:border-accent-blue/50 outline-none transition-colors" />
               <button onClick={() => { void handleBalanceUpdate(); }}
-                className="text-xs text-green-400 bg-green-600/10 hover:bg-green-600/20 px-2.5 rounded-lg transition-colors">OK</button>
+                className="text-xs text-accent-green bg-accent-green/10 hover:bg-accent-green/20 px-2.5 rounded-lg transition-colors">OK</button>
               <button onClick={() => setShowEditBalance(false)}
-                className="text-xs text-red-400 bg-red-600/10 hover:bg-red-600/20 px-2.5 rounded-lg transition-colors">X</button>
+                className="text-xs text-accent-red bg-accent-red/10 hover:bg-accent-red/20 px-2.5 rounded-lg transition-colors">X</button>
             </div>
           ) : (
             <>
-              <div className="text-xl font-bold text-green-400 font-mono tracking-tight">{portfolio.balance.toFixed(2)} PLN</div>
-              <div className="text-[10px] text-gray-600 mt-1">Initial: {portfolio.initial_balance.toFixed(2)}</div>
+              <div className="text-xl font-bold text-accent-green font-mono tracking-tight">{portfolio.balance.toFixed(2)} PLN</div>
+              <div className="text-[10px] text-th-dim mt-1">Initial: {portfolio.initial_balance.toFixed(2)}</div>
             </>
           )}
         </div>
 
         {/* Equity */}
         <div className="stat-item">
-          <div className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-1.5">Equity</div>
-          <div className="text-xl font-bold text-blue-400 font-mono tracking-tight">{portfolio.equity.toFixed(2)} PLN</div>
+          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1.5">Equity</div>
+          <div className="text-xl font-bold text-accent-blue font-mono tracking-tight">{portfolio.equity.toFixed(2)} PLN</div>
         </div>
       </div>
 
       {/* P&L */}
-      <div className={`rounded-xl p-4 border ${pnlPositive ? 'bg-green-950/8 border-green-600/15' : 'bg-red-950/8 border-red-600/15'}`}>
-        <div className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-1.5">P&L</div>
+      <div className={`rounded-xl p-4 border ${pnlPositive ? 'bg-accent-green/5 border-accent-green/15' : 'bg-accent-red/5 border-accent-red/15'}`}>
+        <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1.5">P&L</div>
         <div className="flex items-end justify-between">
           <div className={`text-2xl font-bold ${pnlColor} font-mono tracking-tight`}>
             {pnlPositive ? '+' : ''}{portfolio.pnl.toFixed(2)}
@@ -180,33 +179,33 @@ export const PortfolioStats = memo(function PortfolioStats() {
 
       {/* Position */}
       {portfolio.has_position ? (
-        <div className="stat-item !border-blue-600/20">
-          <div className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-2">Active Position</div>
+        <div className="stat-item !border-accent-blue/20">
+          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-2">Active Position</div>
           <div className="flex items-center justify-between">
-            <span className={`text-base font-bold ${portfolio.position_type === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
+            <span className={`text-base font-bold ${portfolio.position_type === 'LONG' ? 'text-accent-green' : 'text-accent-red'}`}>
               {portfolio.position_type}
             </span>
-            <span className="text-xs text-gray-500 font-mono">${portfolio.position_entry?.toFixed(2)}</span>
+            <span className="text-xs text-th-muted font-mono">${portfolio.position_entry?.toFixed(2)}</span>
           </div>
-          <div className={`text-sm font-bold mt-1.5 font-mono ${(portfolio.position_unrealized_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+          <div className={`text-sm font-bold mt-1.5 font-mono ${(portfolio.position_unrealized_pnl ?? 0) >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
             Unrealized: {(portfolio.position_unrealized_pnl ?? 0) >= 0 ? '+' : ''}{portfolio.position_unrealized_pnl?.toFixed(2)}
           </div>
         </div>
       ) : (
         <div className="stat-item text-center">
-          <span className="text-xs text-gray-600">No Active Position</span>
+          <span className="text-xs text-th-dim">No Active Position</span>
         </div>
       )}
 
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-3">
         <div className="stat-item">
-          <div className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-1">ROE</div>
-          <div className={`text-base font-bold font-mono ${pnlPositive ? 'text-green-400' : 'text-red-400'}`}>{returnPct}%</div>
+          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1">ROE</div>
+          <div className={`text-base font-bold font-mono ${pnlPositive ? 'text-accent-green' : 'text-accent-red'}`}>{returnPct}%</div>
         </div>
         <div className="stat-item">
-          <div className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-1">Win Rate</div>
-          <div className={`text-base font-bold font-mono ${winRate != null ? (winRate >= 50 ? 'text-green-400' : 'text-red-400') : 'text-gray-600'}`}>
+          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1">Win Rate</div>
+          <div className={`text-base font-bold font-mono ${winRate != null ? (winRate >= 50 ? 'text-accent-green' : 'text-accent-red') : 'text-th-dim'}`}>
             {winRate != null ? `${winRate.toFixed(1)}%` : '--'}
           </div>
         </div>

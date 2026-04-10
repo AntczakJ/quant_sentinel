@@ -37,7 +37,7 @@ const queryClient = new QueryClient({
 
 function PageLoader() {
   return (
-    <div className="flex items-center justify-center h-64 text-gray-500 text-sm gap-2">
+    <div className="flex items-center justify-center h-64 text-th-muted text-sm gap-2">
       <RefreshCw size={14} className="animate-spin" />
       Loading…
     </div>
@@ -144,7 +144,7 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ToastProvider>
-          <div className="min-h-screen bg-dark-bg text-gray-200 font-sans">
+          <div className="min-h-screen bg-dark-bg text-th font-sans">
             <AppContent />
           </div>
         </ToastProvider>

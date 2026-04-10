@@ -47,37 +47,37 @@ const TF_ORDER = ['5m', '15m', '1h', '4h'] as const;
 
 function MtfWidget({ data }: { data: MtfConfluence }) {
   const dir = data.direction ?? 'CZEKAJ';
-  const dirColor = dir.includes('BULL') ? 'text-green-400' : dir.includes('BEAR') ? 'text-red-400' : 'text-amber-400';
+  const dirColor = dir.includes('BULL') ? 'text-accent-green' : dir.includes('BEAR') ? 'text-accent-red' : 'text-accent-orange';
   const score = Math.round(data.confluence_score ?? 0);
   const bullPct = data.bull_pct ?? 0;
   const bearPct = data.bear_pct ?? 0;
   return (
     <div className="bg-dark-bg rounded p-2.5 border border-dark-secondary text-xs">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-gray-500 flex items-center gap-1"><BarChart2 size={10} /> MTF Confluence</span>
+        <span className="text-th-muted flex items-center gap-1"><BarChart2 size={10} /> MTF Confluence</span>
         <span className={`font-bold ${dirColor}`}>{dir}</span>
       </div>
       {/* Progress bar */}
-      <div className="relative h-1.5 bg-red-900/40 rounded-full overflow-hidden mb-2">
+      <div className="relative h-1.5 bg-accent-red/25 rounded-full overflow-hidden mb-2">
         <div
-          className="absolute left-0 top-0 h-full bg-green-500/70 rounded-full transition-all"
+          className="absolute left-0 top-0 h-full bg-accent-green/70 rounded-full transition-all"
           style={{ width: `${bullPct}%` }}
         />
       </div>
-      <div className="flex justify-between text-gray-600 mb-2">
-        <span className="text-green-500">▲ {bullPct.toFixed(0)}%</span>
-        <span className="font-mono font-bold text-gray-400">{score}/10</span>
-        <span className="text-red-500">▼ {bearPct.toFixed(0)}%</span>
+      <div className="flex justify-between text-th-dim mb-2">
+        <span className="text-accent-green">▲ {bullPct.toFixed(0)}%</span>
+        <span className="font-mono font-bold text-th-secondary">{score}/10</span>
+        <span className="text-accent-red">▼ {bearPct.toFixed(0)}%</span>
       </div>
       {/* TF breakdown */}
       <div className="grid grid-cols-4 gap-1">
         {TF_ORDER.map(tf => {
           const t = data.timeframes?.[tf];
-          if (!t) {return <div key={tf} className="text-center text-gray-700">{tf}</div>;}
+          if (!t) {return <div key={tf} className="text-center text-th-dim">{tf}</div>;}
           const isBull = t.trend === 'bull' || t.trend === 'bullish';
           return (
-            <div key={tf} className={`text-center rounded py-0.5 font-mono ${isBull ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
-              <div className="text-gray-500 text-[9px]">{tf}</div>
+            <div key={tf} className={`text-center rounded py-0.5 font-mono ${isBull ? 'bg-accent-green/15 text-accent-green' : 'bg-accent-red/15 text-accent-red'}`}>
+              <div className="text-th-muted text-[9px]">{tf}</div>
               <div className="text-[10px] font-bold">{isBull ? '▲' : '▼'}</div>
               <div className="text-[9px] opacity-75">{t.rsi?.toFixed(0) ?? '—'}</div>
             </div>
@@ -137,7 +137,7 @@ export function AnalysisPanel() {
     return (
       <div className="card">
         <h2 className="section-title mb-3">Analysis</h2>
-        <div className="flex items-center justify-center h-48 text-gray-500 text-sm gap-2">
+        <div className="flex items-center justify-center h-48 text-th-muted text-sm gap-2">
           <RefreshCw className="animate-spin" size={14} />
           Analyzing market...
         </div>
@@ -149,7 +149,7 @@ export function AnalysisPanel() {
     return (
       <div className="card">
         <h2 className="section-title mb-3">Analysis</h2>
-        <div className="flex items-center justify-center h-48 text-red-400 text-xs gap-2">
+        <div className="flex items-center justify-center h-48 text-accent-red text-xs gap-2">
           <AlertCircle size={16} /> {error}
         </div>
       </div>
@@ -160,18 +160,18 @@ export function AnalysisPanel() {
     return (
       <div className="card">
         <h2 className="section-title mb-3">Analysis</h2>
-        <div className="text-center text-gray-500 text-sm">No data</div>
+        <div className="text-center text-th-muted text-sm">No data</div>
       </div>
     );
   }
 
   const { smc_analysis, position, ai_assessment } = analysis;
-  const trendColor = smc_analysis.trend === 'bull' ? 'text-green-400' : 'text-red-400';
+  const trendColor = smc_analysis.trend === 'bull' ? 'text-accent-green' : 'text-accent-red';
 
   return (
     <div className="card relative">
       {refreshing && (
-        <div className="absolute top-3 right-3 flex items-center gap-1 text-xs text-gray-500 z-10">
+        <div className="absolute top-3 right-3 flex items-center gap-1 text-xs text-th-muted z-10">
           <RefreshCw size={10} className="animate-spin" /> updating…
         </div>
       )}
@@ -185,8 +185,8 @@ export function AnalysisPanel() {
               onClick={() => setSelectedTF(tf)}
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
                 selectedTF === tf
-                  ? 'bg-green-600 text-white'
-                  : 'bg-dark-secondary text-gray-400 hover:text-gray-300'
+                  ? 'bg-accent-green text-white'
+                  : 'bg-dark-secondary text-th-secondary hover:text-th'
               }`}
             >
               {tf}
@@ -199,20 +199,20 @@ export function AnalysisPanel() {
         {/* SMC Grid */}
         <div className="grid grid-cols-2 gap-2">
           <div className="bg-dark-bg rounded p-2.5 border border-dark-secondary">
-            <div className="text-xs text-gray-500 mb-0.5">Trend</div>
+            <div className="text-xs text-th-muted mb-0.5">Trend</div>
             <div className={`text-sm font-bold ${trendColor}`}>{smc_analysis.trend.toUpperCase()}</div>
           </div>
           <div className="bg-dark-bg rounded p-2.5 border border-dark-secondary">
-            <div className="text-xs text-gray-500 mb-0.5">Structure</div>
-            <div className="text-sm font-bold text-blue-400">{smc_analysis.structure}</div>
+            <div className="text-xs text-th-muted mb-0.5">Structure</div>
+            <div className="text-sm font-bold text-accent-blue">{smc_analysis.structure}</div>
           </div>
           <div className="bg-dark-bg rounded p-2.5 border border-dark-secondary">
-            <div className="text-xs text-gray-500 mb-0.5">RSI</div>
-            <div className="text-sm font-bold text-purple-400">{fmt(smc_analysis.rsi, 1)}</div>
+            <div className="text-xs text-th-muted mb-0.5">RSI</div>
+            <div className="text-sm font-bold text-accent-purple">{fmt(smc_analysis.rsi, 1)}</div>
           </div>
           <div className="bg-dark-bg rounded p-2.5 border border-dark-secondary">
-            <div className="text-xs text-gray-500 mb-0.5">FVG</div>
-            <div className="text-xs font-bold text-amber-400">{smc_analysis.fvg}</div>
+            <div className="text-xs text-th-muted mb-0.5">FVG</div>
+            <div className="text-xs font-bold text-accent-orange">{smc_analysis.fvg}</div>
           </div>
         </div>
 
@@ -221,37 +221,37 @@ export function AnalysisPanel() {
 
         {/* Position */}
         <div className="bg-dark-bg rounded-lg p-3 border border-dark-secondary">
-          <div className="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wider">Position</div>
+          <div className="text-xs text-th-muted mb-2 font-medium uppercase tracking-wider">Position</div>
           <div className="space-y-1.5 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-400">Direction</span>
-              <span className={`font-bold ${position.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{position.direction}</span>
+              <span className="text-th-secondary">Direction</span>
+              <span className={`font-bold ${position.direction === 'LONG' ? 'text-accent-green' : 'text-accent-red'}`}>{position.direction}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-400">Entry</span>
-              <span className="font-mono text-blue-400">${fmt(position.entry)}</span>
+              <span className="text-th-secondary">Entry</span>
+              <span className="font-mono text-accent-blue">${fmt(position.entry)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-400">SL</span>
-              <span className="font-mono text-red-400">${fmt(position.stop_loss)}</span>
+              <span className="text-th-secondary">SL</span>
+              <span className="font-mono text-accent-red">${fmt(position.stop_loss)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-400">TP</span>
-              <span className="font-mono text-green-400">${fmt(position.take_profit)}</span>
+              <span className="text-th-secondary">TP</span>
+              <span className="font-mono text-accent-green">${fmt(position.take_profit)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-400">Lot</span>
-              <span className="font-mono text-purple-400">{fmt(position.lot_size)}</span>
+              <span className="text-th-secondary">Lot</span>
+              <span className="font-mono text-accent-purple">{fmt(position.lot_size)}</span>
             </div>
           </div>
         </div>
 
         {/* AI Assessment */}
         <div className="bg-dark-bg rounded p-3 border border-dark-secondary">
-          <div className="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wider flex items-center gap-1.5">
+          <div className="text-xs text-th-muted mb-2 font-medium uppercase tracking-wider flex items-center gap-1.5">
             <Zap size={12} /> AI Assessment
           </div>
-          <div className="text-sm text-gray-300">
+          <div className="text-sm text-th-secondary">
             <MarkdownText text={ai_assessment} />
           </div>
         </div>
@@ -260,17 +260,17 @@ export function AnalysisPanel() {
         <button
           onClick={() => { void fetchAnalysis(selectedTF, true); }}
           disabled={loading || refreshing}
-          className="w-full py-2 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded transition-colors disabled:opacity-50"
+          className="w-full py-2 bg-accent-green hover:brightness-110 text-white text-sm font-medium rounded transition-all disabled:opacity-50"
         >
           <RefreshCw size={14} className={`inline mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
           {refreshing ? 'Analyzing...' : 'Refresh Analysis'}
         </button>
 
         {lastUpdated && !refreshing && (
-          <div className="flex items-center gap-1 text-xs text-gray-600 justify-center">
+          <div className="flex items-center gap-1 text-xs text-th-dim justify-center">
             <Clock size={10} />
             {lastUpdated.toLocaleTimeString('pl-PL')}
-            <span className="text-gray-700 ml-1">(cache 5min)</span>
+            <span className="text-th-dim ml-1">(cache 5min)</span>
           </div>
         )}
       </div>
