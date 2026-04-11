@@ -509,6 +509,7 @@ export function CandlestickChart() {
   const [error, setError] = useState<string | null>(null);
   const [legendData, setLegendData] = useState<LegendData | null>(null);
   const deferredLegend = useDeferredValue(legendData);
+  const [smcLabels, setSmcLabels] = useState<Array<{ x: number; y: number; label: string; color: string }>>([]);
   const isFirstLoad = useRef(true);
   const rawCandlesRef = useRef<CandlestickData[]>([]);
 
@@ -738,6 +739,23 @@ export function CandlestickChart() {
       rsiChartRef.current = null;
     };
   }, []);
+
+  // Sync SMC HTML labels with chart viewport (updates on scroll/zoom)
+  useEffect(() => {
+    const chart = mainChartRef.current;
+    if (!chart) return;
+    const updateLabels = () => {
+      const overlay = smcOverlayRef.current;
+      if (overlay && smcVisible) {
+        setSmcLabels(overlay.getLabels());
+      } else {
+        setSmcLabels([]);
+      }
+    };
+    const ts = chart.timeScale();
+    ts.subscribeVisibleLogicalRangeChange(updateLabels);
+    return () => ts.unsubscribeVisibleLogicalRangeChange(updateLabels);
+  }, [smcVisible]);
 
   /* ── InteractionManager for drawing tools ──────────────────────────────── */
   useEffect(() => {
@@ -1594,6 +1612,27 @@ export function CandlestickChart() {
           </div>
         )}
         <div ref={mainContainerRef} className="w-full h-full" style={{ paddingLeft: 42 }} />
+
+        {/* SMC zone labels — HTML layer above canvas (candles can't cover these) */}
+        {smcLabels.length > 0 && (
+          <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ left: 42 }}>
+            {smcLabels.map((l, i) => (
+              <div
+                key={`${l.label}-${i}`}
+                className="absolute text-[7px] font-semibold px-1 py-px rounded-sm whitespace-nowrap"
+                style={{
+                  left: l.x,
+                  top: l.y,
+                  color: l.color.replace(/[\d.]+\)$/, '0.85)'),
+                  background: l.color.replace(/[\d.]+\)$/, '0.15)'),
+                  backdropFilter: 'blur(2px)',
+                }}
+              >
+                {l.label}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Properties panel – appears when a drawing is selected */}
         {showPropertiesPanel && selectedDrawingId && (() => {
