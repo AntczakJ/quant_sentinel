@@ -435,20 +435,63 @@ class NewsDB:
         self._execute("INSERT OR REPLACE INTO agent_threads (user_id, thread_id, last_used) VALUES (?, ?, CURRENT_TIMESTAMP)", (str(user_id), thread_id))
 
     def get_session(self, timestamp: str) -> str:
-        """Determine trading session from timestamp. Uses CET-based logic matching smc_engine."""
+        """Determine trading session from timestamp using real exchange local times (DST-aware).
+
+        Matches smc_engine.get_active_session logic — sessions defined in local exchange time:
+          Asian  (Asia/Tokyo):       09:00-15:00
+          London (Europe/London):    08:00-16:30
+          NY     (America/New_York): 09:30-16:00
+          Overlap: London + NY both active
+        """
+        from datetime import datetime as _dt, timezone as _tz
         try:
-            hour = int(timestamp[11:13])
+            from zoneinfo import ZoneInfo
+        except ImportError:
+            # Fallback: approximate with old CET logic
+            try:
+                hour = int(timestamp[11:13])
+            except (ValueError, IndexError):
+                return "unknown"
+            if 0 <= hour < 8:
+                return "asian"
+            elif 8 <= hour < 14:
+                return "london"
+            elif 14 <= hour < 17:
+                return "overlap"
+            elif 17 <= hour < 23:
+                return "new_york"
+            else:
+                return "off_hours"
+
+        try:
+            # Parse ISO timestamp as UTC
+            ts = timestamp.replace('Z', '+00:00')
+            utc_dt = _dt.fromisoformat(ts)
+            if utc_dt.tzinfo is None:
+                utc_dt = utc_dt.replace(tzinfo=_tz.utc)
         except (ValueError, IndexError):
             return "unknown"
-        # CET-based session mapping (matches smc_engine.get_active_session)
-        if 0 <= hour < 8:
-            return "asian"
-        elif 8 <= hour < 14:
-            return "london"
-        elif 14 <= hour < 17:
+
+        tokyo  = utc_dt.astimezone(ZoneInfo('Asia/Tokyo'))
+        london = utc_dt.astimezone(ZoneInfo('Europe/London'))
+        ny     = utc_dt.astimezone(ZoneInfo('America/New_York'))
+
+        tokyo_min  = tokyo.hour * 60 + tokyo.minute
+        london_min = london.hour * 60 + london.minute
+        ny_min     = ny.hour * 60 + ny.minute
+
+        london_active = 8 * 60 <= london_min < 16 * 60 + 30
+        ny_active     = 9 * 60 + 30 <= ny_min < 16 * 60
+        asian_active  = 9 * 60 <= tokyo_min < 15 * 60
+
+        if london_active and ny_active:
             return "overlap"
-        elif 17 <= hour < 23:
+        elif london_active:
+            return "london"
+        elif ny_active:
             return "new_york"
+        elif asian_active:
+            return "asian"
         else:
             return "off_hours"
 

@@ -110,8 +110,11 @@ class MLPredictor:
         avg_acc = np.mean(fold_accuracies) if fold_accuracies else 0.5
         logger.info(f"XGBoost trained, walk-forward accuracy: {avg_acc:.3f} ({len(fold_accuracies)} folds)")
 
-        with open(os.path.join(self.model_dir, 'xgb.pkl'), 'wb') as f:
+        xgb_path = os.path.join(self.model_dir, 'xgb.pkl')
+        xgb_tmp = xgb_path + '.tmp'
+        with open(xgb_tmp, 'wb') as f:
             pickle.dump(self.xgb, f)
+        os.replace(xgb_tmp, xgb_path)
 
         # Persist accuracy to DB
         try:
@@ -165,10 +168,12 @@ class MLPredictor:
         data = features[FEATURE_COLS].values
         scaled = self.scaler.fit_transform(data)
 
-        # Persist fitted scaler for consistent inference
+        # Persist fitted scaler for consistent inference (atomic write)
         scaler_path = os.path.join(self.model_dir, 'lstm_scaler.pkl')
-        with open(scaler_path, 'wb') as f:
+        scaler_tmp = scaler_path + '.tmp'
+        with open(scaler_tmp, 'wb') as f:
             pickle.dump(self.scaler, f)
+        os.replace(scaler_tmp, scaler_path)
         logger.info(f"LSTM scaler saved to {scaler_path}")
 
         # Vectorized sliding window (replaces Python for-loop)
@@ -245,7 +250,10 @@ class MLPredictor:
                            callbacks=[early], verbose=0,
                            class_weight=class_weight)
         self.lstm = model
-        self.lstm.save(os.path.join(self.model_dir, 'lstm.keras'))
+        lstm_path = os.path.join(self.model_dir, 'lstm.keras')
+        lstm_tmp = lstm_path + '.tmp'
+        self.lstm.save(lstm_tmp)
+        os.replace(lstm_tmp, lstm_path)
 
         # Persist accuracy
         best_val_acc = max(history.history.get('val_accuracy', [0.5]))

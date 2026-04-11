@@ -26,25 +26,29 @@ from src.core.logger import logger
 
 # ==================== SESSION / KILLZONE DETECTION ====================
 
-def _get_cet_tz():
-    """Return Europe/Warsaw (CET/CEST) tzinfo — handles DST automatically."""
+def _get_tz(zone_name: str):
+    """Return a tzinfo for the given IANA zone, with fallback chain."""
     try:
         from zoneinfo import ZoneInfo
-        return ZoneInfo('Europe/Warsaw')
+        return ZoneInfo(zone_name)
     except ImportError:
         try:
             import pytz
-            return pytz.timezone('Europe/Warsaw')
+            return pytz.timezone(zone_name)
         except ImportError:
-            # Minimal fallback: CET (UTC+1), no DST awareness
+            # Minimal fallback: UTC only (no DST awareness)
             from datetime import timedelta, tzinfo as _tzinfo
-            class _CET(_tzinfo):
-                def utcoffset(self, dt): return timedelta(hours=1)
+            class _UTC(_tzinfo):
+                def utcoffset(self, dt): return timedelta(0)
                 def dst(self, dt): return timedelta(0)
-                def tzname(self, dt): return "CET"
-            return _CET()
+                def tzname(self, dt): return "UTC"
+            return _UTC()
 
-_CET_TZ = _get_cet_tz()
+# Timezone objects for each exchange — DST is handled automatically by zoneinfo
+_CET_TZ = _get_tz('Europe/Warsaw')       # kept for is_market_open (CET/CEST)
+_TZ_TOKYO  = _get_tz('Asia/Tokyo')       # JST, no DST
+_TZ_LONDON = _get_tz('Europe/London')    # GMT / BST
+_TZ_NY     = _get_tz('America/New_York') # EST / EDT
 
 
 def is_market_open(dt_cet=None) -> bool:
@@ -72,66 +76,84 @@ def is_market_open(dt_cet=None) -> bool:
 
 def get_active_session(utc_hour: int = None) -> dict:
     """
-    Określa aktywną sesję tradingową XAU/USD na podstawie czasu CET/CEST.
-    Automatycznie obsługuje zmianę czasu letniego/zimowego (DST).
+    Determines the active XAU/USD trading session using real exchange local times.
+    DST is handled automatically via zoneinfo — no hardcoded UTC offsets.
 
-    Sesje (czas CET/CEST — źródło: TradingBeasts, liteforex.pl):
-      Asian  (Tokyo/Sydney):  00:00 – 08:00  (niska zmienność)
-      London (Europa):        08:00 – 17:00  (wysoka zmienność od otwarcia)
-      NY     (Ameryka):       14:00 – 23:00  (najwyższa zmienność)
-      Overlap (London+NY):    14:00 – 17:00  (max płynność — najlepszy czas)
+    Sessions defined in LOCAL exchange time:
+      Asian  (Asia/Tokyo):       09:00 – 15:00 JST  (no DST in Japan)
+      London (Europe/London):    08:00 – 16:30 GMT/BST
+      NY     (America/New_York): 09:30 – 16:00 EST/EDT
+      Overlap: London + NY both active
 
-    Killzones (godziny UTC):
-    - Asian:   00:00-06:00 (niska zmienność na złocie)
-    - London:  07:00-10:00 (wysoka zmienność — otwarcie Europy)
-    - NY:      12:00-15:00 (najwyższa zmienność — otwarcie USA)
-    - Overlap: 12:00-16:00 (London+NY — max płynność)
+    Killzones (local exchange time):
+      London open:  08:00 – 10:00 local
+      NY open:      09:30 – 11:30 local
 
-    Rynek XAU/USD:
-      Otwarcie:   niedziela 23:00 CET
-      Zamknięcie: piątek    22:00 CET
-      Weekend (pt 22:00 → nd 23:00): ZAMKNIĘTY
+    Market hours (CET/CEST):
+      Open:  Sunday  23:00
+      Close: Friday  22:00
     """
-    # ── Get current CET/CEST time ──
+    # ── Get current UTC time ──
     if utc_hour is not None:
-        # Legacy / testing: approximate conversion from UTC hour
         utc_now = datetime.now(timezone.utc).replace(hour=utc_hour, minute=0, second=0)
-        cet_now = utc_now.astimezone(_CET_TZ)
     else:
-        cet_now = datetime.now(_CET_TZ)
+        utc_now = datetime.now(timezone.utc)
+
+    # Convert to each exchange's local time (DST-aware)
+    cet_now    = utc_now.astimezone(_CET_TZ)
+    tokyo_now  = utc_now.astimezone(_TZ_TOKYO)
+    london_now = utc_now.astimezone(_TZ_LONDON)
+    ny_now     = utc_now.astimezone(_TZ_NY)
 
     cet_hour = cet_now.hour
-    weekday = cet_now.weekday()  # Mon=0 … Sun=6
+    weekday  = cet_now.weekday()  # Mon=0 … Sun=6
 
     # ── Weekend / market closed ──
     if not is_market_open(cet_now):
         return {
             'session': 'weekend',
             'is_killzone': False,
-            'utc_hour': cet_now.astimezone(timezone.utc).hour,
+            'utc_hour': utc_now.hour,
             'cet_hour': cet_hour,
             'weekday': weekday,
             'market_open': False,
             'volatility_expected': 'none',
         }
 
-    # ── Session detection (CET/CEST) ──
-    if 0 <= cet_hour < 8:
+    # ── Determine which sessions are active using local exchange times ──
+    tokyo_h  = tokyo_now.hour
+    london_h = london_now.hour
+    london_m = london_now.minute
+    ny_h     = ny_now.hour
+    ny_m     = ny_now.minute
+    ny_time  = ny_h * 60 + ny_m       # minutes since midnight NY
+    london_time = london_h * 60 + london_m  # minutes since midnight London
+
+    asian_active  = 9 * 60 <= (tokyo_h * 60 + tokyo_now.minute) < 15 * 60   # Tokyo 09:00-15:00
+    london_active = 8 * 60 <= london_time < 16 * 60 + 30                     # London 08:00-16:30
+    ny_active     = 9 * 60 + 30 <= ny_time < 16 * 60                         # NY 09:30-16:00
+
+    # Killzones (high-volatility open windows in local time)
+    london_killzone = 8 * 60 <= london_time < 10 * 60    # London 08:00-10:00 local
+    ny_killzone     = 9 * 60 + 30 <= ny_time < 11 * 60 + 30  # NY 09:30-11:30 local
+
+    # ── Classify session ──
+    is_killzone = False
+
+    if london_active and ny_active:
+        session = 'overlap'
+        is_killzone = london_killzone or ny_killzone
+    elif london_active:
+        session = 'london'
+        is_killzone = london_killzone
+    elif ny_active:
+        session = 'new_york'
+        is_killzone = ny_killzone
+    elif asian_active:
         session = 'asian'
         is_killzone = False
-    elif 8 <= cet_hour < 10:
-        session = 'london'
-        is_killzone = True       # London open killzone — wzrost zmienności
-    elif 10 <= cet_hour < 14:
-        session = 'london'
-        is_killzone = False
-    elif 14 <= cet_hour < 17:
-        session = 'overlap'      # London+NY overlap — max płynność
-        is_killzone = True
-    elif 17 <= cet_hour < 23:
-        session = 'new_york'
-        is_killzone = False
-    else:  # 23:xx
+    else:
+        # Market is open but between major sessions
         session = 'off_hours'
         is_killzone = False
 
@@ -146,7 +168,7 @@ def get_active_session(utc_hour: int = None) -> dict:
     return {
         'session': session,
         'is_killzone': is_killzone,
-        'utc_hour': cet_now.astimezone(timezone.utc).hour,
+        'utc_hour': utc_now.hour,
         'cet_hour': cet_hour,
         'weekday': weekday,
         'market_open': True,

@@ -7,7 +7,7 @@
 import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Search, BarChart3, LineChart, Repeat, Brain, Newspaper, Bot,
+  Search, BarChart3, LineChart, Repeat, Brain, Newspaper, Bot, Settings,
   Sun, Moon, Layers, Clock,
 } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
@@ -49,6 +49,7 @@ export const CommandPalette = memo(function CommandPalette() {
     { id: 'nav-models', label: 'Go to Models', category: 'Navigate', icon: Brain, action: () => navigate('/models'), keywords: 'models ml backtest training' },
     { id: 'nav-news', label: 'Go to News', category: 'Navigate', icon: Newspaper, action: () => navigate('/news'), keywords: 'news newsy calendar kalendarz' },
     { id: 'nav-agent', label: 'Go to Agent', category: 'Navigate', icon: Bot, action: () => navigate('/agent'), keywords: 'agent chat ai' },
+    { id: 'nav-settings', label: 'Go to Settings', category: 'Navigate', icon: Settings, action: () => navigate('/settings'), keywords: 'settings ustawienia konto ryzyko' },
     // Actions
     { id: 'act-theme', label: isDark ? 'Switch to Light Theme' : 'Switch to Dark Theme', category: 'Action', icon: isDark ? Sun : Moon, action: toggleTheme, keywords: 'theme motyw dark light ciemny jasny' },
     { id: 'act-smc', label: 'Toggle SMC Overlay', category: 'Action', icon: Layers, action: () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' })); }, keywords: 'smc overlay fvg order block' },

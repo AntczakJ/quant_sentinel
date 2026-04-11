@@ -91,10 +91,12 @@ def train_attention_model(df, model_dir='models', seq_len=60):
     scaler = MinMaxScaler()
     scaled = scaler.fit_transform(data)
 
-    # Save scaler
+    # Save scaler (atomic write)
     scaler_path = os.path.join(model_dir, 'attention_scaler.pkl')
-    with open(scaler_path, 'wb') as f:
+    scaler_tmp = scaler_path + '.tmp'
+    with open(scaler_tmp, 'wb') as f:
         pickle.dump(scaler, f)
+    os.replace(scaler_tmp, scaler_path)
 
     # Create sequences (vectorized)
     n_samples = len(scaled) - seq_len
@@ -155,9 +157,11 @@ def train_attention_model(df, model_dir='models', seq_len=60):
         class_weight=class_weight
     )
 
-    # Save
+    # Save (atomic write)
     model_path = os.path.join(model_dir, 'attention.keras')
-    model.save(model_path)
+    model_tmp = model_path + '.tmp'
+    model.save(model_tmp)
+    os.replace(model_tmp, model_path)
 
     best_val_acc = max(history.history.get('val_accuracy', [0.5]))
     wf_acc = np.mean(fold_accs) if fold_accs else best_val_acc

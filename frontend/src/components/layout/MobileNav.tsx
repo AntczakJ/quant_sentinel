@@ -7,7 +7,7 @@
 
 import { memo } from 'react';
 import { NavLink } from 'react-router-dom';
-import { BarChart3, LineChart, Repeat, Brain, Newspaper, Bot } from 'lucide-react';
+import { BarChart3, LineChart, Repeat, Brain, Newspaper, Bot, Settings } from 'lucide-react';
 
 const NAV_ITEMS = [
   { to: '/',         label: 'Chart',    icon: BarChart3 },
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { to: '/models',   label: 'Models',   icon: Brain },
   { to: '/news',     label: 'News',     icon: Newspaper },
   { to: '/agent',    label: 'Agent',    icon: Bot },
+  { to: '/settings', label: 'Settings', icon: Settings },
 ] as const;
 
 export const MobileNav = memo(function MobileNav() {

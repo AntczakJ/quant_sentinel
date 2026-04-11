@@ -29,6 +29,7 @@ const TradesPage   = lazy(() => import('./pages/TradesPage'));
 const ModelsPage   = lazy(() => import('./pages/ModelsPage'));
 const NewsPage     = lazy(() => import('./pages/NewsPage'));
 const AgentPage    = lazy(() => import('./pages/AgentPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -206,6 +207,11 @@ function AppContent() {
         <Route path="agent" element={
           <ErrorBoundary fallbackTitle="Błąd ładowania agenta">
             <Suspense fallback={<PageLoader />}><AgentPage /></Suspense>
+          </ErrorBoundary>
+        } />
+        <Route path="settings" element={
+          <ErrorBoundary fallbackTitle="Błąd ładowania ustawień">
+            <Suspense fallback={<PageLoader />}><SettingsPage /></Suspense>
           </ErrorBoundary>
         } />
         {/* Fallback: redirect unknown routes to chart */}

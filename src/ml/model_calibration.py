@@ -122,8 +122,10 @@ class ModelCalibrator:
         try:
             os.makedirs(CALIBRATION_DIR, exist_ok=True)
             data = {name: s.to_dict() for name, s in self._scalers.items()}
-            with open(CALIBRATION_FILE, 'wb') as f:
+            tmp_file = CALIBRATION_FILE + '.tmp'
+            with open(tmp_file, 'wb') as f:
                 pickle.dump(data, f)
+            os.replace(tmp_file, CALIBRATION_FILE)
         except (OSError, pickle.PicklingError) as e:
             logger.warning(f"Could not save calibration: {e}")
 
