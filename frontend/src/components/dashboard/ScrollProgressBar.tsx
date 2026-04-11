@@ -29,14 +29,13 @@ export const ScrollProgressBar = memo(function ScrollProgressBar() {
   }, []);
 
   return (
-    <div className="h-[3px] w-full bg-dark-secondary/40">
+    <div className="h-[2px] w-full" style={{ background: 'var(--color-secondary)' }}>
       <div
-        className="h-full"
+        className="h-full transition-[width] duration-100"
         style={{
           width: `${progress}%`,
-          background: `linear-gradient(90deg, rgb(var(--c-cyan)) 0%, rgb(var(--c-green)) 60%, rgb(var(--c-purple)) 100%)`,
-          boxShadow: progress > 1 ? `0 0 8px rgb(var(--c-cyan) / 0.6)` : 'none',
-          willChange: 'width',
+          background: `linear-gradient(90deg, rgb(var(--c-accent)) 0%, rgb(var(--c-accent) / 0.5) 100%)`,
+          boxShadow: progress > 1 ? `0 0 8px rgb(var(--c-accent) / 0.4)` : 'none',
         }}
       />
     </div>
