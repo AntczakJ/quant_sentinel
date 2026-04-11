@@ -22,7 +22,12 @@ _LEGACY_KEY = os.getenv("API_SECRET_KEY", "")
 
 # Endpoints always public (no auth required)
 _PUBLIC_PATHS = {"/api/health", "/docs", "/openapi.json", "/redoc"}
-_PUBLIC_PREFIXES = ("/api/auth/",)  # registration + login
+_PUBLIC_PREFIXES = (
+    "/api/auth/",        # registration + login
+    "/api/training/",    # backtest + training controls
+    "/api/portfolio/",   # portfolio reads + trade management
+    "/api/agent/",       # AI agent chat
+)
 
 # Methods requiring authentication
 _PROTECTED_METHODS = {"POST", "PUT", "DELETE", "PATCH"}

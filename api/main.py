@@ -789,10 +789,13 @@ async def websocket_signals(websocket):
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
+    uptime_s = _time.monotonic() - _start_time
     return {
         "status": "healthy",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "models_loaded": app_state["models_loaded"],
+        "uptime_seconds": round(uptime_s),
+        "uptime": f"{int(uptime_s // 3600)}h {int((uptime_s % 3600) // 60)}m",
     }
 
 

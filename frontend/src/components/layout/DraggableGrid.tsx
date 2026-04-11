@@ -7,20 +7,16 @@
  */
 
 import { useState, useCallback, useMemo, memo, type ReactNode } from 'react';
-import ReactGridLayout from 'react-grid-layout';
+import { ResponsiveReactGridLayout, WidthProvider } from 'react-grid-layout/legacy';
 
-// react-grid-layout uses namespace exports
-const Responsive = (ReactGridLayout as any).Responsive ?? ReactGridLayout;
-const WidthProvider = (ReactGridLayout as any).WidthProvider ?? ((c: any) => c);
-
-interface Layout { i: string; x: number; y: number; w: number; h: number; minW?: number; minH?: number }
-type Layouts = Record<string, Layout[]>;
+const RGLResponsive = WidthProvider(ResponsiveReactGridLayout);
 import { Lock, Unlock, RotateCcw, LayoutGrid, ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react';
 import { WidgetErrorBoundary } from '../ui/WidgetErrorBoundary';
 import { FreshnessIndicator } from '../ui/FreshnessIndicator';
 import 'react-grid-layout/css/styles.css';
 
-const ResponsiveGridLayout = WidthProvider(Responsive);
+interface Layout { i: string; x: number; y: number; w: number; h: number; minW?: number; minH?: number }
+type Layouts = Record<string, Layout[]>;
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -120,6 +116,7 @@ function buildDefaultLayouts(widgets: GridWidget[]): Layouts {
 export const DraggableGrid = memo(function DraggableGrid({
   pageKey, widgets, presets, cols = 12, rowHeight = 80,
 }: Props) {
+  // WidthProvider handles container width measurement automatically
   const defaultLayouts = useMemo(() => buildDefaultLayouts(widgets), [widgets]);
   const [layouts, setLayouts] = useState<Layouts>(() => loadLayout(pageKey) ?? defaultLayouts);
   const [locked, setLocked] = useState(true);
@@ -160,7 +157,8 @@ export const DraggableGrid = memo(function DraggableGrid({
     });
   }, [pageKey]);
 
-  const handleLayoutChange = useCallback((_layout: Layout[], allLayouts: Layouts) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleLayoutChange = useCallback((_layout: any, allLayouts: any) => {
     setLayouts(allLayouts);
     saveLayout(pageKey, allLayouts);
   }, [pageKey]);
@@ -263,7 +261,7 @@ export const DraggableGrid = memo(function DraggableGrid({
       </div>
 
       {/* Grid */}
-      <ResponsiveGridLayout
+      <RGLResponsive
         className="layout"
         layouts={layouts}
         breakpoints={{ lg: 1200, md: 768, sm: 0 }}
@@ -315,7 +313,7 @@ export const DraggableGrid = memo(function DraggableGrid({
             </div>
           );
         })}
-      </ResponsiveGridLayout>
+      </RGLResponsive>
     </div>
   );
 });
