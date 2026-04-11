@@ -6,7 +6,7 @@
  * Auto-fills from live price and portfolio balance.
  */
 
-import { memo, useState, useEffect, useMemo } from 'react';
+import { memo, useState, useEffect, useMemo, useRef } from 'react';
 import { Calculator, AlertTriangle, TrendingUp, TrendingDown, X } from 'lucide-react';
 import { useTradingStore } from '../../store/tradingStore';
 
@@ -32,17 +32,19 @@ export const RiskCalculator = memo(function RiskCalculator({ onClose, initialPri
   const [tp, setTp] = useState('');
   const [riskPct, setRiskPct] = useState('1.0');
 
-  // Auto-fill entry from live price if not manually set
+  // Auto-fill entry from live price when user hasn't typed yet
+  const userEditedEntry = useRef(!!initialPrice);
   useEffect(() => {
-    if (!initialPrice && livePrice > 0 && entry === '0.00') {
+    if (!userEditedEntry.current && livePrice > 0) {
       setEntry(livePrice.toFixed(2));
     }
-  }, [livePrice]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [livePrice]);
 
   // Auto-suggest SL and TP based on ATR-like distance
+  const userEditedSl = useRef(false);
   useEffect(() => {
     const e = parseFloat(entry);
-    if (!e || sl) return; // Don't overwrite manual SL
+    if (!e || userEditedSl.current) return; // Don't overwrite manual SL
     const defaultRisk = e * 0.003; // 0.3% = ~$10 for gold
     if (direction === 'LONG') {
       setSl((e - defaultRisk).toFixed(2));
@@ -51,7 +53,7 @@ export const RiskCalculator = memo(function RiskCalculator({ onClose, initialPri
       setSl((e + defaultRisk).toFixed(2));
       setTp((e - defaultRisk * 2).toFixed(2));
     }
-  }, [entry, direction]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entry, direction]);
 
   const calc = useMemo(() => {
     const e = parseFloat(entry) || 0;
@@ -131,12 +133,12 @@ export const RiskCalculator = memo(function RiskCalculator({ onClose, initialPri
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-[9px] text-th-muted uppercase tracking-wider block mb-1">Entry Price</label>
-              <input type="number" step="0.01" value={entry} onChange={e => setEntry(e.target.value)}
+              <input type="number" step="0.01" value={entry} onChange={e => { userEditedEntry.current = true; setEntry(e.target.value); }}
                 className="w-full bg-dark-tertiary border border-dark-secondary rounded-lg px-3 py-1.5 text-xs font-mono text-th focus:border-accent-blue/50 outline-none" />
             </div>
             <div>
               <label className="text-[9px] text-th-muted uppercase tracking-wider block mb-1">Stop Loss</label>
-              <input type="number" step="0.01" value={sl} onChange={e => setSl(e.target.value)}
+              <input type="number" step="0.01" value={sl} onChange={e => { userEditedSl.current = true; setSl(e.target.value); }}
                 className="w-full bg-dark-tertiary border border-dark-secondary rounded-lg px-3 py-1.5 text-xs font-mono text-accent-red focus:border-accent-red/50 outline-none" />
             </div>
             <div>

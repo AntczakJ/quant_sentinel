@@ -129,7 +129,9 @@ export const PortfolioStats = memo(function PortfolioStats() {
 
   const pnlPositive = portfolio.pnl >= 0;
   const pnlColor = pnlPositive ? 'text-accent-green' : 'text-accent-red';
-  const returnPct = ((portfolio.pnl / portfolio.initial_balance) * 100).toFixed(2);
+  const returnPct = portfolio.initial_balance > 0
+    ? ((portfolio.pnl / portfolio.initial_balance) * 100).toFixed(2)
+    : '0.00';
 
   return (
     <div className="space-y-4">

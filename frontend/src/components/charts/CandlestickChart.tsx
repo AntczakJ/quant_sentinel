@@ -1166,7 +1166,7 @@ export function CandlestickChart() {
             .map((t: any) => {
               let ts = t.timestamp.trim();
               ts = ts.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
-              if (!/[Zz+\-]/.test(ts.slice(-6))) ts += 'Z';
+              if (!/[Zz+-]/.test(ts.slice(-6))) ts += 'Z';
               const time = Math.floor(new Date(ts).getTime() / 1000) as UTCTimestamp;
               const isWin = t.result?.includes('WIN');
               const isLong = t.direction === 'LONG';

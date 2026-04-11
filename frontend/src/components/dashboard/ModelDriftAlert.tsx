@@ -19,13 +19,13 @@ interface DriftInfo {
 
 interface AccuracyInfo {
   rolling_accuracy: number;
-  window: number;
-  trend: string;
+  window?: number;
+  trend?: string;
 }
 
 interface MonitorData {
   drift: Record<string, DriftInfo>;
-  accuracy: Record<string, AccuracyInfo>;
+  accuracy: Record<string, number | AccuracyInfo>;
   calibration: Record<string, unknown>;
   alerts: string[];
   healthy: boolean;
@@ -52,10 +52,18 @@ function getModelColor(name: string): string {
   return 'text-th-secondary';
 }
 
+/** Normalize accuracy from API — can be a flat number or AccuracyInfo object */
+function normalizeAccuracy(raw: number | AccuracyInfo | undefined): AccuracyInfo | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw === 'number') return { rolling_accuracy: raw };
+  return raw;
+}
+
 /** Single model drift row */
-function DriftRow({ name, drift, accuracy }: {
-  name: string; drift?: DriftInfo; accuracy?: AccuracyInfo;
+function DriftRow({ name, drift, accuracy: rawAccuracy }: {
+  name: string; drift?: DriftInfo; accuracy?: number | AccuracyInfo;
 }) {
+  const accuracy = normalizeAccuracy(rawAccuracy);
   const status = drift?.status ?? 'ok';
   const style = STATUS_STYLES[status] ?? STATUS_STYLES.ok;
   const StatusIcon = style.icon;
@@ -92,13 +100,15 @@ function DriftRow({ name, drift, accuracy }: {
           }`}>
             {(accuracy.rolling_accuracy * 100).toFixed(1)}%
           </span>
-          {/* Trend arrow */}
-          <span className={`text-[9px] ${
-            accuracy.trend === 'improving' ? 'text-accent-green' :
-            accuracy.trend === 'degrading' ? 'text-accent-red' : 'text-th-dim'
-          }`}>
-            {accuracy.trend === 'improving' ? '↑' : accuracy.trend === 'degrading' ? '↓' : '→'}
-          </span>
+          {/* Trend arrow (if available) */}
+          {accuracy.trend && (
+            <span className={`text-[9px] ${
+              accuracy.trend === 'improving' ? 'text-accent-green' :
+              accuracy.trend === 'degrading' ? 'text-accent-red' : 'text-th-dim'
+            }`}>
+              {accuracy.trend === 'improving' ? '↑' : accuracy.trend === 'degrading' ? '↓' : '→'}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -121,7 +131,8 @@ export const ModelDriftAlert = memo(function ModelDriftAlert() {
   if (!data) return null;
 
   const hasAlerts = data.alerts.length > 0;
-  const modelNames = [...new Set([...Object.keys(data.drift), ...Object.keys(data.accuracy)])];
+  const modelNames = [...new Set([...Object.keys(data.drift), ...Object.keys(data.accuracy)])]
+    .filter(k => k !== 'n'); // exclude sample size key from accuracy response
 
   return (
     <div className="space-y-2">

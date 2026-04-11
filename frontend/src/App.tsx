@@ -11,6 +11,7 @@ import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { ToastProvider } from './components/ui/Toast';
 import { useTradingStore } from './store/tradingStore';
 import { marketAPI, portfolioAPI, modelsAPI, healthAPI } from './api/client';
+import type { Signal } from './types/trading';
 import { useCachedFetch } from './hooks/useApiCache';
 import { prefetchAllRoutes } from './hooks/usePrefetchRoutes';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -69,7 +70,7 @@ function AppContent() {
 
   // Favicon badge when there's an active signal
   const currentSignal = useTradingStore(s => s.currentSignal);
-  const hasActiveSignal = !!(currentSignal && (currentSignal as any).direction && (currentSignal as any).direction !== 'WAIT');
+  const hasActiveSignal = Boolean(currentSignal && currentSignal.consensus && currentSignal.consensus !== 'HOLD');
   useFaviconBadge(hasActiveSignal);
 
   // Ukryj splash screen gdy React się zamontuje + prefetch routes
@@ -135,7 +136,7 @@ function AppContent() {
     '/ws/signals',
     (data) => {
       if (data.type === 'signal') {
-        setCurrentSignal(data as any);
+        setCurrentSignal(data as unknown as Signal);
         if (data.direction && data.direction !== 'WAIT') {
           notifySignal(data.direction, data.entry_price);
           pushNotification({

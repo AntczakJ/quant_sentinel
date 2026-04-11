@@ -132,8 +132,8 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
                 position=current_position,
                 use_twelve_data=False  # Już mamy df, nie pobieraj ponownie
             )
-            ml_signal = ensemble_result['ensemble_signal']
-            logger.info(f"🤖 ML Ensemble Signal: {ml_signal} (confidence: {ensemble_result['confidence']:.1%})")
+            ml_signal = ensemble_result.get('ensemble_signal', 'CZEKAJ')
+            logger.info(f"🤖 ML Ensemble Signal: {ml_signal} (confidence: {ensemble_result.get('confidence', 0):.1%})")
         except Exception as e:
             logger.warning(f"⚠️ Ensemble error: {e}")
             ensemble_result = None
@@ -179,17 +179,17 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
 
         if smc_bullish == ml_bullish:
             # SMC i ML się zgadzają - dodaj confidence boost
-            logic += f" [ML: {ensemble_result['confidence']:.0%}✅]"
+            logic += f" [ML: {ensemble_result.get('confidence', 0):.0%}✅]"
         else:
             # SMC i ML się NIE zgadzają
-            logger.warning(f"⚠️ SMC ({direction}) vs ML ({ml_signal}) KONFLIKT (confidence: {ensemble_result['confidence']:.0%})")
-            logic += f" [ML: {ensemble_result['confidence']:.0%}⚠️]"
+            logger.warning(f"⚠️ SMC ({direction}) vs ML ({ml_signal}) KONFLIKT (confidence: {ensemble_result.get('confidence', 0):.0%})")
+            logic += f" [ML: {ensemble_result.get('confidence', 0):.0%}⚠️]"
 
             # BLOKADA: Jeśli ML ma wysoką pewność i mówi inaczej niż SMC — nie otwieraj trade'a
-            if ensemble_result['confidence'] > 0.55:
+            if ensemble_result.get('confidence', 0) > 0.55:
                 return {
                     "direction": "CZEKAJ",
-                    "reason": f"ML ({ml_signal}, {ensemble_result['confidence']:.0%}) konflikt z SMC ({direction}) — czekamy",
+                    "reason": f"ML ({ml_signal}, {ensemble_result.get('confidence', 0):.0%}) konflikt z SMC ({direction}) — czekamy",
                     "ensemble_data": ensemble_result
                 }
 
@@ -200,10 +200,10 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         return {"direction": "CZEKAJ", "reason": "Makro zielony – przeciwwskazanie do SHORT"}
 
     # ========== FILTR PEWNOŚCI ENSEMBLE ==========
-    if ensemble_result and ensemble_result['confidence'] < 0.4 and ml_signal == "CZEKAJ":
+    if ensemble_result and ensemble_result.get('confidence', 0) < 0.4 and ml_signal == "CZEKAJ":
         return {
             "direction": "CZEKAJ",
-            "reason": f"Niska pewność ensemble ({ensemble_result['confidence']:.1%}) - czekamy na wyraźniejszy sygnał",
+            "reason": f"Niska pewność ensemble ({ensemble_result.get('confidence', 0):.1%}) - czekamy na wyraźniejszy sygnał",
             "ensemble_data": ensemble_result
         }
 
@@ -390,16 +390,16 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     # Dodaj ML ensemble data jeśli dostępna
     if ensemble_result:
         result['ensemble_data'] = {
-            'signal': ensemble_result['ensemble_signal'],
-            'final_score': round(ensemble_result['final_score'], 3),
-            'confidence': round(ensemble_result['confidence'], 2),
-            'models_available': ensemble_result['models_available'],
+            'signal': ensemble_result.get('ensemble_signal', 'CZEKAJ'),
+            'final_score': round(ensemble_result.get('final_score', 0), 3),
+            'confidence': round(ensemble_result.get('confidence', 0), 2),
+            'models_available': ensemble_result.get('models_available', 0),
             'predictions': {
                 k: {
                     'direction': v.get('direction'),
                     'confidence': round(v.get('confidence', 0), 2),
                     'status': v.get('status', 'ok')
-                } for k, v in ensemble_result['predictions'].items()
+                } for k, v in ensemble_result.get('predictions', {}).items()
             }
         }
 

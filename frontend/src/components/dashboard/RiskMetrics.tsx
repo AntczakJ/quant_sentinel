@@ -159,7 +159,7 @@ export const RiskMetrics = memo(function RiskMetrics() {
   const pfDisplay = data.profit_factor >= 999 ? '∞' : data.profit_factor.toFixed(2);
 
   // Risk/reward ratio from avg win/loss
-  const rrRatio = data.avg_loss > 0 ? data.avg_win / data.avg_loss : 0;
+  const rrRatio = data.avg_loss > 0 ? data.avg_win / data.avg_loss : (data.avg_win > 0 ? Infinity : 0);
   const rrColor = rrRatio >= 2 ? 'text-accent-green' : rrRatio >= 1 ? 'text-accent-orange' : 'text-accent-red';
 
   return (
@@ -205,7 +205,7 @@ export const RiskMetrics = memo(function RiskMetrics() {
               <span className="text-[9px] text-th-muted uppercase tracking-wider">R:R Ratio</span>
             </div>
             <div className={`text-sm font-bold font-mono ${rrColor}`}>
-              {rrRatio.toFixed(2)}
+              {rrRatio === Infinity ? '∞' : rrRatio.toFixed(2)}
             </div>
             <div className="text-[9px] text-th-dim">avg win / avg loss</div>
           </div>
@@ -287,7 +287,7 @@ export const RiskMetrics = memo(function RiskMetrics() {
           )}
           <span className="text-th-dim">|</span>
           <span className="text-th-dim">
-            DD/Profit: {data.total_profit > 0
+            DD/Profit: {data.total_profit > 0 && data.max_drawdown > 0
               ? `${((data.max_drawdown / data.total_profit) * 100).toFixed(0)}%`
               : '—'}
           </span>

@@ -30,6 +30,18 @@ from src.integrations.ai_engine import ask_ai_gold
 from src.core.database import NewsDB
 from src.data.sentiment import get_sentiment_data
 from src.data.news import get_latest_news, get_economic_calendar
+
+
+def _format_news(news) -> str:
+    if isinstance(news, list):
+        return "\n".join(f"[{n.get('source', '')}] {n.get('title', '')} ({n.get('sentiment', '?')})" for n in news[:8])
+    return str(news)[:500]
+
+
+def _format_calendar(cal) -> str:
+    if isinstance(cal, list):
+        return "\n".join(f"⚠️ {c.get('event', '')} ({c.get('date', '')})" for c in cal[:5]) or "Brak wydarzen"
+    return str(cal)
 from src.learning.self_learning import auto_analyze_and_learn, run_learning_cycle
 from src.integrations.openai_agent import get_agent, ask_agent_with_memory
 
@@ -439,8 +451,8 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         - {macro_context}
         - USD/JPY: {s['usdjpy']}
         - Kalendarz ekonomiczny (USD High Impact):
-        {eco_calendar}
-        NEWSY: {raw_news[:500]}
+        {_format_calendar(eco_calendar)}
+        NEWSY: {_format_news(raw_news)}
         HISTORIA OSTATNICH STRAT: {db.get_recent_lessons(5)}
         """
         # Dodatkowe informacje z zaawansowanej analizy (bezpieczne sprawdzenie)
@@ -673,7 +685,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                f"⚖️ *STREFA:* `{'DISCOUNT' if s['is_discount'] else 'PREMIUM'}` | EQ: `{s['eq_level']}`\n"
                f"🧭 *TREND M15/H1/M5:* `{s['trend']}` / `{s_higher['trend']}` / `{s_lower['trend']}`\n"
                f"📡 *SMT:* `{s['smt']}`\n━━━━━━━━━━━━━━\n"
-               f"📅 *KALENDARZ:* \n{eco_calendar}")
+               f"📅 *KALENDARZ:* \n{_format_calendar(eco_calendar)}")
         await safe_edit(msg)
 
     # ... pozostałe przyciski (status_check, sentiment, news, itp.) pozostają bez zmian ...
@@ -702,10 +714,11 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit("📰 *AI filtruje newsy...*")
         try:
             raw_news = await asyncio.to_thread(get_latest_news)
+            news_text = "\n".join(f"[{n.get('source','')}] {n.get('title','')} ({n.get('sentiment','?')})" for n in raw_news) if isinstance(raw_news, list) else str(raw_news)
             ai_news = await asyncio.to_thread(
                 ask_agent_with_memory,
                 f"Zinterpretuj poniższe newsy rynkowe pod kątem wpływu na cenę złota (XAU/USD). "
-                f"Czy są bycze, niedźwiedzie, czy neutralne? Jakie wnioski tradingowe?\n\n{raw_news}",
+                f"Czy są bycze, niedźwiedzie, czy neutralne? Jakie wnioski tradingowe?\n\n{news_text}",
                 str(user_id),
             )
             await safe_edit(f"📰 *INTERPRETACJA NEWSÓW:*\n\n{ai_news}")

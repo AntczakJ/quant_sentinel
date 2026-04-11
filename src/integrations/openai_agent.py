@@ -33,97 +33,23 @@ import os as _os
 AGENT_MODEL = _os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 AGENT_INSTRUCTIONS = """\
-Jesteś Quant Sentinel Gold Trader — zaawansowanym asystentem tradingowym specjalizującym się w analizie i handlu XAU/USD (złoto).
+Jesteś Quant Sentinel Gold Trader — asystent tradingowy XAU/USD.
 
-## TOŻSAMOŚĆ
-- Ekspert w Smart Money Concepts (SMC), analizie technicznej i makroekonomii
-- Analizujesz rynek złota na wielu interwałach: M5, M15, H1, H4
-- Stosujesz rygorystyczne zasady zarządzania ryzykiem
-- Pamiętasz historię rozmów i uczysz się na błędach w tej sesji
-- Odpowiadasz ZAWSZE po polsku (chyba że użytkownik pisze po angielsku)
-- **WAŻNE formatowanie**: NIE używaj nagłówków Markdown (###, ##, #). Używaj emoji i **bold** do wyróżniania sekcji, np. **🎯 WERDYKT**, **📊 ANALIZA**, **💡 UZASADNIENIE**
+Odpowiadasz po polsku. NIE używaj nagłówków Markdown (###). Używaj emoji + **bold**.
 
-## METODOLOGIA SMC (Smart Money Concepts)
-1. **Liquidity Grab + Market Structure Shift (MSS)** — kluczowe potwierdzenie wejścia (+4 pkt)
-2. **Fair Value Gap (FVG)** — luki płynności jako cel lub strefa wejścia (+2 pkt)
-3. **Order Blocks (OB)** — strefy instytucjonalnych zleceń (+2 pkt)
-4. **Drop-Base-Rally (DBR) / Rally-Base-Drop (RBD)** — formacje odbicia (+2 pkt)
-5. **RSI w strefie optymalnej** (40-50 bull / 50-60 bear) → +1 pkt
-6. **Brak SMT Divergence** — rozbieżność struktury odejmuje -3 pkt
+**Metodologia SMC**: Liquidity Grab+MSS (+4), FVG (+2), Order Block (+2), DBR/RBD (+2), RSI optimal (+1). SMT Divergence (-3), makro przeciwny (-3). Trade tylko przy score ≥ 4/10.
 
-## SYSTEM OCENY SETUPU (0–10)
-| Kryterium | Punkty |
-|---|---|
-| Liquidity Grab + MSS | +4 |
-| Makro reżim zgodny z kierunkiem | +2 |
-| FVG w kierunku trendu | +2 |
-| DBR / RBD zgodne | +2 |
-| RSI w strefie optymalnej | +1 |
-| Trend M5 zgodny | +1 |
-| SMT Divergence wykryta | -3 |
-| Makro reżim przeciwny | -3 |
-| Struktura H1 przeciwna | -2 |
-| Cena w PREMIUM przy LONG | -2 |
+**Ryzyko**: 1-2% kapitału/trade, R:R ≥ 2.5:1, TP ≥ 5$ lub 1×ATR.
 
-**WERDYKT HANDLOWY TYLKO jeśli wynik ≥ 4/10**
+**Korelacja**: USD/JPY ↑ = short gold, USD/JPY ↓ = long gold. Reżim czerwony → unikaj LONG.
 
-## ZARZĄDZANIE RYZYKIEM
-- Risk na trade: 1–2% kapitału (nigdy więcej)
-- Minimalny dystans TP: 5$ lub 1× ATR (większy z dwóch)
-- Minimalny stosunek R:R = 2.5:1
-- CZEKAJ gdy: makro reżim przeciwny, zbyt mały TP, brak Order Block
+**MTF**: H4 (30%), H1 (35%), M15 (25%), M5 (10%). 3+ TF zgodnych = STRONG signal.
 
-## KORELACJA USD–ZŁOTO
-- USD/JPY ↑ (silny dolar) → SPRZEDAJ złoto (negatywna korelacja)
-- USD/JPY ↓ (słaby dolar) → KUPUJ złoto
-- Reżim CZERWONY (DXY silny + VIX wysoki) → UNIKAJ LONG
-- Reżim ZIELONY (DXY słaby) → SZUKAJ LONG
+**Killzones**: London 07-10 UTC, NY 12-15 UTC — najlepsze setupy. Asian/Off-hours — ostrożnie.
 
-## NARZĘDZIA (używaj proaktywnie przed wydaniem rekomendacji)
-- `analyze_xauusd` — pobierz aktualną analizę SMC dla wybranego interwału
-- `get_trading_signal` — wygeneruj sygnał z wyliczonymi entry, SL, TP i lotem
-- `get_multi_tf_analysis` — analiza SMC na M5/M15/H1/H4 jednocześnie z konfluencją
-- `get_market_news` — pobierz najnowsze wiadomości rynkowe
-- `get_news_sentiment` — zagregowany sentyment newsów (bullish/bearish %)
-- `get_economic_calendar` — sprawdź nadchodzące wydarzenia makro (NFP, CPI, FOMC)
-- `get_portfolio_stats` — sprawdź historyczne wyniki i winrate
-- `get_loss_analysis` — analiza strat, wzorców porażek i statystyk sesji
-- `analyze_market_context` — analiza AI kontekstu (sentyment, newsy, setup SMC)
+**Format sygnału**: 🎯 SYGNAŁ → 📍 WEJŚCIE → 🛑 SL → ✅ TP → 📊 LOT → ⚖️ Ocena → 💡 Uzasadnienie (2-3 zdania).
 
-## ROZSZERZONE SYGNAŁY
-- **Candlestick Patterns**: Engulfing, Pin Bar, Inside Bar (+1 pkt za potwierdzenie)
-- **Ichimoku Cloud**: Cena powyżej/poniżej chmury potwierdza trend (+1 pkt)
-- **Volume Profile (POC)**: Bliskość do POC oznacza silną strefę (+1 pkt)
-- **RSI Divergence**: Dywergencja RSI = silny sygnał odwrócenia (+2 pkt)
-
-## SESJA TRADINGOWA (KILLZONES)
-- **London Killzone** (07:00-10:00 UTC): Wysoka zmienność, dobre warunki na złoto
-- **NY Killzone** (12:00-15:00 UTC): Najwyższa zmienność, najlepsze setupy
-- **Asian Session** (00:00-06:00 UTC): Niska zmienność, unikaj LONG/SHORT chyba że silny setup
-- **Off-hours** (20:00-23:00 UTC): Niska płynność, ryzyko fałszywych wybić
-- Podczas killzones poszerzaj SL o 20% (wyższa zmienność = większe ruchy)
-- Preferuj trades podczas London i NY killzones — najwyższa jakość sygnałów
-
-## MULTI-TIMEFRAME CONFLUENCE
-- Analizuj M5/M15/H1/H4 jednocześnie przed wydaniem rekomendacji
-- STRONG_BULL / STRONG_BEAR = 3+ TF zgodnych → wyższy confidence
-- MIXED = brak wyraźnej konfluencji → CZEKAJ lub zredukuj lot
-- Wagi: H4 (30%), H1 (35%), M15 (25%), M5 (10%) — wyższe TF mają priorytet
-
-## FORMAT SYGNAŁU TRADINGOWEGO
-```
-🎯 SYGNAŁ: [KUPUJ / SPRZEDAJ / CZEKAJ]
-📍 WEJŚCIE: [cena]$
-🛑 SL: [cena]$ (ryzyko: ~[X]$)
-✅ TP: [cena]$ (potencjał: ~[X]$)
-📊 LOT: [wielkość]
-⚖️ Ocena setupu: [X/10]
-🌍 Makro: [reżim] | USD/JPY: [wartość]
-💡 Uzasadnienie: [2–3 zdania wyjaśniające setup]
-```
-
-Zawsze odwołuj się do poprzednich analiz w tej sesji gdy jest to stosowne. \
-Jeśli wynik setupu < 4/10 — wyraźnie odmów otwarcia pozycji i wyjaśnij dlaczego.
+Używaj narzędzi proaktywnie przed rekomendacją. Pamiętasz historię rozmowy.
 """
 
 # ==================== SCHEMATY NARZĘDZI (Responses API — format internally-tagged) ====================
@@ -560,60 +486,30 @@ class QuantSentinelAgent:
             return {"error": f"Nieznane narzędzie: {name}"}
         return handler()
 
+    # Fields to extract from SMC analysis (keeps tool output compact)
+    _SMC_KEY_FIELDS = [
+        "price", "trend", "rsi", "atr", "macro_regime", "usdjpy", "usdjpy_zscore",
+        "liquidity_grab", "liquidity_grab_dir", "mss", "fvg", "fvg_type",
+        "ob_price", "eq_level", "is_discount", "swing_high", "swing_low",
+        "dbr_rbd_type", "smt", "bos_bullish", "bos_bearish", "choch_bullish", "choch_bearish",
+        "engulfing", "pin_bar", "inside_bar", "ichimoku_above_cloud",
+        "poc_price", "near_poc", "rsi_div_bull", "rsi_div_bear",
+        "session", "is_killzone", "volatility_expected",
+    ]
+
     def _tool_analyze_xauusd(self, timeframe: str) -> dict:
         from src.trading.smc_engine import get_smc_analysis
         try:
             result = get_smc_analysis(timeframe)
             if not result:
                 return {"error": "Brak danych SMC — sprawdź klucz Twelve Data API"}
-            return {
-                "timeframe":          timeframe,
-                "price":              result.get("price"),
-                "trend":              result.get("trend"),
-                "rsi":                result.get("rsi"),
-                "atr":                result.get("atr"),
-                "atr_mean":           result.get("atr_mean"),
-                "macro_regime":       result.get("macro_regime"),
-                "usdjpy":             result.get("usdjpy"),
-                "usdjpy_zscore":      result.get("usdjpy_zscore"),
-                "liquidity_grab":     result.get("liquidity_grab"),
-                "liquidity_grab_dir": result.get("liquidity_grab_dir"),
-                "mss":                result.get("mss"),
-                "fvg":                result.get("fvg"),
-                "fvg_type":           result.get("fvg_type"),
-                "fvg_size":           result.get("fvg_size"),
-                "fvg_upper":          result.get("fvg_upper"),
-                "fvg_lower":          result.get("fvg_lower"),
-                "ob_price":           result.get("ob_price"),
-                "eq_level":           result.get("eq_level"),
-                "is_discount":        result.get("is_discount"),
-                "swing_high":         result.get("swing_high"),
-                "swing_low":          result.get("swing_low"),
-                "dbr_rbd_type":       result.get("dbr_rbd_type"),
-                "smt":                result.get("smt"),
-                "bos_bullish":        result.get("bos_bullish"),
-                "bos_bearish":        result.get("bos_bearish"),
-                "choch_bullish":      result.get("choch_bullish"),
-                "choch_bearish":      result.get("choch_bearish"),
-                "ob_confluence":      result.get("ob_confluence"),
-                # Candlestick patterns
-                "engulfing":          result.get("engulfing"),
-                "pin_bar":            result.get("pin_bar"),
-                "inside_bar":         result.get("inside_bar"),
-                # Ichimoku Cloud
-                "ichimoku_above_cloud": result.get("ichimoku_above_cloud"),
-                "ichimoku_below_cloud": result.get("ichimoku_below_cloud"),
-                # Volume Profile
-                "poc_price":          result.get("poc_price"),
-                "near_poc":           result.get("near_poc"),
-                # RSI Divergence
-                "rsi_div_bull":       result.get("rsi_div_bull"),
-                "rsi_div_bear":       result.get("rsi_div_bear"),
-                # Session / Killzone
-                "session":            result.get("session"),
-                "is_killzone":        result.get("is_killzone"),
-                "volatility_expected": result.get("volatility_expected"),
-            }
+            # Only include non-None key fields to keep context small
+            out = {"timeframe": timeframe}
+            for k in self._SMC_KEY_FIELDS:
+                v = result.get(k)
+                if v is not None:
+                    out[k] = v
+            return out
         except Exception as e:
             logger.error(f"Błąd analyze_xauusd: {e}")
             return {"error": str(e)}
@@ -659,7 +555,10 @@ class QuantSentinelAgent:
         from src.data.news import get_latest_news
         try:
             news = get_latest_news()
-            return {"news": (news or "Brak newsów")[:3000]}
+            if isinstance(news, list):
+                text = "\n".join(f"[{n.get('source','')}] {n.get('title','')} ({n.get('sentiment','?')})" for n in news)
+                return {"news": text[:3000]}
+            return {"news": (str(news) or "Brak newsów")[:3000]}
         except Exception as e:
             logger.error(f"Błąd get_market_news: {e}")
             return {"error": str(e), "news": "Błąd pobierania newsów"}
@@ -668,7 +567,10 @@ class QuantSentinelAgent:
         from src.data.news import get_economic_calendar
         try:
             calendar = get_economic_calendar()
-            return {"calendar": calendar or "Brak danych kalendarza"}
+            if isinstance(calendar, list):
+                text = "\n".join(f"{c.get('event','')} ({c.get('date','')}) [{c.get('impact','')}]" for c in calendar)
+                return {"calendar": text or "Brak danych kalendarza"}
+            return {"calendar": str(calendar) or "Brak danych kalendarza"}
         except Exception as e:
             logger.error(f"Błąd get_economic_calendar: {e}")
             return {"error": str(e), "calendar": "Błąd pobierania kalendarza"}
@@ -682,13 +584,15 @@ class QuantSentinelAgent:
             loss = results.get("LOSS", 0)
             total = profit + loss
             win_rate = round((profit / total * 100), 1) if total else 0.0
-            recent_lessons = db.get_recent_lessons(min(limit, 50))
+            recent_lessons = db.get_recent_lessons(min(limit, 10))
+            # Truncate lessons to avoid huge context
+            lessons_text = str(recent_lessons)[:1500] if recent_lessons else "Brak"
             return {
                 "win_rate":      win_rate,
                 "total_trades":  total,
                 "profit_trades": profit,
                 "loss_trades":   loss,
-                "recent_lessons": recent_lessons,
+                "recent_lessons": lessons_text,
             }
         except Exception as e:
             logger.error(f"Błąd get_portfolio_stats: {e}")
@@ -718,7 +622,11 @@ class QuantSentinelAgent:
             elif context_type == "news":
                 from src.data.news import get_latest_news
                 news = get_latest_news()
-                return {"context_type": context_type, "news": (news or "Brak newsów")[:3000]}
+                if isinstance(news, list):
+                    text = "\n".join(f"[{n.get('source','')}] {n.get('title','')} ({n.get('sentiment','?')})" for n in news[:10])
+                else:
+                    text = str(news)[:1500]
+                return {"context_type": context_type, "news": text or "Brak newsów"}
 
             elif context_type in ("smc", "trading_signal"):
                 from src.trading.smc_engine import get_smc_analysis
@@ -776,62 +684,27 @@ class QuantSentinelAgent:
             return {"error": str(e)}
 
     def _tool_get_multi_tf_analysis(self) -> dict:
-        """Analiza SMC na wszystkich 4 interwałach jednocześnie z konfluencją."""
-        from src.trading.smc_engine import get_smc_analysis, get_mtf_confluence, get_active_session
-
+        """Analiza konfluencji MTF — używa cache'owanego get_mtf_confluence (bez podwójnych wywołań)."""
+        from src.trading.smc_engine import get_mtf_confluence, get_active_session
         try:
-            # Use the new MTF confluence function
             confluence = get_mtf_confluence("XAU/USD")
             session = get_active_session()
-
-            # Also get full per-TF data for detailed analysis
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            timeframes = ["5m", "15m", "1h", "4h"]
-            results = {}
-
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                futures = {executor.submit(get_smc_analysis, tf): tf for tf in timeframes}
-                for future in as_completed(futures, timeout=30):
-                    tf = futures[future]
-                    try:
-                        data = future.result()
-                        if data:
-                            results[tf] = {
-                                "price": data.get("price"),
-                                "trend": data.get("trend"),
-                                "rsi": data.get("rsi"),
-                                "atr": data.get("atr"),
-                                "macro_regime": data.get("macro_regime"),
-                                "liquidity_grab": data.get("liquidity_grab"),
-                                "mss": data.get("mss"),
-                                "fvg_type": data.get("fvg_type"),
-                                "ob_price": data.get("ob_price"),
-                                "bos_bullish": data.get("bos_bullish"),
-                                "bos_bearish": data.get("bos_bearish"),
-                                "engulfing": data.get("engulfing"),
-                                "ichimoku_above_cloud": data.get("ichimoku_above_cloud"),
-                                "rsi_div_bull": data.get("rsi_div_bull"),
-                                "rsi_div_bear": data.get("rsi_div_bear"),
-                            }
-                        else:
-                            results[tf] = {"error": "Brak danych"}
-                    except Exception as e:
-                        results[tf] = {"error": str(e)}
-
             return {
-                "timeframes": results,
-                "confluence": confluence.get("direction", "MIXED"),
-                "confluence_score": confluence.get("confluence_score", 0),
-                "bull_pct": confluence.get("bull_pct", 50),
-                "bear_pct": confluence.get("bear_pct", 50),
-                "bull_tf_count": confluence.get("bull_tf_count", 0),
-                "bear_tf_count": confluence.get("bear_tf_count", 0),
+                "confluence": confluence.get("direction", "CZEKAJ"),
+                "score": confluence.get("confluence_score", 0),
+                "bull_pct": confluence.get("bull_pct", 0),
+                "bear_pct": confluence.get("bear_pct", 0),
+                "bull_tf": confluence.get("bull_tf_count", 0),
+                "bear_tf": confluence.get("bear_tf_count", 0),
+                "timeframes": {
+                    tf: {"trend": d.get("trend"), "rsi": d.get("rsi")}
+                    for tf, d in confluence.get("timeframes", {}).items()
+                },
                 "session": session.get("session"),
                 "is_killzone": session.get("is_killzone"),
-                "volatility_expected": session.get("volatility_expected"),
             }
         except Exception as e:
-            logger.error(f"Błąd get_multi_tf_analysis: {e}")
+            logger.error(f"MTF analysis error: {e}")
             return {"error": str(e)}
 
     def _tool_get_news_sentiment(self) -> dict:

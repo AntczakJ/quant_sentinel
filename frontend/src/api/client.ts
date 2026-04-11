@@ -534,8 +534,8 @@ export const modelMonitorAPI = {
   /** Model drift, rolling accuracy, calibration status, alerts */
   getMonitor: async () => {
     const response = await client.get<{
-      drift: Record<string, { psi: number; status: string; baseline_mean?: number; current_mean?: number }>;
-      accuracy: Record<string, { rolling_accuracy: number; window: number; trend: string }>;
+      drift: Record<string, { psi: number; status: string; ref_mean?: number; cur_mean?: number; ref_std?: number; cur_std?: number }>;
+      accuracy: Record<string, number | { rolling_accuracy: number; window?: number; trend?: string }>;
       calibration: Record<string, unknown>;
       alerts: string[];
       healthy: boolean;
@@ -623,14 +623,16 @@ export const riskAPI = {
     const response = await client.get<{
       halted: boolean;
       halt_reason?: string;
-      daily_loss: number;
-      daily_loss_limit: number;
+      daily_loss_pct: number;
+      daily_loss_soft_limit: number;
+      daily_loss_hard_limit: number;
       consecutive_losses: number;
-      max_consecutive_losses: number;
-      cooldown_until?: string;
-      kelly_risk?: number;
+      cooldown_active?: boolean;
+      cooldown_until?: string | null;
+      max_portfolio_heat_pct?: number;
+      kelly_risk_pct?: number;
       session?: string;
-      spread?: number;
+      spread_buffer?: number;
     }>('/risk/status');
     return response.data;
   },

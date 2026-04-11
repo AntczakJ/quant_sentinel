@@ -121,7 +121,7 @@ export const ExecutionQuality = memo(function ExecutionQuality() {
     );
   }
 
-  if (!data || data.error || data.total_trades === 0) {
+  if (!data || data.error || data.total_trades === 0 || !data.by_grade) {
     return (
       <EmptyState
         icon="report"

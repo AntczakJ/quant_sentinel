@@ -5,7 +5,7 @@
  * Badge count for unread. Click to mark as read.
  */
 
-import { memo, useState, useCallback } from 'react';
+import { memo, useState, useCallback, useEffect } from 'react';
 import { Bell, TrendingUp, AlertTriangle, ShieldOff, X, Check } from 'lucide-react';
 
 export interface AppNotification {
@@ -19,7 +19,7 @@ export interface AppNotification {
 
 // Global notification store (simple module-level state for cross-component access)
 let _notifications: AppNotification[] = [];
-let _listeners: Set<() => void> = new Set();
+const _listeners: Set<() => void> = new Set();
 
 function notifyListeners() { _listeners.forEach(fn => fn()); }
 
@@ -33,12 +33,11 @@ export function pushNotification(n: Omit<AppNotification, 'id' | 'timestamp' | '
 
 function useNotifications() {
   const [, setTick] = useState(0);
-  // Subscribe to changes
-  useState(() => {
+  useEffect(() => {
     const listener = () => setTick(t => t + 1);
     _listeners.add(listener);
     return () => { _listeners.delete(listener); };
-  });
+  }, []);
   return _notifications;
 }
 

@@ -15,10 +15,23 @@ function loadEnabled(): boolean {
   } catch { return true; }
 }
 
+/** Shared AudioContext — reused across all tones to avoid browser context limits */
+let _audioCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext {
+  if (!_audioCtx || _audioCtx.state === 'closed') {
+    _audioCtx = new AudioContext();
+  }
+  if (_audioCtx.state === 'suspended') {
+    void _audioCtx.resume();
+  }
+  return _audioCtx;
+}
+
 /** Generate a short tone using Web Audio API */
 function playTone(frequency: number, duration: number, type: OscillatorType = 'sine', volume = 0.15) {
   try {
-    const ctx = new AudioContext();
+    const ctx = getAudioContext();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
@@ -31,8 +44,6 @@ function playTone(frequency: number, duration: number, type: OscillatorType = 's
     gain.connect(ctx.destination);
     osc.start();
     osc.stop(ctx.currentTime + duration);
-
-    setTimeout(() => ctx.close(), (duration + 0.5) * 1000);
   } catch {
     // Audio not available
   }
