@@ -276,7 +276,7 @@ class TestMLModels:
         predictor = MLPredictor(model_dir='models/test')
 
         # Mock DB to avoid side effects (NewsDB is imported inside train_xgb)
-        with patch('src.database.NewsDB') as mock_db:
+        with patch('src.core.database.NewsDB') as mock_db:
             mock_db.return_value = MagicMock()
             acc = predictor.train_xgb(sample_df)
 
@@ -422,7 +422,7 @@ class TestOpenAIAgent:
 
     def test_agent_dispatch_new_tools(self):
         """Verify new tools are in dispatcher."""
-        with patch('src.openai_agent.OPENAI_KEY', 'test_key'):
+        with patch('src.integrations.openai_agent.OPENAI_KEY', 'test_key'):
             from src.integrations.openai_agent import QuantSentinelAgent
             with patch.object(QuantSentinelAgent, '__init__', lambda self: None):
                 agent = QuantSentinelAgent()

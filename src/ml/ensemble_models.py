@@ -200,6 +200,7 @@ def _fallback_ensemble_result() -> Dict:
         "final_direction": "NEUTRAL",
         "confidence": 0.0,
         "ensemble_signal": "CZEKAJ",
+        "models_available": 0,
         "error": "Insufficient data"
     }
 
