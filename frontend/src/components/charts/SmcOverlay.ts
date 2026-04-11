@@ -43,19 +43,38 @@ class ZonesPaneRenderer implements ISeriesPrimitivePaneRenderer {
         const h = r.y2 - r.y1;
         if (w <= 0 || h <= 0) {continue;}
 
-        // Filled rectangle — reduced opacity for cleaner chart
-        const softColor = r.color.replace(/[\d.]+\)$/, '0.12)');
+        // Filled rectangle — subtle zone fill
+        const softColor = r.color.replace(/[\d.]+\)$/, '0.10)');
         ctx.fillStyle = softColor;
         ctx.fillRect(r.x1, r.y1, w, h);
-
-        // Minimal label — always above zone to avoid candle overlap
-        if (r.label && w > 25) {
-          ctx.font = '8px sans-serif';
-          const labelColor = r.color.replace(/[\d.]+\)$/, '0.6)');
-          ctx.fillStyle = labelColor;
-          ctx.fillText(r.label, r.x1 + 3, r.y1 - 3);
-        }
       }
+
+      // Second pass: draw labels ON TOP of everything (including candles)
+      // Save/restore ensures compositing doesn't leak
+      ctx.save();
+      for (const r of this.rects) {
+        const w = r.x2 - r.x1;
+        if (w <= 20 || !r.label) continue;
+
+        // Label inside zone, top-left corner with semi-transparent pill
+        const labelX = r.x1 + 3;
+        const labelY = r.y1 + 2;
+        ctx.font = '600 8px -apple-system, sans-serif';
+        const tw = ctx.measureText(r.label).width;
+
+        // Tiny frosted pill background
+        const pillW = tw + 6;
+        const pillH = 12;
+        ctx.fillStyle = r.color.replace(/[\d.]+\)$/, '0.18)');
+        ctx.beginPath();
+        ctx.roundRect(labelX, labelY, pillW, pillH, 3);
+        ctx.fill();
+
+        // Label text
+        ctx.fillStyle = r.color.replace(/[\d.]+\)$/, '0.75)');
+        ctx.fillText(r.label, labelX + 3, labelY + 9);
+      }
+      ctx.restore();
     });
   }
 }
