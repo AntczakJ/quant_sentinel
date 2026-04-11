@@ -25,19 +25,11 @@ function rateMetric(name: string, value: number): PerfMetric['rating'] {
   return 'poor';
 }
 
-const COLORS: Record<PerfMetric['rating'], string> = {
-  good: 'color: #22c55e',
-  'needs-improvement': 'color: #f59e0b',
-  poor: 'color: #ef4444',
-};
+// Colors available for debug: good=#22c55e, warn=#f59e0b, poor=#ef4444
 
-function logMetric(metric: PerfMetric) {
-  if (import.meta.env.PROD) return;
-  const style = COLORS[metric.rating];
-  console.log(
-    `%c⚡ ${metric.name}: ${metric.value.toFixed(1)}ms [${metric.rating}]`,
-    style
-  );
+function logMetric(_metric: PerfMetric) {
+  // Silenced — metrics collected but not logged to console
+  // Enable for debugging: console.log(`⚡ ${_metric.name}: ${_metric.value.toFixed(1)}ms`)
 }
 
 /**
