@@ -852,32 +852,25 @@ if os.path.isdir(_frontend_dist):
     if os.path.isdir(_chunks_dir):
         app.mount("/chunks", StaticFiles(directory=_chunks_dir), name="static-chunks")
 
-    # Root serves SPA when frontend is built
+    # Root serves SPA
     @app.get("/", include_in_schema=False)
     async def root_spa():
         return FileResponse(os.path.join(_frontend_dist, "index.html"))
-else:
-    # No frontend build — show API info
-    @app.get("/")
-    async def root():
-        """API root endpoint"""
-        return {
-            "name": "QUANT SENTINEL Trading API",
-            "version": "2.1.0",
-            "docs": "/docs",
-            "status": "running",
-        }
 
-    # SPA fallback: serve index.html for all non-API routes
+    # SPA fallback: serve static files from dist/ or index.html for client routes
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
-        """Serve React SPA — all non-API routes get index.html."""
+        """Serve React SPA — static files from dist/ or index.html for routes."""
         file_path = os.path.join(_frontend_dist, full_path)
         if os.path.isfile(file_path):
             return FileResponse(file_path)
         return FileResponse(os.path.join(_frontend_dist, "index.html"))
 
     logger.info(f"Frontend SPA served from {_frontend_dist}")
+else:
+    @app.get("/")
+    async def root():
+        return {"name": "QUANT SENTINEL Trading API", "version": "2.1.0", "docs": "/docs"}
 
 
 if __name__ == "__main__":
