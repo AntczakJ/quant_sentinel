@@ -13,9 +13,10 @@ import os
 import io
 import csv
 import json
+import calendar
 from datetime import datetime
 from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -195,6 +196,207 @@ async def execution_quality(days: int = Query(30, ge=1, le=365)):
     """Analyze fill rate, slippage, win rate by grade over last N days."""
     from src.ops.compliance import get_execution_quality_report
     return get_execution_quality_report(days)
+
+
+@router.get("/monthly-report", summary="Download monthly PDF report")
+async def monthly_report(
+    month: str = Query(None, description="Month (YYYY-MM), default=current month"),
+):
+    """
+    Generate a comprehensive monthly PDF report with trade summary,
+    performance metrics, and full trade table.  Returns a downloadable PDF.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+    from src.core.database import NewsDB
+
+    # ---- resolve month ----
+    if month is None:
+        month = datetime.now().strftime("%Y-%m")
+    try:
+        year, mon = int(month[:4]), int(month[5:7])
+    except (ValueError, IndexError):
+        return {"error": "Invalid month format. Use YYYY-MM."}
+
+    month_name = f"{calendar.month_name[mon]} {year}"
+    start = f"{year}-{mon:02d}-01"
+    _, last_day = calendar.monthrange(year, mon)
+    end = f"{year}-{mon:02d}-{last_day} 23:59:59"
+
+    db = NewsDB()
+    rows = db._query(
+        """
+        SELECT timestamp, direction, entry, sl, tp, status, profit
+        FROM trades
+        WHERE timestamp >= ? AND timestamp <= ?
+              AND status IN ('WIN', 'LOSS')
+        ORDER BY timestamp ASC
+        """,
+        (start, end),
+    )
+
+    # ---- compute stats ----
+    trades = rows or []
+    total = len(trades)
+    wins = sum(1 for r in trades if r[5] == "WIN")
+    losses = total - wins
+    win_rate = (wins / total * 100) if total else 0.0
+    pnls = [float(r[6]) if r[6] else 0.0 for r in trades]
+    total_pnl = sum(pnls)
+    gross_profit = sum(p for p in pnls if p > 0)
+    gross_loss = abs(sum(p for p in pnls if p < 0))
+    profit_factor = (gross_profit / gross_loss) if gross_loss else float("inf") if gross_profit else 0.0
+    expectancy = (total_pnl / total) if total else 0.0
+    best_trade = max(pnls) if pnls else 0.0
+    worst_trade = min(pnls) if pnls else 0.0
+
+    # max drawdown from running equity
+    peak = 0.0
+    dd = 0.0
+    running = 0.0
+    for p in pnls:
+        running += p
+        if running > peak:
+            peak = running
+        cur_dd = peak - running
+        if cur_dd > dd:
+            dd = cur_dd
+    max_drawdown = dd
+
+    # ---- build PDF ----
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20 * mm, bottomMargin=20 * mm)
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "QSTitle", parent=styles["Title"], fontSize=18, leading=22,
+        alignment=TA_CENTER, textColor=colors.HexColor("#1a1a2e"),
+    )
+    subtitle_style = ParagraphStyle(
+        "QSSub", parent=styles["Normal"], fontSize=11, leading=14,
+        alignment=TA_CENTER, textColor=colors.HexColor("#555555"),
+    )
+    section_style = ParagraphStyle(
+        "QSSection", parent=styles["Heading2"], fontSize=13, leading=16,
+        textColor=colors.HexColor("#0f3460"), spaceBefore=14, spaceAfter=6,
+    )
+    body_style = ParagraphStyle(
+        "QSBody", parent=styles["Normal"], fontSize=9, leading=12,
+        alignment=TA_LEFT,
+    )
+
+    elements: list = []
+
+    # -- header --
+    elements.append(Paragraph("QUANT SENTINEL &mdash; Monthly Report", title_style))
+    elements.append(Paragraph(month_name, subtitle_style))
+    elements.append(Spacer(1, 10 * mm))
+
+    # -- summary box --
+    elements.append(Paragraph("Summary", section_style))
+    summary_data = [
+        ["Total Trades", str(total)],
+        ["Wins", str(wins)],
+        ["Losses", str(losses)],
+        ["Win Rate", f"{win_rate:.1f}%"],
+        ["Total P&L", f"${total_pnl:,.2f}"],
+    ]
+    summary_table = Table(summary_data, colWidths=[80 * mm, 60 * mm])
+    summary_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8eaf6")),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#1a1a2e")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bdbdbd")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(summary_table)
+    elements.append(Spacer(1, 6 * mm))
+
+    # -- trade table --
+    elements.append(Paragraph("Trade Log", section_style))
+    table_header = ["Date", "Dir", "Entry", "SL", "TP", "Result", "P&L"]
+    table_rows = [table_header]
+    for ts, direction, entry, sl, tp, status, profit in trades:
+        date_str = str(ts)[:16] if ts else ""
+        pnl_val = float(profit) if profit else 0.0
+        table_rows.append([
+            date_str,
+            str(direction or ""),
+            f"{float(entry):.2f}" if entry else "",
+            f"{float(sl):.2f}" if sl else "",
+            f"{float(tp):.2f}" if tp else "",
+            str(status or ""),
+            f"${pnl_val:,.2f}",
+        ])
+
+    col_w = [32 * mm, 14 * mm, 22 * mm, 22 * mm, 22 * mm, 16 * mm, 22 * mm]
+    trade_table = Table(table_rows, colWidths=col_w, repeatRows=1)
+    trade_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f3460")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f5f5")]),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(trade_table)
+    elements.append(Spacer(1, 6 * mm))
+
+    # -- performance metrics --
+    elements.append(Paragraph("Performance Metrics", section_style))
+    pf_display = f"{profit_factor:.2f}" if profit_factor != float("inf") else "N/A (no losses)"
+    metrics_data = [
+        ["Profit Factor", pf_display],
+        ["Expectancy", f"${expectancy:,.2f}"],
+        ["Max Drawdown", f"${max_drawdown:,.2f}"],
+        ["Best Trade", f"${best_trade:,.2f}"],
+        ["Worst Trade", f"${worst_trade:,.2f}"],
+    ]
+    metrics_table = Table(metrics_data, colWidths=[80 * mm, 60 * mm])
+    metrics_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8f5e9")),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#1a1a2e")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bdbdbd")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(metrics_table)
+    elements.append(Spacer(1, 8 * mm))
+
+    # -- footer --
+    generated_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    elements.append(Paragraph(
+        f"<i>Generated: {generated_ts} &mdash; Quant Sentinel Automated Report</i>",
+        ParagraphStyle("QSFooter", parent=styles["Normal"], fontSize=8,
+                       alignment=TA_CENTER, textColor=colors.HexColor("#999999")),
+    ))
+
+    doc.build(elements)
+    buf.seek(0)
+    filename = f"qs-monthly-report-{month}.pdf"
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/daily-report", summary="Get daily P&L report")

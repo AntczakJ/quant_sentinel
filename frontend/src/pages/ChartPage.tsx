@@ -6,6 +6,7 @@
 import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { SignalPanel } from '../components/dashboard/SignalPanel';
 import { PortfolioStats } from '../components/dashboard/PortfolioStats';
+import { OverviewStrip } from '../components/dashboard/OverviewStrip';
 
 export default function ChartPage() {
   return (
@@ -18,6 +19,11 @@ export default function ChartPage() {
         >
           <CandlestickChart />
         </div>
+      </div>
+
+      {/* Overview metrics strip */}
+      <div className="-mx-4 lg:-mx-6">
+        <OverviewStrip />
       </div>
 
       {/* Signal & Portfolio panels below chart */}

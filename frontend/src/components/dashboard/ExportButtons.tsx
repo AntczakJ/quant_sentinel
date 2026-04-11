@@ -4,8 +4,8 @@
  * Provides CSV/JSON download for trades, equity curve, and daily report.
  */
 
-import { memo, useState, useCallback } from 'react';
-import { Download, FileText, FileJson, Loader2 } from 'lucide-react';
+import { memo, useState, useCallback, useMemo } from 'react';
+import { Download, FileText, FileJson, Loader2, CalendarDays } from 'lucide-react';
 import { exportAPI } from '../../api/client';
 import { useToast } from '../ui/Toast';
 
@@ -30,6 +30,16 @@ interface ExportOption {
 export const ExportButtons = memo(function ExportButtons() {
   const toast = useToast();
   const [loading, setLoading] = useState<string | null>(null);
+  const [pdfMonth, setPdfMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+
+  const monthLabel = useMemo(() => {
+    const [y, m] = pdfMonth.split('-').map(Number);
+    const d = new Date(y, m - 1);
+    return d.toLocaleString('default', { month: 'short', year: 'numeric' });
+  }, [pdfMonth]);
 
   const doExport = useCallback(async (key: string, fn: () => Promise<void>) => {
     setLoading(key);
@@ -83,12 +93,29 @@ export const ExportButtons = memo(function ExportButtons() {
         triggerDownload(JSON.stringify(data, null, 2), `qs-daily-report-${new Date().toISOString().slice(0, 10)}.json`);
       },
     },
+    {
+      key: 'monthly-pdf',
+      label: `Monthly PDF (${monthLabel})`,
+      icon: CalendarDays,
+      action: async () => {
+        const res = await exportAPI.downloadMonthlyReport(pdfMonth);
+        if (!res.data) throw new Error('Empty response');
+        triggerDownload(res.data as Blob, `qs-monthly-report-${pdfMonth}.pdf`);
+      },
+    },
   ];
 
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       <Download size={10} className="text-th-muted" />
       <span className="text-[10px] text-th-muted uppercase tracking-wider font-medium mr-1">Export</span>
+      <input
+        type="month"
+        value={pdfMonth}
+        onChange={e => setPdfMonth(e.target.value)}
+        className="px-1.5 py-0.5 rounded text-[10px] bg-dark-secondary text-th-muted border border-transparent hover:border-accent-blue/20 focus:border-accent-blue/40 outline-none"
+        title="Select month for PDF report"
+      />
       {options.map(opt => {
         const Icon = opt.icon;
         const isLoading = loading === opt.key;

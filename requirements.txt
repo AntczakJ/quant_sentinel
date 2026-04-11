@@ -20,6 +20,9 @@ openai>=2.30.0
 matplotlib>=3.10.0
 Pillow>=12.1.0
 
+# --- PDF EXPORT ---
+reportlab>=4.0
+
 # --- UTILITIES ---
 requests>=2.33.0
 python-dotenv>=1.2.0
