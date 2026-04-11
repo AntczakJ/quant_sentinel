@@ -44,7 +44,7 @@ _TURSO_SYNC_TABLES = {
 # Tables that stay local only
 _LOCAL_ONLY_TABLES = {
     "ml_predictions", "news_sentiment", "trailing_stop_log", "loss_patterns",
-    "rejected_setups", "filter_performance", "hourly_stats",
+    "rejected_setups", "filter_performance", "hourly_stats", "model_alerts",
 }
 
 
@@ -257,6 +257,16 @@ class NewsDB:
             accuracy REAL DEFAULT 0,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(filter_name, direction))""")
+        # ── MODEL ALERTS — persisted drift/accuracy/calibration alerts ──
+        self._execute("""CREATE TABLE IF NOT EXISTS model_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            model_name TEXT NOT NULL,
+            alert_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            message TEXT NOT NULL,
+            psi_value REAL,
+            resolved BOOLEAN DEFAULT 0)""")
 
     def migrate(self):
         needed = {'pattern': 'TEXT', 'failure_reason': 'TEXT', 'condition_at_loss': 'TEXT',
@@ -548,6 +558,55 @@ class NewsDB:
             return True
         except (ValueError, TypeError):
             return False
+
+    # ── MODEL ALERTS ──────────────────────────────────────────────────────
+
+    def save_model_alert(self, model_name: str, alert_type: str, severity: str,
+                         message: str, psi_value: float = None) -> Optional[int]:
+        """
+        Insert a model alert with 1-hour deduplication.
+        Won't insert if same model_name + alert_type alert exists within the last hour.
+        Returns the new alert id, or None if deduplicated.
+        """
+        existing = self._query_one(
+            "SELECT id FROM model_alerts "
+            "WHERE model_name = ? AND alert_type = ? AND resolved = 0 "
+            "AND timestamp > datetime('now', '-1 hour')",
+            (model_name, alert_type),
+        )
+        if existing:
+            return None
+        return self._insert_returning_id(
+            "INSERT INTO model_alerts (model_name, alert_type, severity, message, psi_value) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (model_name, alert_type, severity, message, psi_value),
+        )
+
+    def get_model_alerts(self, limit: int = 20, unresolved_only: bool = False) -> list:
+        """Fetch recent model alerts as list of dicts."""
+        sql = "SELECT id, timestamp, model_name, alert_type, severity, message, psi_value, resolved FROM model_alerts"
+        if unresolved_only:
+            sql += " WHERE resolved = 0"
+        sql += " ORDER BY timestamp DESC LIMIT ?"
+        rows = self._query(sql, (limit,))
+        return [
+            {"id": r[0], "timestamp": r[1], "model_name": r[2], "alert_type": r[3],
+             "severity": r[4], "message": r[5], "psi_value": r[6], "resolved": bool(r[7])}
+            for r in rows
+        ]
+
+    def resolve_alert(self, alert_id: int) -> bool:
+        """Mark a model alert as resolved. Returns True if a row was updated."""
+        self._execute(
+            "UPDATE model_alerts SET resolved = 1 WHERE id = ? AND resolved = 0",
+            (alert_id,),
+        )
+        row = self._query_one("SELECT changes()")
+        return bool(row and row[0] > 0)
+
+    def get_unresolved_alert_count(self) -> int:
+        row = self._query_one("SELECT COUNT(*) FROM model_alerts WHERE resolved = 0")
+        return row[0] if row else 0
 
     def update_session_stats(self, pattern: str, session: str, outcome: str):
         is_win = 1 if outcome in ("WIN", "PROFIT") else 0

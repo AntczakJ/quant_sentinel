@@ -10,6 +10,7 @@ import {
   Play, Loader2, BarChart3, TrendingUp, TrendingDown,
   Shield, AlertTriangle, Activity,
 } from 'lucide-react';
+import { Tooltip } from '../ui/Tooltip';
 import { backtestAPI } from '../../api/client';
 import { useToast } from '../ui/Toast';
 
@@ -85,14 +86,25 @@ const MODEL_LABELS: Record<string, string> = {
 
 /* ── Metric helpers ────────────────────────────────────────────────── */
 
+const METRIC_TOOLTIPS: Record<string, string> = {
+  'Accuracy': 'Procent poprawnych predykcji kierunku',
+  'MCC': 'Matthews Correlation Coefficient — lepsza metryka niz accuracy dla niezbalansowanych danych (-1 do +1)',
+  'F1': 'Srednia harmoniczna precision i recall (0-1)',
+  'Sharpe': 'Zwrot skorygowany o ryzyko. Sharpe > 1 = dobry, > 2 = swietny',
+  'Sortino': 'Jak Sharpe ale penalizuje tylko downside volatility',
+  'Calmar': 'Roczny zwrot / max drawdown. Calmar > 1 = dobry',
+};
+
 function MetricCell({ label, value, color, suffix }: {
   label: string; value: number | undefined; color?: string; suffix?: string;
 }) {
   if (value === undefined) return <div className="text-center text-th-dim text-[10px]">—</div>;
   const displayColor = color ?? (value >= 0 ? 'text-accent-green' : 'text-accent-red');
+  const tip = METRIC_TOOLTIPS[label];
+  const labelEl = <div className={`text-[9px] text-th-muted uppercase tracking-wider ${tip ? 'cursor-help' : ''}`}>{label}</div>;
   return (
     <div className="text-center">
-      <div className="text-[9px] text-th-muted uppercase tracking-wider">{label}</div>
+      {tip ? <Tooltip content={tip}>{labelEl}</Tooltip> : labelEl}
       <div className={`text-xs font-bold font-mono ${displayColor}`}>
         {value.toFixed(label === 'MCC' || label === 'F1' ? 3 : 2)}{suffix ?? ''}
       </div>

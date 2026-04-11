@@ -123,19 +123,30 @@ async def get_model_monitoring():
     """
     Run model monitoring checks: prediction drift (PSI), rolling accuracy,
     calibration status. Returns alerts if thresholds breached.
+    Persists warn/alert drift results to model_alerts table.
     """
     try:
         from src.ml.model_monitor import check_prediction_drift, compute_rolling_accuracy
         from src.ml.model_calibration import get_calibrator
+        from src.core.database import NewsDB
 
         drift = check_prediction_drift()
         accuracy = compute_rolling_accuracy()
         calibration = get_calibrator().get_status()
 
         alerts = []
+        db = NewsDB()
         for model, info in drift.items():
             if info.get("status") in ("warn", "alert"):
-                alerts.append(f"{model}: PSI={info['psi']:.3f} ({info['status']})")
+                msg = f"{model}: PSI={info['psi']:.3f} ({info['status']})"
+                alerts.append(msg)
+                db.save_model_alert(
+                    model_name=model,
+                    alert_type="drift",
+                    severity=info["status"],
+                    message=msg,
+                    psi_value=info.get("psi"),
+                )
 
         return {
             "drift": drift,
@@ -146,5 +157,39 @@ async def get_model_monitoring():
         }
     except Exception as e:
         logger.error(f"Model monitoring error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/alerts", summary="Get model drift alerts")
+async def get_model_alerts(limit: int = 20, unresolved_only: bool = False):
+    """
+    Fetch persisted model alerts (drift, accuracy, calibration).
+    Query params: limit (default 20), unresolved_only (default false).
+    """
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        alerts = db.get_model_alerts(limit=limit, unresolved_only=unresolved_only)
+        unresolved_count = db.get_unresolved_alert_count()
+        return {"alerts": alerts, "unresolved_count": unresolved_count}
+    except Exception as e:
+        logger.error(f"Error fetching model alerts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/alerts/{alert_id}/resolve", summary="Resolve a model alert")
+async def resolve_model_alert(alert_id: int):
+    """Mark a model alert as resolved."""
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        updated = db.resolve_alert(alert_id)
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found or already resolved")
+        return {"status": "resolved", "alert_id": alert_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resolving alert {alert_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
