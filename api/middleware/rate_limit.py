@@ -68,6 +68,13 @@ class TokenBucket:
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """HTTP middleware that enforces per-IP, per-route rate limits."""
 
+    async def __call__(self, scope, receive, send):
+        # BaseHTTPMiddleware can't handle WebSocket — bypass
+        if scope["type"] == "websocket":
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
     def __init__(self, app):
         super().__init__(app)
         self._buckets: dict[str, TokenBucket] = {}
