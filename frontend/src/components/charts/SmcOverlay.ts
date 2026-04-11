@@ -49,32 +49,8 @@ class ZonesPaneRenderer implements ISeriesPrimitivePaneRenderer {
         ctx.fillRect(r.x1, r.y1, w, h);
       }
 
-      // Second pass: draw labels ON TOP of everything (including candles)
-      // Save/restore ensures compositing doesn't leak
-      ctx.save();
-      for (const r of this.rects) {
-        const w = r.x2 - r.x1;
-        if (w <= 20 || !r.label) continue;
-
-        // Label inside zone, top-left corner with semi-transparent pill
-        const labelX = r.x1 + 3;
-        const labelY = r.y1 + 2;
-        ctx.font = '600 8px -apple-system, sans-serif';
-        const tw = ctx.measureText(r.label).width;
-
-        // Tiny frosted pill background
-        const pillW = tw + 6;
-        const pillH = 12;
-        ctx.fillStyle = r.color.replace(/[\d.]+\)$/, '0.18)');
-        ctx.beginPath();
-        ctx.roundRect(labelX, labelY, pillW, pillH, 3);
-        ctx.fill();
-
-        // Label text
-        ctx.fillStyle = r.color.replace(/[\d.]+\)$/, '0.75)');
-        ctx.fillText(r.label, labelX + 3, labelY + 9);
-      }
-      ctx.restore();
+      // Labels rendered via HTML overlay (see CandlestickChart.tsx)
+      // Canvas primitives always render under candles in lightweight-charts
     });
   }
 }
@@ -101,6 +77,7 @@ export class SmcZonesOverlay implements ISeriesPrimitive<Time> {
   private _series: ISeriesApi<SeriesType, Time> | null = null;
   private _requestUpdate: (() => void) | null = null;
   private _zones: SmcZone[] = [];
+  private _labels: Array<{ x: number; y: number; label: string; color: string }> = [];
   private _paneView = new ZonesPaneView();
 
   attached(param: SeriesAttachedParameter<Time>) {
@@ -158,6 +135,18 @@ export class SmcZonesOverlay implements ISeriesPrimitive<Time> {
     }
 
     this._paneView._renderer.rects = rects;
+    // Store labels for HTML overlay (rendered above candles)
+    this._labels = rects.filter(r => r.label && (r.x2 - r.x1) > 20).map(r => ({
+      x: Math.max(0, r.x1) + 4,
+      y: Math.min(r.y1, r.y2) + 3,
+      label: r.label,
+      color: r.color,
+    }));
+  }
+
+  /** Get label positions for HTML overlay (call after updateAllViews) */
+  getLabels(): Array<{ x: number; y: number; label: string; color: string }> {
+    return this._labels;
   }
 
   paneViews() {
