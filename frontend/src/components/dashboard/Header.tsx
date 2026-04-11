@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { TrendingUp, TrendingDown, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon, Monitor, Newspaper, Volume2, VolumeX, Settings, Menu, X } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useTheme } from '../../hooks/useTheme';
 import { useTradingStore } from '../../store/tradingStore';
 import { ScrollProgressBar } from './ScrollProgressBar';
@@ -106,7 +107,7 @@ export function Header() {
         </button>
 
         <div className="flex items-center gap-1 min-w-max">
-          <span className="text-sm font-bold tracking-wider" style={{ color: 'var(--color-text-primary)' }}>QS</span>
+          <span className="text-sm font-bold tracking-wider" style={{ color: 'rgb(var(--c-accent))' }}>QS</span>
         </div>
 
         {/* Spacer */}
@@ -159,48 +160,73 @@ export function Header() {
       <ScrollProgressBar />
     </header>
 
-    {/* Slide-out navigation drawer */}
+    {/* Animated slide-out navigation drawer */}
+    <AnimatePresence>
     {menuOpen && (
       <>
-        <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={() => setMenuOpen(false)} />
-        <nav
-          className="fixed left-0 top-0 z-50 h-full w-56 py-4 px-3 space-y-1 shadow-2xl animate-in slide-in-from-left duration-200"
-          style={{ background: 'var(--color-surface)' }}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+          onClick={() => setMenuOpen(false)}
+        />
+        <motion.nav
+          initial={{ x: '-100%' }}
+          animate={{ x: 0 }}
+          exit={{ x: '-100%' }}
+          transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+          className="fixed left-0 top-0 z-50 h-full w-60 py-5 px-3 space-y-1"
+          style={{ background: 'var(--color-surface)', boxShadow: '4px 0 24px rgba(168,85,247,0.08)' }}
           aria-label="Main navigation"
         >
-          <div className="flex items-center justify-between px-2 mb-4">
+          <div className="flex items-center justify-between px-2 mb-5">
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-bold tracking-wider" style={{ color: 'var(--color-text-primary)' }}>QUANT</span>
-              <span className="text-sm font-bold tracking-wider" style={{ color: 'var(--color-accent-green)' }}>SENTINEL</span>
+              <span className="text-sm font-bold tracking-wider" style={{ color: 'rgb(var(--c-accent))' }}>SENTINEL</span>
             </div>
-            <button onClick={() => setMenuOpen(false)} className="p-1 rounded" style={{ color: 'var(--color-text-muted)' }}>
+            <button onClick={() => setMenuOpen(false)} className="p-1.5 rounded-lg hover:bg-[var(--color-secondary)] transition-colors" style={{ color: 'var(--color-text-muted)' }}>
               <X size={16} />
             </button>
           </div>
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-            <NavLink
+          {NAV_ITEMS.map(({ to, label, icon: Icon }, i) => (
+            <motion.div
               key={to}
-              to={to}
-              end={to === '/'}
-              onClick={() => setMenuOpen(false)}
-              onMouseEnter={() => prefetchRoute(to)}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                  isActive ? 'font-semibold' : 'opacity-60 hover:opacity-100'
-                }`
-              }
-              style={({ isActive }) => ({
-                color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-                background: isActive ? 'var(--color-secondary)' : 'transparent',
-              })}
+              initial={{ opacity: 0, x: -12 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.05 + i * 0.03, duration: 0.2 }}
             >
-              <Icon size={16} />
-              {label}
-            </NavLink>
+              <NavLink
+                to={to}
+                end={to === '/'}
+                onClick={() => setMenuOpen(false)}
+                onMouseEnter={() => prefetchRoute(to)}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
+                    isActive ? 'font-semibold' : 'opacity-60 hover:opacity-100'
+                  }`
+                }
+                style={({ isActive }) => ({
+                  color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                  background: isActive ? 'rgba(168,85,247,0.1)' : 'transparent',
+                  borderLeft: isActive ? '2px solid rgb(var(--c-accent))' : '2px solid transparent',
+                })}
+              >
+                <Icon size={16} />
+                {label}
+              </NavLink>
+            </motion.div>
           ))}
-        </nav>
+
+          {/* Bottom accent line */}
+          <div className="absolute bottom-4 left-3 right-3">
+            <div className="h-px w-full" style={{ background: 'linear-gradient(90deg, transparent, rgb(var(--c-accent) / 0.3), transparent)' }} />
+          </div>
+        </motion.nav>
       </>
     )}
+    </AnimatePresence>
     </>
   );
 }

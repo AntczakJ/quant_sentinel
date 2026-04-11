@@ -22,6 +22,7 @@ export default {
         'accent-cyan':   'rgb(var(--c-cyan) / <alpha-value>)',
         'accent-purple': 'rgb(var(--c-purple) / <alpha-value>)',
         'accent-orange': 'rgb(var(--c-orange) / <alpha-value>)',
+        'accent':        'rgb(var(--c-accent) / <alpha-value>)',
 
         /* ═══ Theme-aware text colors ═══
            text-th = primary, text-th-secondary, text-th-muted, text-th-dim */
