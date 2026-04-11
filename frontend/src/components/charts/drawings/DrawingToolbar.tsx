@@ -196,7 +196,7 @@ export function DrawingToolbar({
   const [hoveredTool, setHoveredTool] = useState<string | null>(null);
   const [currentWidth, setCurrentWidth] = useState(2);
 
-  const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const colorRef = useRef<HTMLDivElement>(null);
   const widthRef = useRef<HTMLDivElement>(null);
 
