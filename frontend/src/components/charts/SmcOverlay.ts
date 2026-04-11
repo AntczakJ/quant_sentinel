@@ -43,66 +43,18 @@ class ZonesPaneRenderer implements ISeriesPrimitivePaneRenderer {
         const h = r.y2 - r.y1;
         if (w <= 0 || h <= 0) {continue;}
 
-        // Filled rectangle
-        ctx.fillStyle = r.color;
+        // Filled rectangle — reduced opacity for cleaner chart
+        const softColor = r.color.replace(/[\d.]+\)$/, '0.12)');
+        ctx.fillStyle = softColor;
         ctx.fillRect(r.x1, r.y1, w, h);
 
-        // Crisp top/bottom border lines (solid, higher opacity)
-        const borderColor = r.color.replace(/[\d.]+\)$/, '0.7)');
-        ctx.strokeStyle = borderColor;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.moveTo(r.x1, r.y1);
-        ctx.lineTo(r.x2, r.y1);
-        ctx.moveTo(r.x1, r.y2);
-        ctx.lineTo(r.x2, r.y2);
-        ctx.stroke();
-
-        // Subtle left edge line
-        ctx.strokeStyle = r.color.replace(/[\d.]+\)$/, '0.45)');
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(r.x1, r.y1);
-        ctx.lineTo(r.x1, r.y2);
-        ctx.stroke();
-
-        // Label with background pill for readability
+        // Minimal label — small, unobtrusive
         if (r.label && w > 30) {
-          ctx.font = 'bold 10px monospace';
-          const textMetrics = ctx.measureText(r.label);
-          const textW = textMetrics.width;
-          const pillH = 16;
-          const pillW = textW + 12;
-          const pillX = r.x1 + 6;
-
-          // Vertically center pill in zone; if zone is too thin, place above it
-          let pillY: number;
-          if (h >= pillH + 6) {
-            // Enough room → center vertically inside the zone
-            pillY = r.y1 + Math.round((h - pillH) / 2);
-          } else {
-            // Zone too thin → place pill just above the top border
-            pillY = r.y1 - pillH - 3;
-          }
-
-          // Semi-transparent background pill
-          ctx.fillStyle = 'rgba(0,0,0,0.60)';
-          ctx.beginPath();
-          ctx.roundRect(pillX, pillY, pillW, pillH, 4);
-          ctx.fill();
-
-          // Thin border matching zone color for context
-          ctx.strokeStyle = r.color.replace(/[\d.]+\)$/, '0.8)');
-          ctx.lineWidth = 1;
-          ctx.setLineDash([]);
-          ctx.beginPath();
-          ctx.roundRect(pillX, pillY, pillW, pillH, 4);
-          ctx.stroke();
-
-          // Label text — vertically centered in pill
-          ctx.fillStyle = 'rgba(255,255,255,0.92)';
-          ctx.fillText(r.label, pillX + 6, pillY + 11.5);
+          ctx.font = '9px sans-serif';
+          const labelColor = r.color.replace(/[\d.]+\)$/, '0.55)');
+          ctx.fillStyle = labelColor;
+          const labelY = h >= 14 ? r.y1 + 11 : r.y1 - 3;
+          ctx.fillText(r.label, r.x1 + 4, labelY);
         }
       }
     });

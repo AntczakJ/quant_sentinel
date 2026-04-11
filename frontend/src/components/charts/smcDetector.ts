@@ -86,7 +86,7 @@ export function detectFVGs(candles: OhlcBar[], maxZones = 5): SmcZone[] {
         startTime: c1.time,
         endTime,
         label: 'FVG ▲',
-        color: 'rgba(34, 197, 94, 0.25)',
+        color: 'rgba(34, 197, 94, 0.12)',
       });
     }
     // Bearish FVG: gap between c1.low and c3.high
@@ -99,7 +99,7 @@ export function detectFVGs(candles: OhlcBar[], maxZones = 5): SmcZone[] {
         startTime: c1.time,
         endTime,
         label: 'FVG ▼',
-        color: 'rgba(239, 68, 68, 0.25)',
+        color: 'rgba(239, 68, 68, 0.10)',
       });
     }
   }
@@ -145,7 +145,7 @@ export function detectOrderBlocks(candles: OhlcBar[], maxBlocks = 3): SmcZone[] 
         startTime: curr.time,
         endTime,
         label: 'OB ▲',
-        color: 'rgba(59, 130, 246, 0.28)',
+        color: 'rgba(59, 130, 246, 0.12)',
       });
     }
     // Bearish OB: bullish candle → strong bearish impulse
@@ -158,7 +158,7 @@ export function detectOrderBlocks(candles: OhlcBar[], maxBlocks = 3): SmcZone[] 
         startTime: curr.time,
         endTime,
         label: 'OB ▼',
-        color: 'rgba(168, 85, 247, 0.28)',
+        color: 'rgba(168, 85, 247, 0.10)',
       });
     }
   }
@@ -210,7 +210,7 @@ export function detectSupplyDemand(candles: OhlcBar[]): SmcZone[] {
       startTime: c.time,
       endTime,
       label: 'SUPPLY',
-      color: 'rgba(239, 68, 68, 0.22)',
+      color: 'rgba(239, 68, 68, 0.08)',
     });
   }
 
@@ -226,7 +226,7 @@ export function detectSupplyDemand(candles: OhlcBar[]): SmcZone[] {
       startTime: c.time,
       endTime,
       label: 'DEMAND',
-      color: 'rgba(34, 197, 94, 0.22)',
+      color: 'rgba(34, 197, 94, 0.08)',
     });
   }
 
