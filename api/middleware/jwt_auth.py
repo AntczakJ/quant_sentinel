@@ -105,7 +105,7 @@ class JwtAuthMiddleware:
         self._http = _JwtAuthHTTPMiddleware(app)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        if scope["type"] == "websocket":
+        if scope["type"] in ("websocket", "lifespan"):
             await self._app(scope, receive, send)
         else:
             await self._http(scope, receive, send)

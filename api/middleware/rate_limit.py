@@ -142,7 +142,7 @@ class RateLimitMiddleware:
         self._http = _RateLimitHTTPMiddleware(app)
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "websocket":
+        if scope["type"] in ("websocket", "lifespan"):
             await self._app(scope, receive, send)
         else:
             await self._http(scope, receive, send)
