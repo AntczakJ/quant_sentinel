@@ -501,19 +501,37 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Middleware
+# Middleware — custom auth/rate use pure ASGI wrappers that bypass WebSocket
 from api.middleware.rate_limit import RateLimitMiddleware
 from api.middleware.jwt_auth import JwtAuthMiddleware
 app.add_middleware(JwtAuthMiddleware)
 app.add_middleware(RateLimitMiddleware)
-app.add_middleware(GZipMiddleware, minimum_size=512)  # Compress responses > 512 bytes
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(GZipMiddleware, minimum_size=512)
+# CORS — only needed when frontend runs on different port (vite dev server)
+# When serving from same origin (:8000), CORS is not needed.
+# Using custom ASGI wrapper to avoid CORSMiddleware blocking WebSocket.
+
+class _CorsHeaderMiddleware:
+    """Minimal CORS that doesn't touch WebSocket."""
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            async def send_with_cors(message):
+                if message["type"] == "http.response.start":
+                    headers = dict(message.get("headers", []))
+                    extra = [
+                        (b"access-control-allow-origin", b"*"),
+                        (b"access-control-allow-methods", b"GET, POST, PUT, DELETE, OPTIONS"),
+                        (b"access-control-allow-headers", b"*"),
+                    ]
+                    message["headers"] = list(message.get("headers", [])) + extra
+                await send(message)
+            await self.app(scope, receive, send_with_cors)
+        else:
+            await self.app(scope, receive, send)
+
+app.add_middleware(_CorsHeaderMiddleware)
 
 
 @app.middleware("http")

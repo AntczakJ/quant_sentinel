@@ -16,6 +16,7 @@ import os
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Legacy API key from .env (backwards compatible with Phase 4 auth)
 _LEGACY_KEY = os.getenv("API_SECRET_KEY", "")
@@ -33,15 +34,8 @@ _PUBLIC_PREFIXES = (
 _PROTECTED_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 
 
-class JwtAuthMiddleware(BaseHTTPMiddleware):
-    """Authenticate requests via JWT, API key, or legacy key."""
-
-    async def __call__(self, scope, receive, send):
-        # BaseHTTPMiddleware doesn't support WebSocket — bypass entirely
-        if scope["type"] == "websocket":
-            await self.app(scope, receive, send)
-            return
-        await super().__call__(scope, receive, send)
+class _JwtAuthHTTPMiddleware(BaseHTTPMiddleware):
+    """Inner HTTP-only middleware — never sees WebSocket."""
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -101,3 +95,17 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
         # Set user context on request state
         request.state.user = user
         return await call_next(request)
+
+
+class JwtAuthMiddleware:
+    """Pure ASGI wrapper — bypasses WebSocket, delegates HTTP to BaseHTTPMiddleware."""
+
+    def __init__(self, app: ASGIApp):
+        self._app = app
+        self._http = _JwtAuthHTTPMiddleware(app)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] == "websocket":
+            await self._app(scope, receive, send)
+        else:
+            await self._http(scope, receive, send)

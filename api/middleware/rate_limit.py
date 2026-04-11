@@ -65,15 +65,8 @@ class TokenBucket:
         return (1.0 - self.tokens) / self.refill_rate
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """HTTP middleware that enforces per-IP, per-route rate limits."""
-
-    async def __call__(self, scope, receive, send):
-        # BaseHTTPMiddleware can't handle WebSocket — bypass
-        if scope["type"] == "websocket":
-            await self.app(scope, receive, send)
-            return
-        await super().__call__(scope, receive, send)
+class _RateLimitHTTPMiddleware(BaseHTTPMiddleware):
+    """Inner HTTP-only rate limiter."""
 
     def __init__(self, app):
         super().__init__(app)
@@ -139,3 +132,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
         return response
+
+
+class RateLimitMiddleware:
+    """Pure ASGI wrapper — bypasses WebSocket, delegates HTTP to BaseHTTPMiddleware."""
+
+    def __init__(self, app):
+        self._app = app
+        self._http = _RateLimitHTTPMiddleware(app)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "websocket":
+            await self._app(scope, receive, send)
+        else:
+            await self._http(scope, receive, send)
