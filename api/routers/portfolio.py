@@ -212,6 +212,165 @@ def get_current_price():
         logger.error(f"❌ Error fetching current price: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class CloseTradeRequest(BaseModel):
+    trade_id: int
+    close_price: float = None
+
+
+@router.get("/open-positions", summary="Get all open positions with unrealized P&L")
+def get_open_positions():
+    """Get all open trades with live unrealized P&L calculated from current price."""
+    try:
+        db = NewsDB()
+
+        # Fetch current price
+        try:
+            from src.data.data_sources import get_provider
+            provider = get_provider()
+            ticker = provider.get_current_price('XAU/USD')
+            current_price = ticker['price'] if ticker else None
+        except Exception:
+            current_price = None
+
+        if current_price is None:
+            # Fallback to cached price in DB
+            cached = db.get_param("current_price", None)
+            current_price = float(cached) if cached else 2050.0
+
+        rows = db._query(
+            "SELECT id, direction, entry, sl, tp, lot, timestamp FROM trades WHERE status = 'OPEN'"
+        )
+
+        positions = []
+        total_unrealized = 0.0
+
+        for row in rows:
+            trade_id, direction, entry, sl, tp, lot_size, opened_at = row
+            lot_size = float(lot_size or 0.01)
+            entry = float(entry or 0)
+
+            if direction == "LONG":
+                unrealized_pnl = (current_price - entry) * lot_size * 100
+            else:
+                unrealized_pnl = (entry - current_price) * lot_size * 100
+
+            unrealized_pnl = round(unrealized_pnl, 2)
+            total_unrealized += unrealized_pnl
+
+            positions.append({
+                "id": trade_id,
+                "direction": direction,
+                "entry": entry,
+                "sl": float(sl or 0),
+                "tp": float(tp or 0),
+                "unrealized_pnl": unrealized_pnl,
+                "opened_at": opened_at,
+                "lot_size": lot_size,
+            })
+
+        return {
+            "positions": positions,
+            "total_unrealized_pnl": round(total_unrealized, 2),
+            "current_price": current_price,
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching open positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/close-trade", summary="Close an open trade")
+def close_trade(req: CloseTradeRequest):
+    """Close an open trade, calculate realized P&L, and update portfolio balance."""
+    try:
+        db = NewsDB()
+
+        # Validate trade exists and is OPEN — use explicit columns to avoid index issues
+        row = db._query_one(
+            "SELECT id, direction, entry, lot, status FROM trades WHERE id = ?",
+            (req.trade_id,)
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Trade #{req.trade_id} not found")
+
+        trade_id_db, direction, entry, lot_raw, status = row
+
+        if status != 'OPEN':
+            raise HTTPException(
+                status_code=400,
+                detail=f"Trade #{req.trade_id} is not OPEN (current status: {status})"
+            )
+
+        entry = float(entry)
+        lot_size = float(lot_raw or 0.01)
+
+        # Determine close price
+        close_price = req.close_price
+        if close_price is None:
+            try:
+                from src.data.data_sources import get_provider
+                provider = get_provider()
+                ticker = provider.get_current_price('XAU/USD')
+                close_price = ticker['price'] if ticker else None
+            except Exception:
+                close_price = None
+
+            if close_price is None:
+                cached = db.get_param("current_price", None)
+                close_price = float(cached) if cached else None
+
+            if close_price is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Could not determine close price. Provide close_price in request body."
+                )
+
+        close_price = float(close_price)
+
+        # Calculate P&L
+        if direction == "LONG":
+            pnl = (close_price - entry) * lot_size * 100
+        else:
+            pnl = (entry - close_price) * lot_size * 100
+
+        pnl = round(pnl, 2)
+
+        # Update trade status and profit
+        db._execute(
+            "UPDATE trades SET status = 'CLOSED', profit = ? WHERE id = ?",
+            (pnl, req.trade_id)
+        )
+
+        # Audit log
+        try:
+            db.log_trade_audit(req.trade_id, 'OPEN', 'CLOSED', reason=f"Manual close @ {close_price:.2f}")
+        except Exception:
+            pass
+
+        # Update portfolio balance
+        portfolio = _get_portfolio()
+        portfolio["balance"] = round(portfolio["balance"] + pnl, 2)
+        portfolio["pnl"] = round(portfolio["balance"] - portfolio["initial_balance"], 2)
+        portfolio["equity"] = portfolio["balance"]
+        _save_portfolio(portfolio)
+
+        logger.info(f"Trade #{req.trade_id} closed @ ${close_price:.2f} | P&L: {pnl:+.2f}")
+
+        return {
+            "success": True,
+            "trade_id": req.trade_id,
+            "pnl": pnl,
+            "close_price": close_price,
+            "new_balance": portfolio["balance"],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error closing trade #{req.trade_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class TradeUpdate(BaseModel):
     direction: str  # LONG/SHORT
     entry: float

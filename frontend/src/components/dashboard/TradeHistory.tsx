@@ -5,8 +5,9 @@
  * sorting by date/P&L; pagination limit.
  */
 
-import { useState, useMemo, memo, useCallback, useDeferredValue } from 'react';
+import { useState, useMemo, memo, useCallback, useDeferredValue, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { TrendingUp, TrendingDown, Filter, ArrowUpDown, X, Search, ExternalLink } from 'lucide-react';
 import { useTradingStore } from '../../store/tradingStore';
 import { TradeDetailModal } from './TradeDetailModal';
@@ -200,6 +201,8 @@ export const TradeHistory = memo(function TradeHistory() {
     setPatternSearch('');
   }, []);
 
+  const listParentRef = useRef<HTMLDivElement>(null);
+
   const toggleSort = useCallback((field: SortField) => {
     if (sortField === field) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
     else { setSortField(field); setSortDir('desc'); }
@@ -254,8 +257,15 @@ export const TradeHistory = memo(function TradeHistory() {
       return sortDir === 'desc' ? -cmp : cmp;
     });
 
-    return result.slice(0, 50);
+    return result;
   }, [trades, resultFilter, dirFilter, sessionFilter, gradeFilter, deferredPatternSearch, sortField, sortDir]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: filteredTrades.length,
+    getScrollElement: () => listParentRef.current,
+    estimateSize: () => 100, // estimated row height in px
+    overscan: 5,
+  });
 
   const winRate = stats.total > 0 ? (stats.wins / stats.total) * 100 : 0;
 
@@ -437,14 +447,16 @@ export const TradeHistory = memo(function TradeHistory() {
         )}
       </div>
 
-      {/* Trades List */}
-      <div className="space-y-2 max-h-[480px] overflow-y-auto pr-0.5 scrollbar-thin scrollbar-thumb-dark-secondary">
+      {/* Trades List — Virtualized */}
+      <div ref={listParentRef} className="max-h-[480px] overflow-y-auto pr-0.5 scrollbar-thin scrollbar-thumb-dark-secondary">
         {filteredTrades.length === 0 ? (
           <div className="text-center text-th-secondary text-xs py-4">
             {hasActiveFilters ? 'Brak transakcji pasujacych do filtrow' : 'Brak transakcji'}
           </div>
         ) : (
-          filteredTrades.map((trade) => {
+          <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const trade = filteredTrades[virtualRow.index];
             const isWin = trade.result?.includes('WIN');
             const isLoss = trade.result?.includes('LOSS');
             const entry = parseNumericPrice(trade.entry);
@@ -459,8 +471,11 @@ export const TradeHistory = memo(function TradeHistory() {
             return (
               <div
                 key={trade.id}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualRow.index}
                 onClick={() => setSelectedTrade(trade)}
-                className={`border rounded p-2 text-xs cursor-pointer hover:brightness-110 transition-all ${
+                style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
+                className={`border rounded p-2 text-xs cursor-pointer hover:brightness-110 transition-all mb-2 ${
                   isWin ? 'bg-accent-green/5 border-accent-green/30'
                   : isLoss ? 'bg-accent-red/5 border-accent-red/30'
                   : 'bg-accent-blue/5 border-accent-blue/30'
@@ -548,7 +563,8 @@ export const TradeHistory = memo(function TradeHistory() {
                 </div>
               </div>
             );
-          })
+          })}
+          </div>
         )}
       </div>
 

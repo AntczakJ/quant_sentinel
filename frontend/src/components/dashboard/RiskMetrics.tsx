@@ -168,20 +168,24 @@ export const RiskMetrics = memo(function RiskMetrics() {
       <div className="flex items-start gap-4">
         {/* Gauges */}
         <div className="flex gap-3">
-          <div className="flex flex-col items-center">
-            <RingGauge value={data.win_rate * 100} max={100} label="Win Rate"
-              color={data.win_rate >= 0.5 ? 'rgb(var(--c-green))' : 'rgb(var(--c-red))'} />
-            <span className={`text-sm font-bold font-mono mt-0.5 ${wrColor}`}>
-              {(data.win_rate * 100).toFixed(1)}%
-            </span>
-          </div>
-          <div className="flex flex-col items-center">
-            <RingGauge value={Math.min(data.profit_factor, 5)} max={5} label="Profit Factor"
-              color={data.profit_factor >= 2 ? 'rgb(var(--c-green))' : data.profit_factor >= 1 ? 'rgb(var(--c-orange))' : 'rgb(var(--c-red))'} />
-            <span className={`text-sm font-bold font-mono mt-0.5 ${pfColor}`}>
-              {pfDisplay}
-            </span>
-          </div>
+          <Tooltip content="Procent transakcji zakonczonych zyskiem" position="bottom">
+            <div className="flex flex-col items-center">
+              <RingGauge value={data.win_rate * 100} max={100} label="Win Rate"
+                color={data.win_rate >= 0.5 ? 'rgb(var(--c-green))' : 'rgb(var(--c-red))'} />
+              <span className={`text-sm font-bold font-mono mt-0.5 ${wrColor}`}>
+                {(data.win_rate * 100).toFixed(1)}%
+              </span>
+            </div>
+          </Tooltip>
+          <Tooltip content="Stosunek sumy zyskow do sumy strat. PF > 2 = zdrowy system" position="bottom">
+            <div className="flex flex-col items-center">
+              <RingGauge value={Math.min(data.profit_factor, 5)} max={5} label="Profit Factor"
+                color={data.profit_factor >= 2 ? 'rgb(var(--c-green))' : data.profit_factor >= 1 ? 'rgb(var(--c-orange))' : 'rgb(var(--c-red))'} />
+              <span className={`text-sm font-bold font-mono mt-0.5 ${pfColor}`}>
+                {pfDisplay}
+              </span>
+            </div>
+          </Tooltip>
         </div>
 
         {/* Quick stats */}
@@ -202,7 +206,9 @@ export const RiskMetrics = memo(function RiskMetrics() {
           <div className="stat-item">
             <div className="flex items-center gap-1 mb-0.5">
               <Percent size={9} className="text-th-muted" />
-              <span className="text-[9px] text-th-muted uppercase tracking-wider">R:R Ratio</span>
+              <Tooltip content="Risk:Reward — stosunek sredniej straty do zysku. R:R > 2 = dobry">
+                <span className="text-[9px] text-th-muted uppercase tracking-wider cursor-help">R:R Ratio</span>
+              </Tooltip>
             </div>
             <div className={`text-sm font-bold font-mono ${rrColor}`}>
               {rrRatio === Infinity ? '∞' : rrRatio.toFixed(2)}

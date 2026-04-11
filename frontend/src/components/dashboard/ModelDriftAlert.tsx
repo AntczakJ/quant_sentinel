@@ -7,6 +7,7 @@
 
 import { memo, useState } from 'react';
 import { AlertTriangle, CheckCircle, Activity, ChevronDown, ChevronUp, Shield } from 'lucide-react';
+import { Tooltip } from '../ui/Tooltip';
 import { usePollingQuery } from '../../hooks/usePollingQuery';
 import { modelMonitorAPI } from '../../api/client';
 
@@ -82,7 +83,9 @@ function DriftRow({ name, drift, accuracy: rawAccuracy }: {
       {/* PSI */}
       {drift && (
         <div className="flex items-center gap-1">
-          <span className="text-[9px] text-th-muted">PSI:</span>
+          <Tooltip content="Population Stability Index — mierzy dryft predykcji. PSI < 0.1 = OK, > 0.25 = alert">
+            <span className="text-[9px] text-th-muted cursor-help">PSI:</span>
+          </Tooltip>
           <span className={`text-[10px] font-mono font-bold ${style.text}`}>
             {drift.psi.toFixed(3)}
           </span>

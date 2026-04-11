@@ -229,10 +229,12 @@ def run_drift_check() -> List[str]:
             )
             logger.warning(msg)
             alerts.append(msg)
+            _persist_alert(model, "drift", "alert", msg, info.get("psi"))
         elif info.get("status") == "warn":
             msg = f"Model drift warning: {model} PSI={info['psi']:.3f} — monitor closely"
             logger.info(msg)
             alerts.append(msg)
+            _persist_alert(model, "drift", "warn", msg, info.get("psi"))
 
     # 2. Check accuracy
     accuracy = compute_rolling_accuracy()
@@ -250,6 +252,7 @@ def run_drift_check() -> List[str]:
                 )
                 logger.warning(msg)
                 alerts.append(msg)
+                _persist_alert(model, "accuracy", "alert", msg)
 
     # 3. Calibration check
     try:
@@ -268,6 +271,17 @@ def run_drift_check() -> List[str]:
     _save_check_results(drift, accuracy)
 
     return alerts
+
+
+def _persist_alert(model_name: str, alert_type: str, severity: str,
+                    message: str, psi_value: float = None):
+    """Save alert to database (best-effort, never blocks monitor)."""
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        db.save_model_alert(model_name, alert_type, severity, message, psi_value)
+    except Exception as e:
+        logger.debug(f"Failed to persist model alert: {e}")
 
 
 def _get_baseline_accuracy() -> Dict[str, Optional[float]]:
