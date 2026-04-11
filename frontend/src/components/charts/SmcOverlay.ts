@@ -48,13 +48,12 @@ class ZonesPaneRenderer implements ISeriesPrimitivePaneRenderer {
         ctx.fillStyle = softColor;
         ctx.fillRect(r.x1, r.y1, w, h);
 
-        // Minimal label — small, unobtrusive
-        if (r.label && w > 30) {
-          ctx.font = '9px sans-serif';
-          const labelColor = r.color.replace(/[\d.]+\)$/, '0.55)');
+        // Minimal label — always above zone to avoid candle overlap
+        if (r.label && w > 25) {
+          ctx.font = '8px sans-serif';
+          const labelColor = r.color.replace(/[\d.]+\)$/, '0.6)');
           ctx.fillStyle = labelColor;
-          const labelY = h >= 14 ? r.y1 + 11 : r.y1 - 3;
-          ctx.fillText(r.label, r.x1 + 4, labelY);
+          ctx.fillText(r.label, r.x1 + 3, r.y1 - 3);
         }
       }
     });
