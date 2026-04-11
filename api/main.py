@@ -7,7 +7,7 @@ import os
 import hashlib
 import time as _time
 from datetime import datetime, timezone
-from fastapi import FastAPI, WebSocketDisconnect, Request, Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -506,7 +506,6 @@ from api.middleware.rate_limit import RateLimitMiddleware
 from api.middleware.jwt_auth import JwtAuthMiddleware
 app.add_middleware(JwtAuthMiddleware)
 app.add_middleware(RateLimitMiddleware)
-app.add_middleware(GZipMiddleware, minimum_size=512)
 # CORS — only needed when frontend runs on different port (vite dev server)
 # When serving from same origin (:8000), CORS is not needed.
 # Using custom ASGI wrapper to avoid CORSMiddleware blocking WebSocket.
@@ -771,7 +770,7 @@ async def get_detailed_health():
 
 # WebSocket endpoints
 @app.websocket("/ws/prices")
-async def websocket_prices(websocket):
+async def websocket_prices(websocket: WebSocket):
     """WebSocket endpoint for live price updates (server-push every 5s).
     The receive loop keeps the connection alive and detects client disconnects.
     """
@@ -788,7 +787,7 @@ async def websocket_prices(websocket):
         await connection_manager.disconnect(websocket, "prices")
 
 @app.websocket("/ws/signals")
-async def websocket_signals(websocket):
+async def websocket_signals(websocket: WebSocket):
     """WebSocket endpoint for live signal updates."""
     await connection_manager.connect(websocket, "signals")
     logger.info("🟢 WebSocket client connected to /ws/signals")
@@ -864,25 +863,54 @@ _frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__
 if os.path.isdir(_frontend_dist):
     from fastapi.responses import FileResponse
 
-    # Serve static assets (JS, CSS, images, chunks)
-    app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="static-assets")
+    # Serve static assets via explicit handler (mounts block WebSocket in Starlette 1.0)
+    _assets_dir = os.path.join(_frontend_dist, "assets")
     _chunks_dir = os.path.join(_frontend_dist, "chunks")
-    if os.path.isdir(_chunks_dir):
-        app.mount("/chunks", StaticFiles(directory=_chunks_dir), name="static-chunks")
 
-    # Root serves SPA
+    # Serve SPA: explicit routes for known pages + root-level static files
+    _index_html = os.path.join(_frontend_dist, "index.html")
+
     @app.get("/", include_in_schema=False)
-    async def root_spa():
-        return FileResponse(os.path.join(_frontend_dist, "index.html"))
+    async def _spa_root():
+        return FileResponse(_index_html)
 
-    # SPA fallback: serve static files from dist/ or index.html for client routes
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_spa(full_path: str):
-        """Serve React SPA — static files from dist/ or index.html for routes."""
-        file_path = os.path.join(_frontend_dist, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(os.path.join(_frontend_dist, "index.html"))
+    # Client-side routes (React Router)
+    for _r in ["analysis", "trades", "models", "news", "agent", "settings"]:
+        def _make_handler(p=_r):
+            async def _h():
+                return FileResponse(_index_html)
+            _h.__name__ = f"spa_{p}"
+            return _h
+        app.get(f"/{_r}", include_in_schema=False)(_make_handler())
+
+    # Serve ALL static files via single catch-all handler
+    # Uses explicit GET route — does NOT block WebSocket (which uses WS protocol)
+    import mimetypes as _mt
+
+    @app.get("/assets/{filepath:path}", include_in_schema=False)
+    async def _serve_asset(filepath: str):
+        fp = os.path.join(_assets_dir, filepath)
+        if os.path.isfile(fp):
+            ct = _mt.guess_type(filepath)[0] or "application/octet-stream"
+            return FileResponse(fp, media_type=ct)
+        return FileResponse(_index_html)
+
+    @app.get("/chunks/{filepath:path}", include_in_schema=False)
+    async def _serve_chunk(filepath: str):
+        fp = os.path.join(_chunks_dir, filepath)
+        if os.path.isfile(fp):
+            ct = _mt.guess_type(filepath)[0] or "application/javascript"
+            return FileResponse(fp, media_type=ct)
+        return FileResponse(_index_html)
+
+    # Root-level files (manifest, sw, logo, registerSW)
+    @app.get("/{filename}", include_in_schema=False)
+    async def _serve_root_file(filename: str):
+        fp = os.path.join(_frontend_dist, filename)
+        if os.path.isfile(fp):
+            ct = _mt.guess_type(filename)[0] or "application/octet-stream"
+            return FileResponse(fp, media_type=ct)
+        return FileResponse(_index_html)
 
     logger.info(f"Frontend SPA served from {_frontend_dist}")
 else:
