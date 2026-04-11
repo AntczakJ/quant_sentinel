@@ -36,12 +36,20 @@ _PROTECTED_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 class JwtAuthMiddleware(BaseHTTPMiddleware):
     """Authenticate requests via JWT, API key, or legacy key."""
 
+    async def __call__(self, scope, receive, send):
+        # BaseHTTPMiddleware doesn't support WebSocket — bypass entirely
+        if scope["type"] == "websocket":
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         method = request.method
 
         # Always allow non-API, public paths, GET, WebSocket
         if (not path.startswith("/api/")
+                or path.startswith("/ws/")
                 or path in _PUBLIC_PATHS
                 or any(path.startswith(p) for p in _PUBLIC_PREFIXES)
                 or method not in _PROTECTED_METHODS
