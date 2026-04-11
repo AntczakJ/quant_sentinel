@@ -111,12 +111,12 @@ function getChartColors() {
     text: v('--chart-text', isLight ? '#4b5563' : '#9ca3af'),
     crosshair: v('--chart-crosshair', isLight ? '#9ca3af' : '#6b7280'),
     border: v('--chart-border', isLight ? '#e5e7eb' : '#263244'),
-    candleUp: isLight ? '#16a34a' : '#26a69a',
-    candleDown: isLight ? '#dc2626' : '#ef5350',
-    wickUp: isLight ? '#16a34a' : '#26a69a',
-    wickDown: isLight ? '#dc2626' : '#ef5350',
-    volumeUp: isLight ? 'rgba(22,163,74,0.25)' : 'rgba(38,166,154,0.28)',
-    volumeDown: isLight ? 'rgba(220,38,38,0.20)' : 'rgba(239,83,80,0.22)',
+    candleUp: isLight ? '#3b82f6' : '#5b8def',
+    candleDown: isLight ? '#94a3b8' : '#6b7280',
+    wickUp: isLight ? '#3b82f6' : '#5b8def',
+    wickDown: isLight ? '#94a3b8' : '#6b7280',
+    volumeUp: isLight ? 'rgba(59,130,246,0.22)' : 'rgba(91,141,239,0.25)',
+    volumeDown: isLight ? 'rgba(148,163,184,0.18)' : 'rgba(107,114,128,0.20)',
     ema21: isLight ? '#d97706' : '#f0b90b',
     bbUpper: isLight ? 'rgba(37,99,235,0.35)' : 'rgba(33,150,243,0.45)',
     bbMiddle: isLight ? 'rgba(37,99,235,0.55)' : 'rgba(33,150,243,0.70)',
@@ -175,7 +175,7 @@ const OHLCVLegend = memo(function OHLCVLegend({ data, interval, visibleIndicator
 }) {
   if (!data) {return null;}
   const up = data.c >= data.o;
-  const col = up ? 'text-[#26a69a]' : 'text-[#ef5350]';
+  const col = up ? 'text-[#5b8def]' : 'text-[#6b7280]';
   return (
     <div className="absolute top-1 left-12 z-20 font-sans pointer-events-none select-none space-y-0">
       {/* Row 1: OHLCV */}

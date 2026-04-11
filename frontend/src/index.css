@@ -180,24 +180,23 @@ body {
 .card {
   @apply rounded-xl p-4;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-card);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.25s ease;
+  border: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  transition: box-shadow 0.2s ease, background-color 0.25s ease;
 }
 .card:hover {
-  border-color: var(--color-border-hover);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
 }
 
 .card-elevated {
   @apply rounded-xl p-5;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-card);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.25s ease;
+  border: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  transition: box-shadow 0.2s ease, background-color 0.25s ease;
 }
 .card-elevated:hover {
-  border-color: var(--color-border-hover);
-  box-shadow: var(--shadow-elevated);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -323,14 +322,16 @@ a:hover { text-decoration: underline; filter: brightness(1.2); }
 .stat-item {
   @apply rounded-lg p-3;
   background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  transition: border-color 0.15s ease, background-color 0.25s ease;
+  border: none;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+  transition: background-color 0.15s ease;
 }
 :root.light .stat-item {
   background: var(--color-surface-raised);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
 }
 .stat-item:hover {
-  border-color: var(--color-border-hover);
+  background: var(--color-secondary);
 }
 
 .model-card {
