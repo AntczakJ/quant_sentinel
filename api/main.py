@@ -758,6 +758,34 @@ async def get_macro():
         return {"error": str(e), "composite_signal": 0}
 
 
+@app.post("/api/webhook/tradingview", tags=["Webhooks"])
+async def tradingview_webhook(request: Request):
+    """TradingView alert webhook — forwards alerts to Telegram."""
+    import requests as _requests
+    data = await request.json()
+    if not data:
+        return Response(content="No Data", status_code=400)
+    try:
+        from src.core.config import TOKEN, CHAT_ID
+    except ImportError:
+        return Response(content="Config unavailable", status_code=500)
+    ticker = data.get("ticker", "GOLD")
+    action = data.get("action", "SIGNAL")
+    price = data.get("price", "???")
+    alert_msg = (
+        f"\U0001f514 *ALERT TRADINGVIEW: {ticker}*\n"
+        f"\U0001f680 Akcja: *{action}*\n"
+        f"\U0001f4b0 Cena: `{price}`"
+    )
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    _requests.post(url, data={
+        "chat_id": CHAT_ID,
+        "text": alert_msg,
+        "parse_mode": "Markdown"
+    })
+    return Response(content="OK", status_code=200)
+
+
 @app.get("/api/health/detailed", tags=["System"])
 async def get_detailed_health():
     """Comprehensive health check: database, models, risk manager, data provider."""
