@@ -4,7 +4,6 @@ main.py — główny orchestrator bota Telegram.
 """
 
 import io
-import threading
 import asyncio
 import os
 import re
@@ -44,8 +43,6 @@ def _format_calendar(cal) -> str:
     return str(cal)
 from src.learning.self_learning import auto_analyze_and_learn, run_learning_cycle
 from src.integrations.openai_agent import get_agent, ask_agent_with_memory
-
-from flask import Flask, request as flask_request
 
 # Import nowych modułów
 from src.data.data_sources import get_provider
@@ -116,35 +113,6 @@ if ENABLE_RL:
         logger.info("RL Agent załadowany.")
     except Exception as e:
         logger.warning(f"Nie udało się załadować agenta RL: {e}")
-
-# =============================================================================
-# FLASK WEBHOOK
-# =============================================================================
-app_flask = Flask(__name__)
-
-@app_flask.route('/webhook', methods=['POST'])
-def tradingview_webhook():
-    data = flask_request.json
-    if data:
-        ticker = data.get('ticker', 'GOLD')
-        action = data.get('action', 'SIGNAL')
-        price = data.get('price', '???')
-        alert_msg = (
-            f"🔔 *ALERT TRADINGVIEW: {ticker}*\n"
-            f"🚀 Akcja: *{action}*\n"
-            f"💰 Cena: `{price}`"
-        )
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        requests.post(url, data={
-            "chat_id": CHAT_ID,
-            "text": alert_msg,
-            "parse_mode": "Markdown"
-        })
-        return "OK", 200
-    return "No Data", 400
-
-def run_flask():
-    app_flask.run(host='0.0.0.0', port=5000)
 
 # =============================================================================
 # KOMENDY
@@ -761,7 +729,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =============================================================================
 def run_bot():
     logger.info("Test zapisu logu")
-    threading.Thread(target=run_flask, daemon=True).start()
     request_config = HTTPXRequest(connect_timeout=30.0, read_timeout=120.0, write_timeout=60.0, pool_timeout=30.0)
     app = ApplicationBuilder().token(TOKEN).request(request_config).get_updates_request(request_config).build()
     if app.job_queue:
