@@ -1157,17 +1157,31 @@ export function CandlestickChart() {
         }
       }, isFirstLoad.current ? 3000 : 500);
 
-      // ── Trade markers — show historical trades as markers on candles ──
+      // ── Trade markers — snap to nearest candle for accurate placement ──
       try {
         const tradesResp = await analysisAPI.getRecentTrades(30);
         if (!signal?.aborted && tradesResp?.trades?.length && candleSeriesRef.current) {
+          // Build set of valid candle times for snapping
+          const candleTimes = candleSd.map(c => c.time as number);
+
+          const snapToCandle = (tradeTime: number): number => {
+            let best = candleTimes[0];
+            let bestDist = Math.abs(tradeTime - best);
+            for (const ct of candleTimes) {
+              const dist = Math.abs(tradeTime - ct);
+              if (dist < bestDist) { best = ct; bestDist = dist; }
+            }
+            return best;
+          };
+
           const markers = tradesResp.trades
             .filter((t: any) => t.timestamp && t.direction && (t.result?.includes('WIN') || t.result?.includes('LOSS')))
             .map((t: any) => {
               let ts = t.timestamp.trim();
               ts = ts.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
               if (!/[Zz+-]/.test(ts.slice(-6))) ts += 'Z';
-              const time = Math.floor(new Date(ts).getTime() / 1000) as UTCTimestamp;
+              const rawTime = Math.floor(new Date(ts).getTime() / 1000);
+              const time = snapToCandle(rawTime) as UTCTimestamp;
               const isWin = t.result?.includes('WIN');
               const isLong = t.direction === 'LONG';
               return {

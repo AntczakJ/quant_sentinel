@@ -181,7 +181,7 @@ async def quant_pro_analysis(
 
         if "ensemble_data" in position:
             response_data["ml_ensemble"] = position["ensemble_data"]
-            logger.info(f"✅ ML Ensemble integrated: {position['ensemble_data']['signal']}")
+            logger.info(f"✅ ML Ensemble integrated: {position['ensemble_data'].get('signal', 'CZEKAJ')}")
 
         _quant_pro_cache[tf] = {"data": response_data, "ts": time.time()}
 
