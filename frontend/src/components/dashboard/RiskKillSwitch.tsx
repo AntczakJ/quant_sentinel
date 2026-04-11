@@ -85,6 +85,8 @@ export const RiskKillSwitch = memo(function RiskKillSwitch() {
       {/* Main button — compact, fits in header */}
       <button
         onClick={() => setExpanded(v => !v)}
+        aria-label={isHalted ? 'Trading zatrzymany — kliknij aby zobaczyc' : 'Status ryzyka'}
+        aria-expanded={expanded}
         className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-all border ${
           isHalted
             ? 'bg-accent-red/12 text-accent-red border-accent-red/30 animate-pulse'

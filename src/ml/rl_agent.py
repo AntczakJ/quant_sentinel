@@ -369,7 +369,8 @@ class DQNAgent:
         self.model.optimizer.learning_rate.assign(new_lr)
     def save(self, path):
         # Atomic save: write to tmp, then rename
-        tmp_path = path + '.tmp'
+        base, ext = os.path.splitext(path)
+        tmp_path = base + '.tmp' + ext
         self.model.save(tmp_path)
         os.replace(tmp_path, path)
         params_path = path + '.params'

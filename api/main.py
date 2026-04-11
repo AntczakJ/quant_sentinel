@@ -123,7 +123,8 @@ async def lifespan(app: FastAPI):
     prices_task = asyncio.create_task(_broadcast_prices_task())
     resolver_task = asyncio.create_task(_auto_resolve_trades())
     monitor_task = asyncio.create_task(_monitoring_loop())
-    logger.info("Background tasks started (scanner 15min | prices 5s | resolver 5min | monitor 1h)")
+    retention_task = asyncio.create_task(_daily_retention_cleanup())
+    logger.info("Background tasks started (scanner 15min | prices 5s | resolver 5min | monitor 1h | retention 24h)")
 
     yield
 
@@ -137,7 +138,7 @@ async def lifespan(app: FastAPI):
         pass
 
     # 2. Cancel background tasks with drain timeout
-    tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task]
+    tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task, retention_task]
     for task in tasks:
         task.cancel()
 
@@ -636,6 +637,39 @@ async def _monitoring_loop():
             logger.debug(f"Monitoring loop error: {e}")
 
         await asyncio.sleep(3600)  # check every hour
+
+
+async def _daily_retention_cleanup():
+    """
+    Daily data retention: archive old trades, purge stale news/predictions.
+    Runs once per day at 03:00 UTC (low-activity period).
+    """
+    await asyncio.sleep(300)  # 5 min initial delay
+    last_run_date = None
+
+    while True:
+        try:
+            now = datetime.datetime.now(datetime.timezone.utc)
+
+            # Run once per day at 03:00 UTC
+            if now.hour == 3 and last_run_date != now.date():
+                try:
+                    from src.core.database import NewsDB
+                    db = NewsDB()
+                    summary = await asyncio.to_thread(db.run_retention_cleanup)
+                    last_run_date = now.date()
+                    total = sum(summary.values())
+                    if total > 0:
+                        logger.info(f"[RETENTION] Daily cleanup: {summary}")
+                except Exception as e:
+                    logger.warning(f"[RETENTION] Daily cleanup failed: {e}")
+
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.debug(f"[RETENTION] Loop error: {e}")
+
+        await asyncio.sleep(3600)  # Check every hour
 
 
 import datetime

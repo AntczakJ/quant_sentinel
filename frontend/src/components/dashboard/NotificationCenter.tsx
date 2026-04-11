@@ -77,6 +77,8 @@ export const NotificationCenter = memo(function NotificationCenter() {
         className="relative p-1.5 rounded-md transition-colors hover:bg-dark-secondary"
         style={{ color: unreadCount > 0 ? 'var(--color-accent-orange)' : 'var(--color-text-muted)' }}
         title="Powiadomienia"
+        aria-label={`Powiadomienia${unreadCount > 0 ? ` (${unreadCount} nieprzeczytanych)` : ''}`}
+        aria-expanded={open}
       >
         <Bell size={14} />
         {unreadCount > 0 && (

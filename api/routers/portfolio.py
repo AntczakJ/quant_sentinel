@@ -567,3 +567,92 @@ def quick_add_trade():
     except Exception as e:
         logger.error(f"❌ quick-trade error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  TRADE JOURNALING ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════
+
+class JournalEntryRequest(BaseModel):
+    trade_id: int
+    rationale: str = None
+    emotion: str = None
+    lesson: str = None
+    notes: str = None
+
+
+@router.post("/journal", summary="Save or update a trade journal entry")
+def save_journal_entry(entry: JournalEntryRequest):
+    """
+    Upsert a journal entry for a trade.
+    If an entry already exists for the given trade_id, it will be updated.
+    """
+    try:
+        db = NewsDB()
+
+        # Validate trade exists
+        trade = db._query_one("SELECT id FROM trades WHERE id = ?", (entry.trade_id,))
+        if not trade:
+            # Also check archive
+            try:
+                trade = db._query_one("SELECT id FROM trades_archive WHERE id = ?", (entry.trade_id,))
+            except Exception:
+                pass
+            if not trade:
+                raise HTTPException(status_code=404, detail=f"Trade #{entry.trade_id} not found")
+
+        journal_id = db.save_journal_entry(
+            trade_id=entry.trade_id,
+            rationale=entry.rationale,
+            emotion=entry.emotion,
+            lesson=entry.lesson,
+            notes=entry.notes,
+        )
+
+        logger.info(f"Journal entry saved for trade #{entry.trade_id}")
+
+        return {
+            "success": True,
+            "journal_id": journal_id,
+            "trade_id": entry.trade_id,
+            "message": f"Journal entry saved for trade #{entry.trade_id}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving journal entry: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/journal/{trade_id}", summary="Get journal entry for a trade")
+def get_journal_entry(trade_id: int):
+    """Get the journal entry associated with a specific trade."""
+    try:
+        db = NewsDB()
+        entry = db.get_journal_entry(trade_id)
+
+        if not entry:
+            raise HTTPException(status_code=404, detail=f"No journal entry for trade #{trade_id}")
+
+        return entry
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching journal entry: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/journal", summary="Get recent journal entries")
+def get_journal_entries(limit: int = 20):
+    """Get recent trade journal entries with associated trade info."""
+    try:
+        db = NewsDB()
+        entries = db.get_journal_entries(limit=min(limit, 100))
+
+        return {
+            "entries": entries,
+            "count": len(entries),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching journal entries: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

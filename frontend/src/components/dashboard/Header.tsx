@@ -244,6 +244,7 @@ export function Header() {
           className="p-1.5 rounded-md transition-colors hover:bg-dark-secondary"
           style={{ color: soundEnabled ? 'var(--color-accent-green)' : 'var(--color-text-muted)' }}
           title={soundEnabled ? 'Wylacz dzwieki' : 'Wlacz dzwieki alertow'}
+          aria-label={soundEnabled ? 'Wylacz dzwieki' : 'Wlacz dzwieki alertow'}
         >
           {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
         </button>
@@ -254,6 +255,7 @@ export function Header() {
           className="p-1.5 rounded-md transition-colors hover:bg-dark-secondary"
           style={{ color: themePref === 'system' ? 'var(--color-accent-blue)' : 'var(--color-text-muted)' }}
           title={themePref === 'dark' ? 'Light mode' : themePref === 'light' ? 'System mode' : 'Dark mode'}
+          aria-label={themePref === 'dark' ? 'Light mode' : themePref === 'light' ? 'System mode' : 'Dark mode'}
         >
           {themePref === 'system' ? <Monitor size={14} /> : isDark ? <Sun size={14} /> : <Moon size={14} />}
         </button>
