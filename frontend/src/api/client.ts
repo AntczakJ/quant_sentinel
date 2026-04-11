@@ -503,6 +503,15 @@ export const exportAPI = {
     return response.data;
   },
 
+  /** Download monthly PDF report */
+  downloadMonthlyReport: async (month?: string) => {
+    const response = await client.get('/export/monthly-report', {
+      params: month ? { month } : {},
+      responseType: 'blob',
+    });
+    return response;
+  },
+
   /** Trade execution quality report: fill rate, slippage, win rate by grade */
   getExecutionQuality: async (days: number = 30) => {
     const response = await client.get<{
