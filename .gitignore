@@ -12,6 +12,7 @@
 # ── SEKRETY I KONFIGURACJA LOKALNA ────────────────────────────
 .env
 .env.*
+!.env.example
 .env.local
 .env.*.local
 *.key

@@ -2,8 +2,8 @@
  * AgentChat.tsx — Quant Sentinel Gold Trader Agent chat interface.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, User, Wrench, RefreshCw, Trash2, AlertTriangle, History, Plus, ChevronLeft, Mic, MicOff } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
+import { Send, Bot, User, Wrench, RefreshCw, Trash2, AlertTriangle, History, Plus, ChevronLeft, Mic, MicOff, Copy, Check } from 'lucide-react';
 import { agentAPI } from '../../api/client';
 import { useTradingStore } from '../../store/tradingStore';
 import { MarkdownText } from '../ui/MarkdownText';
@@ -42,7 +42,23 @@ const QUICK_ACTIONS = [
   { label: 'Portfolio', message: 'Pokaz statystyki portfela i ostatnie wyniki.' },
 ];
 
-export function AgentChat() {
+/** Copy button for agent responses */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [text]);
+  return (
+    <button onClick={handleCopy} className="p-0.5 rounded text-th-dim hover:text-th-muted transition-colors" title="Kopiuj">
+      {copied ? <Check size={10} className="text-accent-green" /> : <Copy size={10} />}
+    </button>
+  );
+}
+
+export const AgentChat = memo(function AgentChat() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
@@ -251,6 +267,7 @@ export function AgentChat() {
   }, []);
 
   const resetThread = () => {
+    if (messages.length > 1 && !window.confirm('Wyczyścić historię rozmowy?')) return;
     localStorage.removeItem(THREAD_STORAGE_KEY);
     setThreadId(undefined);
     setMessages([
@@ -374,6 +391,13 @@ export function AgentChat() {
             >
               <MarkdownText text={msg.content} />
 
+              {/* Copy button for assistant messages */}
+              {msg.role === 'assistant' && (
+                <div className="flex justify-end mt-1">
+                  <CopyButton text={msg.content} />
+                </div>
+              )}
+
               {/* Tool calls badge */}
               {msg.toolCalls && msg.toolCalls.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-dark-secondary">
@@ -464,4 +488,4 @@ export function AgentChat() {
       )}
     </div>
   );
-}
+});

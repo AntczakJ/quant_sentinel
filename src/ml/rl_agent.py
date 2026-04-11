@@ -368,9 +368,15 @@ class DQNAgent:
         new_lr = self.lr_min + 0.5 * (self.lr_start - self.lr_min) * (1 + math.cos(math.pi * progress))
         self.model.optimizer.learning_rate.assign(new_lr)
     def save(self, path):
-        self.model.save(path)
-        with open(path+'.params', 'wb') as f:
-            pickle.dump({'epsilon':self.epsilon}, f)
+        # Atomic save: write to tmp, then rename
+        tmp_path = path + '.tmp'
+        self.model.save(tmp_path)
+        os.replace(tmp_path, path)
+        params_path = path + '.params'
+        params_tmp = params_path + '.tmp'
+        with open(params_tmp, 'wb') as f:
+            pickle.dump({'epsilon': self.epsilon}, f)
+        os.replace(params_tmp, params_path)
     def load(self, path):
         from tensorflow.keras.models import load_model
         self.model = load_model(path)

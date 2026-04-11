@@ -12,6 +12,7 @@ const routes = [
   () => import('../pages/ModelsPage'),
   () => import('../pages/NewsPage'),
   () => import('../pages/AgentPage'),
+  () => import('../pages/SettingsPage'),
 ];
 
 let prefetched = false;

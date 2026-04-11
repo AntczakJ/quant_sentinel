@@ -4,7 +4,7 @@
 
 import { useEffect, useState, memo } from 'react';
 import { NavLink } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon, Monitor, Newspaper, Volume2, VolumeX } from 'lucide-react';
+import { TrendingUp, TrendingDown, Zap, BarChart3, LineChart, Repeat, Brain, Bot, Sun, Moon, Monitor, Newspaper, Volume2, VolumeX, Settings } from 'lucide-react';
 import { useTheme } from '../../hooks/useTheme';
 import { useTradingStore } from '../../store/tradingStore';
 import { ScrollProgressBar } from './ScrollProgressBar';
@@ -100,6 +100,7 @@ const NAV_ITEMS = [
   { to: '/models',   label: 'Models',   icon: Brain },
   { to: '/news',     label: 'News',     icon: Newspaper },
   { to: '/agent',    label: 'Agent',    icon: Bot },
+  { to: '/settings', label: 'Settings', icon: Settings },
 ] as const;
 
 export function Header() {
