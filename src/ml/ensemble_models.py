@@ -490,9 +490,9 @@ def _persist_prediction(results: Dict):
             results['predictions'].get('lstm', {}).get('value'),
             results['predictions'].get('xgb', {}).get('value'),
             results['predictions'].get('dqn', {}).get('action'),
-            results['final_score'],
-            results['ensemble_signal'],
-            results['confidence'],
+            results.get('final_score', 0),
+            results.get('ensemble_signal', 'CZEKAJ'),
+            results.get('confidence', 0),
             predictions_json_ext
         ))
     except Exception as e:
@@ -880,9 +880,9 @@ def get_ensemble_prediction(
 
     logger.info(
         f"Ensemble: {available_models} modele | "
-        f"Score: {results['final_score']:.3f} | "
-        f"Confidence: {results['confidence']:.1%} | "
-        f"Signal: {results['ensemble_signal']} | "
+        f"Score: {results.get('final_score', 0):.3f} | "
+        f"Confidence: {results.get('confidence', 0):.1%} | "
+        f"Signal: {results.get('ensemble_signal', 'CZEKAJ')} | "
         f"Vol regime: {vol_pctile:.0%}"
     )
 
