@@ -740,21 +740,26 @@ export function CandlestickChart() {
     };
   }, []);
 
-  // Sync SMC HTML labels with chart viewport (updates on scroll/zoom)
+  // Sync SMC HTML labels with chart viewport via RAF loop
   useEffect(() => {
-    const chart = mainChartRef.current;
-    if (!chart) return;
-    const updateLabels = () => {
+    if (!smcVisible) { setSmcLabels([]); return; }
+    let running = true;
+    let prevJson = '';
+    const tick = () => {
+      if (!running) return;
       const overlay = smcOverlayRef.current;
-      if (overlay && smcVisible) {
-        setSmcLabels(overlay.getLabels());
-      } else {
-        setSmcLabels([]);
+      if (overlay) {
+        const labels = overlay.getLabels();
+        const json = JSON.stringify(labels);
+        if (json !== prevJson) {
+          prevJson = json;
+          setSmcLabels(labels);
+        }
       }
+      requestAnimationFrame(tick);
     };
-    const ts = chart.timeScale();
-    ts.subscribeVisibleLogicalRangeChange(updateLabels);
-    return () => ts.unsubscribeVisibleLogicalRangeChange(updateLabels);
+    requestAnimationFrame(tick);
+    return () => { running = false; };
   }, [smcVisible]);
 
   /* ── InteractionManager for drawing tools ──────────────────────────────── */
@@ -1615,17 +1620,23 @@ export function CandlestickChart() {
 
         {/* SMC zone labels — HTML layer above canvas (candles can't cover these) */}
         {smcLabels.length > 0 && (
-          <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ left: 42 }}>
+          <div className="absolute inset-0 pointer-events-none overflow-hidden z-10" style={{ left: 42 }}>
             {smcLabels.map((l, i) => (
               <div
                 key={`${l.label}-${i}`}
-                className="absolute text-[7px] font-semibold px-1 py-px rounded-sm whitespace-nowrap"
+                className="absolute whitespace-nowrap leading-none"
                 style={{
                   left: l.x,
                   top: l.y,
-                  color: l.color.replace(/[\d.]+\)$/, '0.85)'),
-                  background: l.color.replace(/[\d.]+\)$/, '0.15)'),
-                  backdropFilter: 'blur(2px)',
+                  fontSize: '8px',
+                  fontWeight: 600,
+                  fontFamily: '-apple-system, sans-serif',
+                  color: l.color.replace(/[\d.]+\)$/, '0.9)'),
+                  background: l.color.replace(/[\d.]+\)$/, '0.2)'),
+                  padding: '2px 4px',
+                  borderRadius: '3px',
+                  backdropFilter: 'blur(4px)',
+                  WebkitBackdropFilter: 'blur(4px)',
                 }}
               >
                 {l.label}
