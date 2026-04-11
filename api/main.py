@@ -841,25 +841,32 @@ async def health_check_detailed():
         },
     }
 
-# Root endpoint
-@app.get("/")
-async def root():
-    """API root endpoint"""
-    return {
-        "name": "QUANT SENTINEL Trading API",
-        "version": "2.1.0",
-        "docs": "/docs",
-        "status": "running",
-    }
-
-
 # ── Serve frontend static files (production: built SPA from frontend/dist) ──
 _frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
 if os.path.isdir(_frontend_dist):
     from fastapi.responses import FileResponse
 
-    # Serve static assets (JS, CSS, images)
+    # Serve static assets (JS, CSS, images, chunks)
     app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="static-assets")
+    _chunks_dir = os.path.join(_frontend_dist, "chunks")
+    if os.path.isdir(_chunks_dir):
+        app.mount("/chunks", StaticFiles(directory=_chunks_dir), name="static-chunks")
+
+    # Root serves SPA when frontend is built
+    @app.get("/", include_in_schema=False)
+    async def root_spa():
+        return FileResponse(os.path.join(_frontend_dist, "index.html"))
+else:
+    # No frontend build — show API info
+    @app.get("/")
+    async def root():
+        """API root endpoint"""
+        return {
+            "name": "QUANT SENTINEL Trading API",
+            "version": "2.1.0",
+            "docs": "/docs",
+            "status": "running",
+        }
 
     # SPA fallback: serve index.html for all non-API routes
     @app.get("/{full_path:path}", include_in_schema=False)
