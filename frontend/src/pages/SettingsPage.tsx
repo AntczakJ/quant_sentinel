@@ -30,7 +30,8 @@ interface RiskStatus {
 
 interface HealthData {
   status?: string;
-  uptime?: number;
+  uptime?: string;
+  uptime_seconds?: number;
   version?: string;
   [key: string]: unknown;
 }
@@ -392,7 +393,7 @@ function AboutTab() {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <StatItem label="Wersja" value={health?.version ?? '1.0.0'} />
           <StatItem label="API Status" value={health?.status ?? 'unknown'} color={health?.status === 'ok' || health?.status === 'healthy' ? 'text-accent-green' : 'text-accent-red'} />
-          <StatItem label="Uptime" value={health?.uptime ? `${Math.floor(Number(health.uptime) / 3600)}h ${Math.floor((Number(health.uptime) % 3600) / 60)}m` : '---'} />
+          <StatItem label="Uptime" value={health?.uptime ?? '---'} />
         </div>
       </div>
 
