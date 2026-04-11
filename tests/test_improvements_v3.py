@@ -131,7 +131,7 @@ class TestSMCEngine:
 
     def test_get_exchange_rate_uses_provider(self):
         """Verify exchange rate goes through DataProvider."""
-        with patch('src.smc_engine._get_data_provider') as mock_provider:
+        with patch('src.trading.smc_engine._get_data_provider') as mock_provider:
             mock_instance = MagicMock()
             mock_instance.get_exchange_rate.return_value = 4.05
             mock_provider.return_value = mock_instance
@@ -144,7 +144,7 @@ class TestSMCEngine:
 
     def test_get_usdjpy_history_uses_provider(self):
         """Verify USD/JPY history goes through DataProvider."""
-        with patch('src.smc_engine._get_data_provider') as mock_provider:
+        with patch('src.trading.smc_engine._get_data_provider') as mock_provider:
             mock_instance = MagicMock()
             mock_df = pd.DataFrame({'close': [149.0, 150.0, 151.0]})
             mock_instance.get_candles.return_value = mock_df
@@ -188,7 +188,7 @@ class TestDataSources:
         # Clear cache first
         _provider_cache.clear()
 
-        with patch('src.data_sources.TD_API_KEY', 'test'):
+        with patch('src.data.data_sources.TD_API_KEY', 'test'):
             p1 = get_provider('twelve_data')
             p2 = get_provider('twelve_data')
             assert p1 is p2, "Provider should be singleton"
@@ -457,7 +457,7 @@ class TestFinance:
         """Test calculate_position works with new SMC fields."""
         from src.trading.finance import calculate_position
 
-        with patch('src.data_sources.get_provider') as mock_prov:
+        with patch('src.data.data_sources.get_provider') as mock_prov:
             mock_instance = MagicMock()
             mock_instance.get_candles.return_value = None
             mock_instance.get_exchange_rate.return_value = 4.0
@@ -486,8 +486,8 @@ class TestIntegrationSmoke:
         from src.ml.ensemble_models import get_ensemble_prediction
 
         # 1. Mock data provider
-        with patch('src.data_sources.get_provider') as mock_prov, \
-             patch('src.ensemble_models.get_ensemble_prediction') as mock_ensemble:
+        with patch('src.data.data_sources.get_provider') as mock_prov, \
+             patch('src.ml.ensemble_models.get_ensemble_prediction') as mock_ensemble:
 
             mock_instance = MagicMock()
             mock_instance.get_candles.return_value = sample_df

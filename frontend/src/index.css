@@ -11,6 +11,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Accessibility: focus-visible outlines ─────────────────────── */
+@layer base {
+  *:focus-visible {
+    outline: 2px solid rgb(var(--c-blue));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════
    THEME SYSTEM — RGB channel architecture
    Dark (default) + Light mode via .light class on <html>

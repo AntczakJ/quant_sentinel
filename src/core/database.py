@@ -38,7 +38,7 @@ _DB_LOCK_TIMEOUT = 5.0  # seconds — prevent indefinite hangs
 _TURSO_SYNC_TABLES = {
     "trades", "scanner_signals", "dynamic_params", "pattern_stats",
     "session_stats", "regime_stats", "setup_quality_stats", "trades_audit",
-    "processed_news", "agent_threads",
+    "processed_news", "agent_threads", "trade_journal", "trades_archive",
 }
 
 # Tables that stay local only
@@ -267,6 +267,16 @@ class NewsDB:
             message TEXT NOT NULL,
             psi_value REAL,
             resolved BOOLEAN DEFAULT 0)""")
+        # ── TRADE JOURNAL — rationale, emotions, lessons per trade ──
+        self._execute("""CREATE TABLE IF NOT EXISTS trade_journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_id INTEGER NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            rationale TEXT,
+            emotion TEXT,
+            lesson TEXT,
+            notes TEXT,
+            FOREIGN KEY (trade_id) REFERENCES trades(id))""")
 
     def migrate(self):
         needed = {'pattern': 'TEXT', 'failure_reason': 'TEXT', 'condition_at_loss': 'TEXT',
@@ -1071,4 +1081,222 @@ class NewsDB:
         pf = twp / tla if tla > 0 else (999.0 if twp > 0 else 0)
         wr = wins / t if t > 0 else 0; exp = (wr * aw) - ((1 - wr) * al) if t > 0 else 0
         return {"total": t, "wins": wins, "losses": losses, "win_rate": round(wr, 4), "avg_win": round(aw, 2), "avg_loss": round(al, 2), "profit_factor": round(pf, 2), "expectancy": round(exp, 2), "max_consecutive_wins": mcw, "max_consecutive_losses": mcl, "max_drawdown": round(mdd, 2), "total_profit": round(eq[-1], 2)}
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  DATA RETENTION & ARCHIVAL
+    # ══════════════════════════════════════════════════════════════════════
+
+    def archive_old_trades(self, days: int = 90) -> int:
+        """
+        Move resolved trades older than N days to trades_archive table.
+        Only moves trades with status != 'OPEN' (i.e. WIN, LOSS, CLOSED, PROPOSED).
+        Returns count of archived trades.
+        """
+        # Create archive table with same schema as trades (if not exists)
+        self._execute("""CREATE TABLE IF NOT EXISTS trades_archive (
+            id INTEGER PRIMARY KEY,
+            timestamp DATETIME,
+            direction TEXT, entry REAL, sl REAL, tp REAL, rsi REAL, trend TEXT,
+            structure TEXT, status TEXT,
+            failure_reason TEXT, condition_at_loss TEXT, pattern TEXT, factors TEXT,
+            lot REAL, profit REAL, session TEXT,
+            setup_grade TEXT, setup_score REAL, trailing_sl REAL,
+            confirmation_data TEXT, model_agreement REAL, vol_regime TEXT,
+            archived_at DATETIME DEFAULT CURRENT_TIMESTAMP)""")
+
+        cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)).isoformat()
+
+        # Select trades to archive
+        old_trades = self._query(
+            "SELECT id, timestamp, direction, entry, sl, tp, rsi, trend, structure, status, "
+            "failure_reason, condition_at_loss, pattern, factors, lot, profit, session, "
+            "setup_grade, setup_score, trailing_sl, confirmation_data, model_agreement, vol_regime "
+            "FROM trades WHERE status != 'OPEN' AND timestamp < ?",
+            (cutoff,)
+        )
+
+        if not old_trades:
+            return 0
+
+        archived = 0
+        for row in old_trades:
+            try:
+                self._execute(
+                    "INSERT OR IGNORE INTO trades_archive "
+                    "(id, timestamp, direction, entry, sl, tp, rsi, trend, structure, status, "
+                    "failure_reason, condition_at_loss, pattern, factors, lot, profit, session, "
+                    "setup_grade, setup_score, trailing_sl, confirmation_data, model_agreement, vol_regime) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    row
+                )
+                self._execute("DELETE FROM trades WHERE id = ?", (row[0],))
+                archived += 1
+            except Exception as e:
+                logger.warning(f"[RETENTION] Failed to archive trade #{row[0]}: {e}")
+
+        logger.info(f"[RETENTION] Archived {archived} trades older than {days} days")
+        return archived
+
+    def purge_old_news(self, days: int = 30) -> int:
+        """
+        Delete processed_news entries older than N days.
+        processed_news has no timestamp column, so we trim by row count
+        keeping only the most recent entries (based on rowid).
+        Returns count of purged rows.
+        """
+        # processed_news has only title_hash (no timestamp), so trim by count
+        # Keep at most 10000 recent entries
+        max_keep = 10000
+        count_row = self._query_one("SELECT COUNT(*) FROM processed_news")
+        total = count_row[0] if count_row else 0
+
+        if total <= max_keep:
+            return 0
+
+        to_delete = total - max_keep
+        # Delete oldest rows by rowid
+        self._execute(
+            "DELETE FROM processed_news WHERE rowid IN "
+            "(SELECT rowid FROM processed_news ORDER BY rowid ASC LIMIT ?)",
+            (to_delete,)
+        )
+        logger.info(f"[RETENTION] Purged {to_delete} old processed_news entries (kept {max_keep})")
+        return to_delete
+
+    def purge_old_predictions(self, days: int = 60) -> int:
+        """
+        Delete ml_predictions older than N days.
+        Returns count of purged rows.
+        """
+        cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)).isoformat()
+        try:
+            before_row = self._query_one("SELECT COUNT(*) FROM ml_predictions")
+            before = before_row[0] if before_row else 0
+
+            self._execute(
+                "DELETE FROM ml_predictions WHERE timestamp < ?",
+                (cutoff,)
+            )
+
+            after_row = self._query_one("SELECT COUNT(*) FROM ml_predictions")
+            after = after_row[0] if after_row else 0
+
+            purged = before - after
+            if purged > 0:
+                logger.info(f"[RETENTION] Purged {purged} ml_predictions older than {days} days")
+            return purged
+        except Exception as e:
+            logger.debug(f"[RETENTION] purge_old_predictions skipped: {e}")
+            return 0
+
+    def run_retention_cleanup(self) -> dict:
+        """
+        Run all data retention tasks: archive old trades, purge news, purge predictions.
+        Returns summary dict with counts.
+        """
+        logger.info("[RETENTION] Starting daily data retention cleanup...")
+        summary = {}
+
+        try:
+            summary["trades_archived"] = self.archive_old_trades(days=90)
+        except Exception as e:
+            logger.warning(f"[RETENTION] archive_old_trades failed: {e}")
+            summary["trades_archived"] = 0
+
+        try:
+            summary["news_purged"] = self.purge_old_news(days=30)
+        except Exception as e:
+            logger.warning(f"[RETENTION] purge_old_news failed: {e}")
+            summary["news_purged"] = 0
+
+        try:
+            summary["predictions_purged"] = self.purge_old_predictions(days=60)
+        except Exception as e:
+            logger.warning(f"[RETENTION] purge_old_predictions failed: {e}")
+            summary["predictions_purged"] = 0
+
+        total = sum(summary.values())
+        logger.info(f"[RETENTION] Cleanup complete: {summary} (total: {total} rows)")
+        return summary
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  TRADE JOURNALING
+    # ══════════════════════════════════════════════════════════════════════
+
+    def save_journal_entry(self, trade_id: int, rationale: str = None,
+                           emotion: str = None, lesson: str = None,
+                           notes: str = None) -> int:
+        """
+        Upsert a journal entry for a trade.
+        If an entry already exists for trade_id, update it; otherwise insert new.
+        Returns the journal entry id.
+        """
+        existing = self._query_one(
+            "SELECT id FROM trade_journal WHERE trade_id = ?", (trade_id,)
+        )
+        if existing:
+            self._execute(
+                "UPDATE trade_journal SET rationale = ?, emotion = ?, lesson = ?, "
+                "notes = ?, timestamp = CURRENT_TIMESTAMP WHERE trade_id = ?",
+                (rationale, emotion, lesson, notes, trade_id)
+            )
+            return existing[0]
+        else:
+            return self._insert_returning_id(
+                "INSERT INTO trade_journal (trade_id, rationale, emotion, lesson, notes) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (trade_id, rationale, emotion, lesson, notes)
+            )
+
+    def get_journal_entry(self, trade_id: int) -> Optional[dict]:
+        """Get journal entry for a specific trade. Returns dict or None."""
+        row = self._query_one(
+            "SELECT j.id, j.trade_id, j.timestamp, j.rationale, j.emotion, j.lesson, j.notes "
+            "FROM trade_journal j WHERE j.trade_id = ?",
+            (trade_id,)
+        )
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "trade_id": row[1],
+            "timestamp": row[2],
+            "rationale": row[3],
+            "emotion": row[4],
+            "lesson": row[5],
+            "notes": row[6],
+        }
+
+    def get_journal_entries(self, limit: int = 20) -> list:
+        """
+        Get recent journal entries with trade info (direction, entry, status, profit).
+        Returns list of dicts, newest first.
+        """
+        rows = self._query(
+            "SELECT j.id, j.trade_id, j.timestamp, j.rationale, j.emotion, j.lesson, j.notes, "
+            "t.direction, t.entry, t.status, t.profit, t.pattern "
+            "FROM trade_journal j "
+            "LEFT JOIN trades t ON j.trade_id = t.id "
+            "ORDER BY j.timestamp DESC LIMIT ?",
+            (limit,)
+        )
+        entries = []
+        for row in rows:
+            entries.append({
+                "id": row[0],
+                "trade_id": row[1],
+                "timestamp": row[2],
+                "rationale": row[3],
+                "emotion": row[4],
+                "lesson": row[5],
+                "notes": row[6],
+                "trade": {
+                    "direction": row[7],
+                    "entry": row[8],
+                    "status": row[9],
+                    "profit": row[10],
+                    "pattern": row[11],
+                } if row[7] is not None else None,
+            })
+        return entries
 
