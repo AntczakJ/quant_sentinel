@@ -24,7 +24,7 @@ export const Tooltip = memo(function Tooltip({
   content, children, position = 'top', delay = 400,
 }: Props) {
   const [visible, setVisible] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const show = useCallback(() => {
