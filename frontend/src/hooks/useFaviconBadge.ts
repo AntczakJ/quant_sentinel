@@ -37,6 +37,18 @@ export function useFaviconBadge(active: boolean) {
 
     const img = new Image();
     img.crossOrigin = 'anonymous';
+    img.onerror = () => {
+      // Fallback: draw badge without base image
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      const x = CANVAS_SIZE - DOT_SIZE / 2 - 1;
+      const y = DOT_SIZE / 2 + 1;
+      ctx.beginPath();
+      ctx.arc(x, y, DOT_SIZE / 2, 0, 2 * Math.PI);
+      ctx.fillStyle = '#ef4444';
+      ctx.fill();
+      link.href = canvas.toDataURL('image/png');
+    };
     img.onload = () => {
       ctx.drawImage(img, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
 

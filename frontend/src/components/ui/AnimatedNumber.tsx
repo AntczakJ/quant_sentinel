@@ -40,7 +40,7 @@ export const AnimatedNumber = memo(function AnimatedNumber({
 
     const animate = (now: number) => {
       const elapsed = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
+      const progress = duration > 0 ? Math.min(elapsed / duration, 1) : 1;
       // Ease-out cubic
       const eased = 1 - Math.pow(1 - progress, 3);
       setDisplay(from + diff * eased);

@@ -204,7 +204,7 @@ export function Header() {
             <div className={`flex items-center justify-end gap-1 text-[10px] font-medium leading-tight ${isPositive ? 'text-accent-green' : 'text-accent-red'}`}>
               {isPositive ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
               <span>
-                {isPositive ? '+' : ''}{ticker.change.toFixed(2)} ({isPositive ? '+' : ''}{ticker.change_pct.toFixed(2)}%)
+                {isPositive ? '+' : ''}{(ticker.change ?? 0).toFixed(2)} ({isPositive ? '+' : ''}{(ticker.change_pct ?? 0).toFixed(2)}%)
               </span>
             </div>
           </div>

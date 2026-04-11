@@ -116,13 +116,13 @@ export const ModelStats = memo(function ModelStats() {
             <div className="w-2 h-2 rounded-full bg-accent-blue"></div>
             <span className="text-sm font-bold text-th-secondary">RL Agent</span>
           </div>
-          {stats.rl_stats.episodes !== undefined && (
+          {stats.rl_stats?.episodes !== undefined && (
             <span className="text-xs text-th-muted">Episodes: {stats.rl_stats.episodes}</span>
           )}
         </div>
 
         <div className="space-y-1">
-          {stats.rl_stats.win_rate !== undefined && (
+          {stats.rl_stats?.win_rate !== undefined && (
             <StatRow
               label="Win Rate"
               value={stats.rl_stats.win_rate}
@@ -130,14 +130,14 @@ export const ModelStats = memo(function ModelStats() {
               color={stats.rl_stats.win_rate > 0.5 ? 'text-accent-green' : 'text-accent-red'}
             />
           )}
-          {stats.rl_stats.epsilon !== undefined && (
+          {stats.rl_stats?.epsilon !== undefined && (
             <StatRow
               label="Epsilon"
               value={stats.rl_stats.epsilon}
               format="number"
             />
           )}
-          {stats.rl_stats.last_training && (
+          {stats.rl_stats?.last_training && (
             <StatRow
               label="Last Training"
               value={new Date(stats.rl_stats.last_training).toLocaleDateString()}

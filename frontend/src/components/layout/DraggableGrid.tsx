@@ -52,9 +52,13 @@ interface Props {
 /* ── Helpers ───────────────────────────────────────────────────────── */
 
 const STORAGE_PREFIX = 'qs:grid-layout:';
+/** Bump this when default layouts change to auto-reset stale saved layouts */
+const LAYOUT_VERSION = 2;
 
 function loadLayout(pageKey: string): Layouts | null {
   try {
+    const ver = localStorage.getItem(STORAGE_PREFIX + pageKey + ':version');
+    if (ver !== String(LAYOUT_VERSION)) return null; // stale layout, use defaults
     const raw = localStorage.getItem(STORAGE_PREFIX + pageKey);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
@@ -63,6 +67,7 @@ function loadLayout(pageKey: string): Layouts | null {
 function saveLayout(pageKey: string, layouts: Layouts) {
   try {
     localStorage.setItem(STORAGE_PREFIX + pageKey, JSON.stringify(layouts));
+    localStorage.setItem(STORAGE_PREFIX + pageKey + ':version', String(LAYOUT_VERSION));
   } catch { /* quota */ }
 }
 
@@ -72,27 +77,40 @@ function buildDefaultLayouts(widgets: GridWidget[]): Layouts {
     ...w.defaultLayout,
   }));
 
-  // md: stack to 2 columns
-  const md = widgets.map((w, idx) => ({
-    i: w.id,
-    x: (idx % 2) * 6,
-    y: Math.floor(idx / 2) * (w.defaultLayout.h || 4),
-    w: 6,
-    h: w.defaultLayout.h,
-    minW: w.defaultLayout.minW,
-    minH: w.defaultLayout.minH,
-  }));
+  // md: stack to 2 columns, accumulate y correctly
+  const md: Layout[] = [];
+  const colY = [0, 0]; // track bottom of each column
+  for (const w of widgets) {
+    const col = colY[0] <= colY[1] ? 0 : 1; // place in shorter column
+    const h = w.defaultLayout.h || 4;
+    md.push({
+      i: w.id,
+      x: col * 6,
+      y: colY[col],
+      w: 6,
+      h,
+      minW: w.defaultLayout.minW,
+      minH: w.defaultLayout.minH,
+    });
+    colY[col] += h;
+  }
 
-  // sm: single column
-  const sm = widgets.map((w, idx) => ({
-    i: w.id,
-    x: 0,
-    y: idx * (w.defaultLayout.h || 4),
-    w: 12,
-    h: w.defaultLayout.h,
-    minW: 1,
-    minH: w.defaultLayout.minH,
-  }));
+  // sm: single column, accumulate y
+  const sm: Layout[] = [];
+  let smY = 0;
+  for (const w of widgets) {
+    const h = w.defaultLayout.h || 4;
+    sm.push({
+      i: w.id,
+      x: 0,
+      y: smY,
+      w: 12,
+      h,
+      minW: 1,
+      minH: w.defaultLayout.minH,
+    });
+    smY += h;
+  }
 
   return { lg, md, sm };
 }
@@ -149,7 +167,11 @@ export const DraggableGrid = memo(function DraggableGrid({
 
   const resetLayout = useCallback(() => {
     setLayouts(defaultLayouts);
+    setCollapsed(new Set());
+    setHiddenWidgets(new Set());
     localStorage.removeItem(STORAGE_PREFIX + pageKey);
+    localStorage.removeItem(STORAGE_PREFIX + pageKey + ':collapsed');
+    localStorage.removeItem(STORAGE_PREFIX + pageKey + ':hidden');
   }, [pageKey, defaultLayouts]);
 
   const applyPreset = useCallback((preset: PresetLayout) => {

@@ -90,7 +90,8 @@ export const EquityCurve = memo(function EquityCurve() {
     if (!data || !equitySeriesRef.current || !ddSeriesRef.current) return;
     if (!data.timestamps?.length || !data.equity_values?.length) return;
 
-    const equityData = data.timestamps.map((ts, i) => ({
+    const len = Math.min(data.timestamps.length, data.equity_values.length);
+    const equityData = data.timestamps.slice(0, len).map((ts, i) => ({
       time: (new Date(ts).getTime() / 1000) as UTCTimestamp,
       value: data.equity_values[i] ?? 0,
     }));

@@ -1066,7 +1066,7 @@ def get_smc_analysis(tf: str) -> dict | None:
 
 # ==================== MULTI-TIMEFRAME CONFLUENCE ====================
 
-@cached_with_key(lambda: "mtf_confluence", ttl=120)
+@cached_with_key(lambda symbol="XAU/USD": f"mtf_confluence_{symbol}", ttl=120)
 def get_mtf_confluence(symbol: str = "XAU/USD") -> dict:
     """
     Analiza SMC na M5/M15/H1/H4 jednocześnie.

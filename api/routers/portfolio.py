@@ -42,11 +42,14 @@ def _get_portfolio():
             pnl = float(params.get("portfolio_pnl", 0) or 0)
             currency = str(params.get("portfolio_currency_text", "PLN") or "PLN")
 
+            # Recalculate PnL from balance vs initial to avoid stale data
+            computed_pnl = balance - initial if initial > 0 else pnl
+
             return {
                 "balance": balance,
                 "initial_balance": initial,
-                "equity": equity,
-                "pnl": pnl,
+                "equity": equity if equity > 0 else balance,
+                "pnl": computed_pnl,
                 "currency": currency,
                 "current_price": float(params.get("current_price", 2050.0) or 2050.0)
             }

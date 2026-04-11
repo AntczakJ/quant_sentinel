@@ -86,12 +86,12 @@ export const SignalPanel = memo(function SignalPanel() {
             <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1.5">Consensus</div>
             <div className={`text-3xl font-bold ${cs.text} tracking-tight`}>{signal.consensus}</div>
             <div className="text-xs text-th-muted mt-1.5 font-mono">
-              Score: <span className={`${cs.text} font-semibold`}>{signal.consensus_score.toFixed(2)}</span>
+              Score: <span className={`${cs.text} font-semibold`}>{(signal.consensus_score ?? 0).toFixed(2)}</span>
             </div>
           </div>
           <div className="text-right">
             <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1">Price</div>
-            <div className="text-xl font-bold text-th font-mono">${signal.current_price.toFixed(2)}</div>
+            <div className="text-xl font-bold text-th font-mono">${(signal.current_price ?? 0).toFixed(2)}</div>
           </div>
         </div>
       </div>

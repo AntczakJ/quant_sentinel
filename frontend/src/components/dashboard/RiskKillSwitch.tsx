@@ -15,14 +15,17 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 interface RiskStatus {
   halted: boolean;
   halt_reason?: string;
-  daily_loss: number;
-  daily_loss_limit: number;
+  // API returns daily_loss_pct (percentage) and soft/hard limits
+  daily_loss_pct: number;
+  daily_loss_soft_limit: number;
+  daily_loss_hard_limit: number;
   consecutive_losses: number;
-  max_consecutive_losses: number;
-  cooldown_until?: string;
-  kelly_risk?: number;
+  cooldown_active?: boolean;
+  cooldown_until?: string | null;
+  max_portfolio_heat_pct?: number;
+  kelly_risk_pct?: number;
   session?: string;
-  spread?: number;
+  spread_buffer?: number;
 }
 
 export const RiskKillSwitch = memo(function RiskKillSwitch() {
@@ -71,10 +74,11 @@ export const RiskKillSwitch = memo(function RiskKillSwitch() {
   if (!data) return null;
 
   const isHalted = data.halted;
-  const dailyLossPct = data.daily_loss_limit > 0
-    ? Math.min((data.daily_loss / data.daily_loss_limit) * 100, 100)
+  const hardLimit = data.daily_loss_hard_limit || 5;
+  const dailyLossPct = hardLimit > 0
+    ? Math.min((data.daily_loss_pct / hardLimit) * 100, 100)
     : 0;
-  const hasCooldown = data.cooldown_until && new Date(data.cooldown_until).getTime() > Date.now();
+  const hasCooldown = data.cooldown_active || (data.cooldown_until && new Date(data.cooldown_until).getTime() > Date.now());
 
   return (
     <div className="relative">
@@ -127,7 +131,7 @@ export const RiskKillSwitch = memo(function RiskKillSwitch() {
                     <Activity size={8} /> Daily Loss
                   </span>
                   <span className={`font-mono font-bold ${dailyLossPct > 80 ? 'text-accent-red' : dailyLossPct > 50 ? 'text-accent-orange' : 'text-accent-green'}`}>
-                    ${data.daily_loss.toFixed(2)} / ${data.daily_loss_limit.toFixed(2)}
+                    {data.daily_loss_pct.toFixed(1)}% / {hardLimit.toFixed(1)}%
                   </span>
                 </div>
                 <div className="h-1.5 bg-dark-secondary rounded-full overflow-hidden">
@@ -143,10 +147,10 @@ export const RiskKillSwitch = memo(function RiskKillSwitch() {
                   <AlertTriangle size={8} /> Consecutive Losses
                 </span>
                 <span className={`font-mono font-bold ${
-                  data.consecutive_losses >= data.max_consecutive_losses ? 'text-accent-red' :
-                  data.consecutive_losses >= data.max_consecutive_losses * 0.7 ? 'text-accent-orange' : 'text-th-secondary'
+                  data.consecutive_losses >= 5 ? 'text-accent-red' :
+                  data.consecutive_losses >= 3 ? 'text-accent-orange' : 'text-th-secondary'
                 }`}>
-                  {data.consecutive_losses} / {data.max_consecutive_losses}
+                  {data.consecutive_losses}
                 </span>
               </div>
 
@@ -163,10 +167,10 @@ export const RiskKillSwitch = memo(function RiskKillSwitch() {
               )}
 
               {/* Kelly */}
-              {data.kelly_risk !== undefined && (
+              {data.kelly_risk_pct !== undefined && (
                 <div className="flex items-center justify-between text-[10px]">
                   <span className="text-th-muted">Kelly Risk %</span>
-                  <span className="font-mono text-th-secondary">{(data.kelly_risk * 100).toFixed(2)}%</span>
+                  <span className="font-mono text-th-secondary">{(data.kelly_risk_pct ?? 0).toFixed(2)}%</span>
                 </div>
               )}
             </div>

@@ -43,19 +43,19 @@ export default function TradesPage() {
       id: 'trade-heatmap',
       title: 'Trade Heatmap',
       content: <TradeHeatmap />,
-      defaultLayout: { x: 0, y: 14, w: 12, h: 3, minW: 6, minH: 2 },
+      defaultLayout: { x: 0, y: 14, w: 6, h: 3, minW: 4, minH: 2 },
     },
     {
       id: 'export',
       title: 'Export',
       content: <ExportButtons />,
-      defaultLayout: { x: 0, y: 17, w: 12, h: 2, minW: 4, minH: 1 },
+      defaultLayout: { x: 6, y: 14, w: 6, h: 3, minW: 3, minH: 1 },
     },
     {
       id: 'signal-history',
       title: 'Signal History',
       content: <SignalHistory />,
-      defaultLayout: { x: 0, y: 16, w: 12, h: 5, minW: 4, minH: 3 },
+      defaultLayout: { x: 0, y: 17, w: 12, h: 5, minW: 4, minH: 3 },
     },
   ], []);
 

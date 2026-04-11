@@ -206,6 +206,7 @@ export default function NewsPage() {
     for (const ev of calendar) {
       let d = new Date(ev.date + (ev.time ? `T${ev.time}` : ''));
       if (isNaN(d.getTime())) d = new Date(ev.date);
+      if (isNaN(d.getTime())) continue;
       if (d.getTime() > now) up.push(ev);
       else pa.push(ev);
     }
