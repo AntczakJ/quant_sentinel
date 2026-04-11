@@ -11,8 +11,10 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
 import asyncio
+import json as _json
 import logging
 
 # Add parent directory to path
@@ -35,6 +37,32 @@ from api.websocket.manager import ConnectionManager
 
 # Initialize global objects
 connection_manager = ConnectionManager()
+
+# ── SSE (Server-Sent Events) — replaces WebSocket for price/signal push ──
+# Each subscriber gets an asyncio.Queue; broadcast pushes to all queues.
+_sse_subscribers: dict[str, set[asyncio.Queue]] = {"prices": set(), "signals": set()}
+_sse_lock = asyncio.Lock()
+
+async def sse_subscribe(channel: str) -> asyncio.Queue:
+    q: asyncio.Queue = asyncio.Queue(maxsize=10)
+    async with _sse_lock:
+        _sse_subscribers.setdefault(channel, set()).add(q)
+    return q
+
+async def sse_unsubscribe(channel: str, q: asyncio.Queue):
+    async with _sse_lock:
+        _sse_subscribers.get(channel, set()).discard(q)
+
+async def sse_broadcast(channel: str, data: dict):
+    async with _sse_lock:
+        dead = []
+        for q in _sse_subscribers.get(channel, set()):
+            try:
+                q.put_nowait(data)
+            except asyncio.QueueFull:
+                dead.append(q)
+        for q in dead:
+            _sse_subscribers[channel].discard(q)
 app_state = {
     "rl_agent": None,
     "rl_env": None,
@@ -336,19 +364,19 @@ async def _broadcast_prices_task():
                     ticker = await asyncio.to_thread(provider.get_current_price, "XAU/USD")
 
                 if ticker:
-                    await connection_manager.broadcast(
-                        {
-                            "type": "price",
-                            "symbol": "XAU/USD",
-                            "price": float(ticker.get("price", 0)),
-                            "change": float(ticker.get("change", 0)),
-                            "change_pct": float(ticker.get("change_pct", 0)),
-                            "high_24h": float(ticker["high_24h"]) if ticker.get("high_24h") else None,
-                            "low_24h": float(ticker["low_24h"]) if ticker.get("low_24h") else None,
-                            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                        },
-                        "prices",
-                    )
+                    msg = {
+                        "type": "price",
+                        "symbol": "XAU/USD",
+                        "price": float(ticker.get("price", 0)),
+                        "change": float(ticker.get("change", 0)),
+                        "change_pct": float(ticker.get("change_pct", 0)),
+                        "high_24h": float(ticker["high_24h"]) if ticker.get("high_24h") else None,
+                        "low_24h": float(ticker["low_24h"]) if ticker.get("low_24h") else None,
+                        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    }
+                    # Push to both SSE subscribers and legacy WebSocket
+                    await sse_broadcast("prices", msg)
+                    await connection_manager.broadcast(msg, "prices")
         except asyncio.CancelledError:
             return
         except Exception as e:
@@ -796,7 +824,59 @@ async def get_detailed_health():
         return {"status": "error", "error": str(e)}
 
 
-# WebSocket endpoints
+# ── SSE endpoints — modern replacement for WebSocket (auto-reconnect built-in) ──
+
+@app.get("/api/sse/prices", include_in_schema=False)
+async def sse_prices(request: Request):
+    """Server-Sent Events stream for live price updates."""
+    q = await sse_subscribe("prices")
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(q.get(), timeout=35)
+                    yield f"data: {_json.dumps(data, default=str)}\n\n"
+                except asyncio.TimeoutError:
+                    # Keep-alive comment to prevent connection timeout
+                    yield ": heartbeat\n\n"
+        finally:
+            await sse_unsubscribe("prices", q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+@app.get("/api/sse/signals", include_in_schema=False)
+async def sse_signals(request: Request):
+    """Server-Sent Events stream for live signal updates."""
+    q = await sse_subscribe("signals")
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(q.get(), timeout=35)
+                    yield f"data: {_json.dumps(data, default=str)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        finally:
+            await sse_unsubscribe("signals", q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# Legacy WebSocket endpoints (kept for backwards compatibility)
 @app.websocket("/ws/prices")
 async def websocket_prices(websocket: WebSocket):
     """WebSocket endpoint for live price updates (server-push every 5s).

@@ -14,7 +14,7 @@ import { marketAPI, portfolioAPI, modelsAPI, healthAPI } from './api/client';
 import type { Signal } from './types/trading';
 import { useCachedFetch } from './hooks/useApiCache';
 import { prefetchAllRoutes } from './hooks/usePrefetchRoutes';
-import { useWebSocket } from './hooks/useWebSocket';
+import { useSSE } from './hooks/useSSE';
 import { useBrowserNotifications } from './hooks/useBrowserNotifications';
 import { useDocumentTitle } from './hooks/useDocumentTitle';
 import { useFaviconBadge } from './hooks/useFaviconBadge';
@@ -105,14 +105,12 @@ function AppContent() {
     return () => { clearTimeout(initTimer); clearInterval(interval); };
   }, [setApiConnected, apiConnected]);
 
-  // ── WebSocket live price feed — replaces most HTTP ticker polling ──
-  // When WS is connected, ticker updates arrive every ~30s via push.
-  // HTTP polling below acts as fallback when WS is disconnected.
-  const { status: wsPriceStatus } = useWebSocket<{
+  // ── SSE live price feed — native auto-reconnect, no manual backoff ──
+  const { status: ssePriceStatus } = useSSE<{
     type: string; symbol: string; price: number;
     change: number; change_pct: number;
     high_24h?: number; low_24h?: number; timestamp: string;
-  }>('/ws/prices', (data) => {
+  }>('/sse/prices', (data) => {
     if (data.type === 'price') {
       setTicker({
         symbol: data.symbol ?? 'XAU/USD',
@@ -132,9 +130,9 @@ function AppContent() {
     if (apiConnected) void requestPermission();
   }, [apiConnected, requestPermission]);
 
-  // WS signal feed — instant signal notifications + browser push
-  useWebSocket<{ type: string; direction?: string; entry_price?: number; [k: string]: unknown }>(
-    '/ws/signals',
+  // SSE signal feed — instant signal notifications + browser push
+  useSSE<{ type: string; direction?: string; entry_price?: number; [k: string]: unknown }>(
+    '/sse/signals',
     (data) => {
       if (data.type === 'signal') {
         setCurrentSignal(data as unknown as Signal);
@@ -151,8 +149,8 @@ function AppContent() {
     apiConnected,
   );
 
-  // Track WS connection in store for header indicator
-  const wsConnected = wsPriceStatus === 'connected';
+  // Track SSE connection in store for header indicator
+  const wsConnected = ssePriceStatus === 'connected';
   useEffect(() => { setWsConnected(wsConnected); }, [wsConnected, setWsConnected]);
 
   // Ticker HTTP polling — fallback when WS is disconnected, longer interval
