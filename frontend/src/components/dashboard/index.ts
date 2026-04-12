@@ -28,5 +28,6 @@ export { TrainingProgressLive } from './TrainingProgressLive';
 export { SweepProgressLive } from './SweepProgressLive';
 export { SweepLeaderboard } from './SweepLeaderboard';
 export { SweepPromotePanel } from './SweepPromotePanel';
+export { VoterAttribution } from './VoterAttribution';
 export { ModelsStalenessBadge } from './ModelsStalenessBadge';
 

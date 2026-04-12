@@ -674,6 +674,31 @@ export const sweepAPI = {
   },
 };
 
+/** Per-voter empirical accuracy from closed trades.
+ *
+ *  Matches ml_predictions rows to trades by timestamp (within 60 min
+ *  before the trade) because trade_id linkage is historically unset. */
+export const voterAttributionAPI = {
+  get: async (days = 30) => {
+    const response = await client.get('/models/voter-attribution', {
+      params: { days },
+    });
+    return response.data as {
+      status: 'ok' | 'no_db' | 'schema_error';
+      error?: string;
+      days: number;
+      n_trades: number;
+      voters: Record<string, {
+        correct: number;
+        incorrect: number;
+        abstain: number;
+        n_voted: number;
+        accuracy: number | null;
+      }>;
+    };
+  },
+};
+
 // Analysis endpoints
 export const analysisAPI = {
   getQuantPro: async (tf: string = '15m', force: boolean = false) => {

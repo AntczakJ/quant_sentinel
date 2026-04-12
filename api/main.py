@@ -1298,6 +1298,122 @@ def _artifact_info(path: str) -> dict:
     }
 
 
+@app.get("/api/models/voter-attribution", tags=["System"])
+async def voter_attribution(days: int = 30):
+    """Per-voter empirical accuracy over the last N days.
+
+    Joins ml_predictions rows (one per ensemble call that produced a
+    signal) with trades rows via trade_id, compares each voter's vote
+    against the outcome's implied 'correct' direction (LONG trade that
+    won ⇒ LONG was right; LONG trade that lost ⇒ SHORT would have been
+    right), and buckets rows into correct / incorrect / abstained.
+
+    Uses the new per-voter columns added in 43859f5. Legacy rows that
+    pre-date the migration have NULL values in the voter columns and
+    count as abstains (no penalty, no credit) — accurate given we simply
+    don't know what that voter said.
+    """
+    import sqlite3 as _sqlite
+    import os as _os
+
+    db_path = _os.environ.get("DATABASE_URL", "data/sentinel.db")
+    if not _os.path.exists(db_path):
+        return {"status": "no_db", "voters": {}, "n_trades": 0}
+
+    # Timestamp-based match: ml_predictions.trade_id is historically
+    # never set by _persist_prediction, so the JOIN ... ON trade_id would
+    # return zero rows. Instead we pick the most recent prediction within
+    # 60 minutes BEFORE each trade's timestamp — the scanner runs every
+    # 15 min, so 60 min is a comfortable window for clock skew / bar gaps.
+    sql = f"""
+        SELECT t.direction, t.status,
+               mp.smc_pred, mp.attention_pred, mp.dpformer_pred,
+               mp.deeptrans_pred, mp.lstm_pred, mp.xgb_pred, mp.dqn_action
+        FROM trades t
+        LEFT JOIN ml_predictions mp ON mp.id = (
+            SELECT id FROM ml_predictions
+            WHERE timestamp <= t.timestamp
+              AND timestamp >= datetime(t.timestamp, '-60 minutes')
+            ORDER BY timestamp DESC LIMIT 1
+        )
+        WHERE t.status IN ('WIN','PROFIT','LOSS','LOSE','BREAKEVEN')
+          AND t.timestamp >= datetime('now', '-{int(days)} days')
+    """
+    conn = _sqlite.connect(db_path)
+    try:
+        rows = conn.execute(sql).fetchall()
+    except _sqlite.OperationalError as e:
+        # Most likely: columns don't exist yet on this DB (migration not run).
+        return {"status": "schema_error", "error": str(e)[:200],
+                "voters": {}, "n_trades": 0}
+    finally:
+        conn.close()
+
+    voters = ("smc", "attention", "dpformer", "deeptrans", "lstm", "xgb", "dqn")
+    result: dict = {v: {"correct": 0, "incorrect": 0, "abstain": 0,
+                        "n_voted": 0, "accuracy": None} for v in voters}
+    total_trades = 0
+
+    for row in rows:
+        direction, status, smc, attn, dp, deeptrans, lstm, xgb, dqn_action = row
+        if status == "BREAKEVEN":
+            # Neutral outcome — no "correct" direction, skip entirely.
+            continue
+        total_trades += 1
+        is_win = status in ("WIN", "PROFIT")
+        dir_upper = str(direction or "").upper()
+        # The "correct" direction: winning trades confirm the direction;
+        # losing trades imply the opposite would have been right.
+        if "LONG" in dir_upper or dir_upper in ("BUY", "B"):
+            trade_dir = "LONG"
+        elif "SHORT" in dir_upper or dir_upper in ("SELL", "S"):
+            trade_dir = "SHORT"
+        else:
+            continue  # unknown direction — shouldn't happen but defensive
+        correct_dir = trade_dir if is_win else ("SHORT" if trade_dir == "LONG" else "LONG")
+
+        def _bucket(voter: str, vote_dir: str | None) -> None:
+            if vote_dir is None:
+                result[voter]["abstain"] += 1
+                return
+            result[voter]["n_voted"] += 1
+            if vote_dir == correct_dir:
+                result[voter]["correct"] += 1
+            else:
+                result[voter]["incorrect"] += 1
+
+        for voter, val in (("smc", smc), ("attention", attn),
+                          ("dpformer", dp), ("deeptrans", deeptrans),
+                          ("lstm", lstm), ("xgb", xgb)):
+            if val is None:
+                _bucket(voter, None)
+            else:
+                _bucket(voter, "LONG" if float(val) > 0.5 else "SHORT")
+
+        # DQN uses discrete action: 0=HOLD (abstain), 1=BUY=LONG, 2=SELL=SHORT
+        if dqn_action is None or int(dqn_action) == 0:
+            _bucket("dqn", None)
+        else:
+            _bucket("dqn", "LONG" if int(dqn_action) == 1 else "SHORT")
+
+    for v in voters:
+        n = result[v]["n_voted"]
+        if n > 0:
+            result[v]["accuracy"] = round(result[v]["correct"] / n, 4)
+
+    # Sort by accuracy desc (None-last) for the UI's convenience.
+    ordered = sorted(result.items(),
+                     key=lambda kv: (kv[1]["accuracy"] if kv[1]["accuracy"] is not None else -1),
+                     reverse=True)
+
+    return {
+        "status": "ok",
+        "days": days,
+        "n_trades": total_trades,
+        "voters": dict(ordered),
+    }
+
+
 @app.get("/api/sweep/winner-info", tags=["System"])
 async def sweep_winner_info():
     """Side-by-side info on the sweep winner and the live production RL
