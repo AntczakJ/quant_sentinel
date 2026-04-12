@@ -50,14 +50,53 @@ from src.core.logger import logger
 
 # ── Execution cost model ─────────────────────────────────────────────
 # Realistic XAU/USD broker costs. Applied on entry + exit.
-#   spread: avg 0.30 USD per ounce (tight hours) to 1.50 (off-hours).
-#            We use session-aware in risk_manager; here we model the
-#            net cost already baked into entry (SL/TP already shifted
-#            by adjust_for_slippage). So just commission + half of
-#            expected slippage at exit.
 #   commission: typical ~$0.50-1.00 per 0.01 lot round-trip on gold CFDs.
-COMMISSION_PER_LOT = 1.0    # USD round-trip per 0.01 lot
-SLIPPAGE_EXIT_USD = 0.40    # avg slippage on SL/TP fill (market impact)
+#   slippage_base: flat component (market impact always present).
+#   slippage_atr_coef: multiplier on ATR for volatility-scaled slippage.
+#     High ATR (news events, thin liquidity) → worse fill quality.
+#   swap_per_lot_day: overnight financing cost for holding positions
+#     through 22:00-22:05 UTC (typical rollover window).
+#   gap_slippage_factor: Sunday/news gap open fills at worst price.
+COMMISSION_PER_LOT = 1.0         # USD round-trip per 0.01 lot
+SLIPPAGE_EXIT_USD = 0.40         # base market impact on exit fill
+SLIPPAGE_ATR_COEF = 0.03         # additional slip = ATR * coef
+SWAP_PER_LOT_DAY = 0.50          # USD/day overnight on 1 lot (XAU CFD ~$0.50)
+GAP_HIT_MULTIPLIER = 1.4         # multiply SL/TP miss by this when gap-filled
+
+
+def _is_overnight_cross(entry_time, exit_time) -> int:
+    """Count number of overnight rollovers (22:00 UTC crossings) between times.
+
+    Each crossing = 1 day of swap cost. Held 2 nights = 2× swap.
+    """
+    if not entry_time or not exit_time:
+        return 0
+    import datetime as _dt
+    import pandas as _pd
+    try:
+        e = _pd.to_datetime(entry_time, utc=True)
+        x = _pd.to_datetime(exit_time, utc=True)
+    except Exception:
+        return 0
+    # Count 22:00 UTC crossings between e and x
+    count = 0
+    cur = e.normalize() + _pd.Timedelta(hours=22)
+    if cur < e:
+        cur += _pd.Timedelta(days=1)
+    while cur <= x:
+        count += 1
+        cur += _pd.Timedelta(days=1)
+    return count
+
+
+def _detect_gap(prev_close: float, curr_open: float, threshold_pct: float = 0.3) -> bool:
+    """True if the current bar opens with > threshold_pct gap from prev close.
+    Common on Sunday open XAU/USD (Fri close → Sun open).
+    """
+    if prev_close <= 0:
+        return False
+    gap_pct = abs(curr_open - prev_close) / prev_close * 100
+    return gap_pct > threshold_pct
 
 
 class _UnlimitedRateLimiter:
@@ -456,21 +495,48 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
             else:
                 gross = entry - hit_price
 
-            # Apply execution costs:
-            # - Exit slippage: SL/TP rarely fills exactly at level (market gaps)
-            #   For WIN: TP filled slightly worse (less profit)
-            #   For LOSS: SL filled slightly worse (bigger loss)
-            # - Commission: small fee per round-trip
-            exit_slip = SLIPPAGE_EXIT_USD  # reduces both WIN and LOSS profit
-            commission = COMMISSION_PER_LOT  # always negative
+            # ── P6 Execution costs ──
+            # 1. Exit slippage (flat + ATR-scaled): SL/TP rarely fills exactly.
+            #    High vol = worse fill.
+            exit_bar_atr = 0.0
+            try:
+                exit_bar_atr = float(bar["high"]) - float(bar["low"])
+            except Exception:
+                pass
+            exit_slip = SLIPPAGE_EXIT_USD + exit_bar_atr * SLIPPAGE_ATR_COEF
 
-            net = gross - exit_slip - commission
+            # 2. Gap detection on exit bar — if high - low ratio is unusual vs
+            #    open, likely a gap fill (worse than expected).
+            try:
+                bar_range = float(bar["high"]) - float(bar["low"])
+                bar_open = float(bar["open"])
+                # If bar opened far from prev close, apply gap penalty
+                # (approximation; proper check needs prior bar)
+                if bar_range > 0 and abs(bar_open - hit_price) / max(bar_range, 0.01) > 0.7:
+                    exit_slip *= GAP_HIT_MULTIPLIER
+            except Exception:
+                pass
+
+            # 3. Commission: fixed per round-trip
+            commission = COMMISSION_PER_LOT
+
+            # 4. Swap (overnight financing): count 22:00 UTC crossings
+            entry_time = pd.to_datetime(ts_str, utc=True)
+            try:
+                exit_time = pd.to_datetime(bar["timestamp"], utc=True)
+            except Exception:
+                exit_time = now_ts
+            nights = _is_overnight_cross(entry_time, exit_time)
+            swap_cost = SWAP_PER_LOT_DAY * nights  # in $USD terms per lot
+
+            net = gross - exit_slip - commission - swap_cost
             profit = round(net, 2)
             db._execute("UPDATE trades SET status=?, profit=? WHERE id=?",
                         (hit_status, profit, t_id))
             logger.debug(f"[backtest] Trade #{t_id} resolved {hit_status} "
                          f"gross={gross:+.2f} net={profit:+.2f} "
-                         f"(slip={exit_slip} + comm={commission})")
+                         f"(slip={exit_slip:.2f} + comm={commission} + "
+                         f"swap={swap_cost:.2f} [{nights}n])")
 
 
 async def _run_backtest(args) -> dict:
