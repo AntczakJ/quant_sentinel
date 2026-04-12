@@ -992,6 +992,20 @@ async def health_check_detailed():
     }
 
 
+@app.get("/metrics", tags=["System"], response_class=Response)
+async def prometheus_metrics():
+    """Prometheus text exposition format. Scrape from /metrics.
+
+    Compatible with:
+      - Prometheus (scrape_configs jobs)
+      - Grafana Cloud Agent
+      - Uptime Kuma
+      - VictoriaMetrics
+    """
+    from src.ops.metrics import to_prometheus_text
+    return Response(content=to_prometheus_text(), media_type="text/plain; version=0.0.4")
+
+
 @app.get("/api/backtest/runs", tags=["System"])
 async def backtest_runs(limit: int = 20):
     """List recent backtest run JSON files with summary metadata.

@@ -135,6 +135,13 @@ function CompareDialog({ runs, onClose }: { runs: Run[]; onClose: () => void }) 
   const [b, setB] = useState(runs[1]?.name ?? runs[0]?.name ?? '');
   const runA = runs.find(r => r.name === a);
   const runB = runs.find(r => r.name === b);
+
+  // Close on Escape key (standard modal pattern)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') {onClose();} };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
   const rows: Array<[string, (r: Run) => number | string | null]> = [
     ['Trades', r => r.trades],
     ['WR %', r => r.win_rate_pct],
@@ -148,25 +155,43 @@ function CompareDialog({ runs, onClose }: { runs: Run[]; onClose: () => void }) 
     ['Expectancy $', r => r.expectancy],
   ];
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="compare-dialog-title"
+      onClick={(e) => { if (e.target === e.currentTarget) {onClose();} }}
+    >
       <div className="bg-dark-surface border border-dark-secondary rounded-lg p-4 max-w-2xl w-full shadow-panel">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-medium flex items-center gap-2">
-            <GitCompare size={14} /> Compare Runs
+          <h3 id="compare-dialog-title" className="text-sm font-medium flex items-center gap-2">
+            <GitCompare size={14} aria-hidden="true" /> Compare Runs
           </h3>
-          <button onClick={onClose} className="text-th-muted hover:text-th p-1">
-            <XOctagon size={14} />
+          <button
+            onClick={onClose}
+            className="text-th-muted hover:text-th p-1 focus-visible:outline-2 focus-visible:outline-accent"
+            aria-label="Close compare dialog"
+          >
+            <XOctagon size={14} aria-hidden="true" />
           </button>
         </div>
         <div className="flex gap-2 mb-3 text-xs">
-          <select value={a} onChange={e => setA(e.target.value)}
-                  className="flex-1 bg-dark-bg border border-dark-secondary rounded px-2 py-1">
-            {runs.map(r => <option key={r.name} value={r.name}>A: {r.name}</option>)}
-          </select>
-          <select value={b} onChange={e => setB(e.target.value)}
-                  className="flex-1 bg-dark-bg border border-dark-secondary rounded px-2 py-1">
-            {runs.map(r => <option key={r.name} value={r.name}>B: {r.name}</option>)}
-          </select>
+          <label className="flex-1">
+            <span className="sr-only">Run A</span>
+            <select value={a} onChange={e => setA(e.target.value)}
+                    aria-label="First run to compare (A)"
+                    className="w-full bg-dark-bg border border-dark-secondary rounded px-2 py-1">
+              {runs.map(r => <option key={r.name} value={r.name}>A: {r.name}</option>)}
+            </select>
+          </label>
+          <label className="flex-1">
+            <span className="sr-only">Run B</span>
+            <select value={b} onChange={e => setB(e.target.value)}
+                    aria-label="Second run to compare (B)"
+                    className="w-full bg-dark-bg border border-dark-secondary rounded px-2 py-1">
+              {runs.map(r => <option key={r.name} value={r.name}>B: {r.name}</option>)}
+            </select>
+          </label>
         </div>
         {runA && runB && (
           <table className="w-full text-xs">
