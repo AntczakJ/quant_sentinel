@@ -1,0 +1,56 @@
+{
+  "common": {
+    "save": "Zapisz",
+    "cancel": "Anuluj",
+    "close": "Zamknij",
+    "loading": "Ładowanie...",
+    "error": "Błąd",
+    "retry": "Ponów",
+    "no_data": "Brak danych",
+    "confirm": "Potwierdź"
+  },
+  "nav": {
+    "dashboard": "Pulpit",
+    "chart": "Wykres",
+    "trades": "Transakcje",
+    "analysis": "Analiza",
+    "models": "Modele",
+    "news": "Wiadomości",
+    "agent": "Asystent",
+    "settings": "Ustawienia"
+  },
+  "connection": {
+    "live": "Live",
+    "offline": "Offline",
+    "mock": "Mock",
+    "ws_live": "WS Live",
+    "scanner": "Skaner",
+    "scanner_healthy": "Sprawny",
+    "scanner_degraded": "Uszkodzony",
+    "scanner_stale": "Nieaktualny",
+    "data_source": "Źródło danych",
+    "latency": "Opóźnienie",
+    "last_check": "Ostatnie sprawdzenie"
+  },
+  "backtest": {
+    "title": "Wyniki backtestu produkcji",
+    "no_runs": "Jeszcze brak wyników backtestu.",
+    "no_runs_hint": "Uruchom {{cmd}} aby utworzyć pierwszy.",
+    "trades": "Transakcje",
+    "win_rate": "Win Rate",
+    "profit_factor": "Profit Factor",
+    "return": "Zwrot",
+    "max_drawdown": "Max Obsunięcie",
+    "max_loss_streak": "Max seria strat",
+    "equity_curve": "Krzywa kapitału",
+    "monte_carlo": "Monte Carlo (bootstrap)",
+    "rejection_reasons": "Najczęstsze odrzucenia",
+    "recent_runs": "Ostatnie uruchomienia",
+    "compare": "Porównaj",
+    "alpha_vs_bh": "Alpha vs Buy&Hold"
+  },
+  "training": {
+    "history": "Historia treningu",
+    "best_val": "najlepszy val"
+  }
+}

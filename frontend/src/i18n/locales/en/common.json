@@ -1,0 +1,56 @@
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "loading": "Loading...",
+    "error": "Error",
+    "retry": "Retry",
+    "no_data": "No data",
+    "confirm": "Confirm"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "chart": "Chart",
+    "trades": "Trades",
+    "analysis": "Analysis",
+    "models": "Models",
+    "news": "News",
+    "agent": "Agent",
+    "settings": "Settings"
+  },
+  "connection": {
+    "live": "Live",
+    "offline": "Offline",
+    "mock": "Mock",
+    "ws_live": "WS Live",
+    "scanner": "Scanner",
+    "scanner_healthy": "Healthy",
+    "scanner_degraded": "Degraded",
+    "scanner_stale": "Stale",
+    "data_source": "Data source",
+    "latency": "Latency",
+    "last_check": "Last check"
+  },
+  "backtest": {
+    "title": "Production Backtest Results",
+    "no_runs": "No backtest runs yet.",
+    "no_runs_hint": "Run {{cmd}} to create the first entry.",
+    "trades": "Trades",
+    "win_rate": "Win Rate",
+    "profit_factor": "Profit Factor",
+    "return": "Return",
+    "max_drawdown": "Max DD",
+    "max_loss_streak": "Max loss streak",
+    "equity_curve": "Equity Curve",
+    "monte_carlo": "Monte Carlo (bootstrap)",
+    "rejection_reasons": "Top rejection reasons",
+    "recent_runs": "Recent runs",
+    "compare": "Compare",
+    "alpha_vs_bh": "Alpha vs B&H"
+  },
+  "training": {
+    "history": "Training History",
+    "best_val": "best val"
+  }
+}
