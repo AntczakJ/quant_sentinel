@@ -95,14 +95,9 @@ def get_pattern_adjustment(analysis_data: dict) -> float:
     # --- KOREKTA KONTEKSTOWA: sesja ---
     try:
         import datetime
-        now = datetime.datetime.now()
-        hour = now.hour
-        if 0 <= hour < 8:
-            current_session = "Asia"
-        elif 8 <= hour < 16:
-            current_session = "London"
-        else:
-            current_session = "NewYork"
+        now = datetime.datetime.now(datetime.timezone.utc)
+        hour = now.hour  # used later by hourly block
+        current_session = db.get_session(now.strftime("%Y-%m-%d %H:%M:%S"))
 
         session_stats = db.get_session_stats(pattern)
         for ss in session_stats:
