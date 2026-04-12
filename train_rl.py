@@ -11,6 +11,8 @@ Ulepszenia:
 
 import sys
 import os
+import hashlib
+import time
 
 # Suppress TF noise + enable optimizations BEFORE importing TF
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -27,6 +29,45 @@ EPISODES = 300
 SEQ_LEN = 20            # długość okna stanu (liczba świec)
 INITIAL_BALANCE = 10000
 TRANSACTION_COST = 0.001
+NOISE_STD = 0.001       # augmentacja: 0.1% szumu na cenach per epizod
+MIN_RETRAIN_HOURS = 12  # minimalny odstęp między treningami na tych samych danych
+
+# Multi-asset training — koszyk symboli dla lepszej generalizacji
+SYMBOLS = ["GC=F", "EURUSD=X", "BTC-USD", "ES=F", "CL=F"]
+# GC=F gold, EURUSD=X forex, BTC-USD crypto, ES=F S&P500 futures, CL=F crude oil
+
+# Validation early stopping
+VAL_EVERY = 20          # waliduj co N epizodów
+VAL_PATIENCE = 50       # zatrzymaj jeśli brak poprawy przez N epizodów
+
+
+def compute_data_hash(df):
+    """Hash danych — zmieni się gdy okno czasowe się przesunie."""
+    raw = df[['close']].values.tobytes()
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def should_retrain(agent, data_hash, force=False):
+    """Sprawdź czy trening ma sens — czy dane się zmieniły lub minął czas."""
+    if force:
+        return True, "wymuszony trening (--force)"
+
+    last_ts = getattr(agent, '_last_train_ts', 0)
+    last_hash = getattr(agent, '_data_hash', None)
+
+    if last_hash is None:
+        return True, "brak poprzedniego treningu"
+
+    hours_since = (time.time() - last_ts) / 3600
+
+    if last_hash != data_hash:
+        return True, f"dane się zmieniły (nowy hash: {data_hash[:8]})"
+
+    if hours_since >= MIN_RETRAIN_HOURS:
+        return True, f"minęło {hours_since:.0f}h od ostatniego treningu"
+
+    return False, (f"dane identyczne, ostatni trening {hours_since:.1f}h temu "
+                   f"(min {MIN_RETRAIN_HOURS}h). Użyj --force aby wymusić")
 
 def fetch_historical_data(symbol="GC=F", periods=None, intervals=None):
     """
@@ -63,53 +104,145 @@ def fetch_historical_data(symbol="GC=F", periods=None, intervals=None):
     raise ValueError(f"Nie udało się pobrać danych dla {symbol}")
 
 
+def fetch_multi_asset_data(symbols=None):
+    """Pobiera dane dla wielu symboli. Zwraca dict {symbol: df}.
+    Pomija symbole, dla których nie udało się pobrać danych."""
+    if symbols is None:
+        symbols = SYMBOLS
+
+    results = {}
+    for sym in symbols:
+        try:
+            df = fetch_historical_data(symbol=sym)
+            if df is not None and not df.empty:
+                results[sym] = df
+        except Exception as e:
+            print(f"⚠️ Pominięto {sym}: {e}")
+
+    if not results:
+        raise ValueError("Nie udało się pobrać żadnego symbolu")
+
+    print(f"✅ Multi-asset: {len(results)}/{len(symbols)} symboli pobranych")
+    return results
+
+
+def evaluate_agent(agent, val_env):
+    """Eval agenta na val_env z epsilon=0 (czysta exploitacja).
+    Zwraca (val_return_pct, val_win_rate, val_trades, val_balance)."""
+    old_epsilon = agent.epsilon
+    agent.epsilon = 0.0
+    state = val_env.reset()
+    done = False
+    info = {}
+    while not done:
+        action = agent.act(state)
+        state, _, done, info = val_env.step(action)
+    agent.epsilon = old_epsilon
+
+    val_balance = info.get('balance', INITIAL_BALANCE)
+    val_return = (val_balance - INITIAL_BALANCE) / INITIAL_BALANCE * 100
+    val_trades = info.get('total_trades', 0)
+    val_win_rate = info.get('win_rate', 0) * 100
+    return val_return, val_win_rate, val_trades, val_balance
+
+
 def main():
     global EPISODES
-    if len(sys.argv) > 1:
-        try:
-            EPISODES = int(sys.argv[1])
-        except ValueError:
-            pass
+    force_train = "--force" in sys.argv
+    for arg in sys.argv[1:]:
+        if arg != "--force":
+            try:
+                EPISODES = int(arg)
+            except ValueError:
+                pass
 
     print("=" * 60)
     print(f"🧠 TRENOWANIE AGENTA RL (Double DQN) — {EPISODES} epizodów")
     print("=" * 60)
 
-    # 1. Pobierz dane
-    print("\n📊 Pobieranie danych historycznych...")
-    data = fetch_historical_data()
-    if data.empty:
-        logger.error("Brak danych – trenowanie przerwane.")
+    # 1. Pobierz dane (multi-asset)
+    print("\n📊 Pobieranie danych multi-asset...")
+    asset_data = fetch_multi_asset_data()
+
+    # Hash z cen close wszystkich symboli (stabilny pomimo różnej kolejności)
+    import hashlib
+    combined = b''.join(
+        df[['close']].values.tobytes() for sym, df in sorted(asset_data.items())
+    )
+    data_hash = hashlib.sha256(combined).hexdigest()[:16]
+
+    # 2. Podział train/val (80/20) per symbol — stwórz envs
+    train_envs = {}
+    val_envs = {}
+    state_size = None
+    for sym, df in asset_data.items():
+        split_idx = int(len(df) * 0.8)
+        train_df = df.iloc[:split_idx].reset_index(drop=True)
+        val_df = df.iloc[split_idx:].reset_index(drop=True)
+        if len(train_df) < 50 or len(val_df) < 20:
+            print(f"⚠️ {sym}: za mało danych ({len(train_df)}/{len(val_df)}), pomijam")
+            continue
+        train_envs[sym] = TradingEnv(train_df, initial_balance=INITIAL_BALANCE,
+                                     transaction_cost=TRANSACTION_COST, noise_std=NOISE_STD)
+        val_envs[sym] = TradingEnv(val_df, initial_balance=INITIAL_BALANCE,
+                                   transaction_cost=TRANSACTION_COST, noise_std=0.0)
+        if state_size is None:
+            state_size = len(train_envs[sym].reset())
+        print(f"  📈 {sym}: train={len(train_df)} | val={len(val_df)}")
+
+    if not train_envs:
+        logger.error("Brak envs do treningu.")
         return
 
-    # 2. Podział na train/validation (80/20)
-    split_idx = int(len(data) * 0.8)
-    train_data = data.iloc[:split_idx].reset_index(drop=True)
-    val_data = data.iloc[split_idx:].reset_index(drop=True)
-    print(f"📈 Train: {len(train_data)} świec | Validation: {len(val_data)} świec")
-
-    # 3. Stwórz środowisko
-    env = TradingEnv(train_data, initial_balance=INITIAL_BALANCE, transaction_cost=TRANSACTION_COST)
-    state = env.reset()
-    state_size = len(state)
     action_size = 3  # hold, buy, sell
+    symbols_list = list(train_envs.keys())
 
-    # 4. Zainicjuj agenta
+    # 3. Zainicjuj agenta (z resume jeśli istnieje checkpoint)
     agent = DQNAgent(state_size, action_size)
-    print(f"🤖 Agent: state_size={state_size}, action_size={action_size}")
-    print(f"🔧 Double DQN, memory=10000, target_update_freq={agent.target_update_freq}")
+    checkpoint_path = "models/rl_agent.keras"
+    resumed = False
+    if os.path.exists(checkpoint_path) and os.path.exists(checkpoint_path + '.params'):
+        try:
+            agent.load(checkpoint_path)
+            resumed = True
+            print(f"🔄 Wznowiono z checkpointu: ε={agent.epsilon:.3f}, "
+                  f"train_step={agent.train_step}, memory={len(agent.memory)}")
+        except Exception as e:
+            print(f"⚠️ Nie udało się wczytać checkpointu ({e}) — trening od zera")
+            agent = DQNAgent(state_size, action_size)
 
-    # 5. Trenowanie
+    # 4. Sprawdź czy trening ma sens
+    if resumed:
+        ok, reason = should_retrain(agent, data_hash, force=force_train)
+        if not ok:
+            print(f"\n⏭️  Pominięto trening: {reason}")
+            return
+        print(f"📋 Powód treningu: {reason}")
+
+    if not resumed:
+        print(f"🤖 Agent: state_size={state_size}, action_size={action_size}")
+    print(f"🔧 PER + N-step + Multi-asset ({len(symbols_list)} symboli) + noise={NOISE_STD}")
+
+    # 5. Trenowanie z rotacją symboli + early stopping
     scores = []
     best_reward = -float('inf')
     best_balance = 0
     best_win_rate = 0
+    best_val_return = -float('inf')
+    best_weights = None
+    no_improve = 0
     info = {}
 
     import gc
+    import random as _random
 
+    early_stopped = False
     for episode in range(EPISODES):
+        # Multi-asset: losowy symbol per epizod
+        sym = _random.choice(symbols_list)
+        env = train_envs[sym]
         state = env.reset()
+
         total_reward = 0
         done = False
         step = 0
@@ -121,7 +254,6 @@ def main():
             state = next_state
             total_reward += reward
             step += 1
-            # Replay every 8 steps, max 40 per episode, skip if memory too small
             if step % 8 == 0 and replay_count < 40 and len(agent.memory) >= 256:
                 agent.replay(batch_size=32)
                 replay_count += 1
@@ -136,63 +268,84 @@ def main():
             best_balance = balance
             best_win_rate = win_rate
 
-        # Update learning rate (cosine annealing)
         agent.update_lr(episode, EPISODES)
 
-        # Every episode: short progress line
-        print(f"  [{episode+1}/{EPISODES}] reward={total_reward:.2f} bal=${balance:.0f} ε={agent.epsilon:.3f} replays={replay_count}", flush=True)
+        print(f"  [{episode+1}/{EPISODES}] sym={sym} reward={total_reward:.2f} "
+              f"bal=${balance:.0f} ε={agent.epsilon:.3f} replays={replay_count}", flush=True)
 
-        # Every 50 episodes: full status report
+        # Walidacja co VAL_EVERY epizodów (na wszystkich symbolach)
+        if (episode + 1) % VAL_EVERY == 0 and (episode + 1) >= VAL_EVERY:
+            val_returns = []
+            for vsym, venv in val_envs.items():
+                vr, _, _, _ = evaluate_agent(agent, venv)
+                val_returns.append(vr)
+            mean_val_return = np.mean(val_returns)
+
+            if mean_val_return > best_val_return:
+                best_val_return = mean_val_return
+                best_weights = agent.model.get_weights()
+                no_improve = 0
+                marker = "⭐ NEW BEST"
+            else:
+                no_improve += VAL_EVERY
+                marker = f"(no improve {no_improve}/{VAL_PATIENCE})"
+            print(f"  📊 Val mean={mean_val_return:+.2f}% (best {best_val_return:+.2f}%) {marker}",
+                  flush=True)
+
+            if no_improve >= VAL_PATIENCE and (episode + 1) >= 100:
+                print(f"  ⚡ Early stop @ ep {episode+1} — przywracam best weights")
+                if best_weights is not None:
+                    agent.model.set_weights(best_weights)
+                    agent._sync_target_hard()
+                early_stopped = True
+                break
+
+        # Status i checkpoint co 50 epizodów
         if (episode + 1) % 50 == 0:
             logger.info(
                 f"═══ Ep {episode+1}/{EPISODES} ═══ "
-                f"avg_reward={avg:.4f} | balance=${balance:.0f} | "
-                f"trades={info.get('total_trades', 0)} | win_rate={win_rate:.0f}% | "
-                f"best_balance=${best_balance:.0f} | ε={agent.epsilon:.3f}"
+                f"avg_reward={avg:.4f} | best_val={best_val_return:+.2f}% | "
+                f"trades={info.get('total_trades', 0)} | wr={win_rate:.0f}% | "
+                f"ε={agent.epsilon:.3f}"
             )
-            # Save checkpoint every 50 episodes (crash-safe)
             try:
-                agent.save("models/rl_agent.keras")
+                agent.save("models/rl_agent.keras", data_hash=data_hash)
                 print(f"  💾 Checkpoint saved (ep {episode+1})", flush=True)
             except Exception as e:
                 print(f"  ⚠️ Checkpoint save failed: {e}", flush=True)
 
-        # Memory cleanup every 100 episodes to prevent PyCharm OOM
         if (episode + 1) % 100 == 0:
             gc.collect()
-            try:
-                import tensorflow as tf
-                tf.keras.backend.clear_session()
-            except Exception:
-                pass
 
-    # 6. Walidacja na danych testowych
-    print("\n📊 Walidacja na danych out-of-sample...")
-    val_env = TradingEnv(val_data, initial_balance=INITIAL_BALANCE, transaction_cost=TRANSACTION_COST)
-    old_epsilon = agent.epsilon
-    agent.epsilon = 0.0  # Pure exploitation
-    state = val_env.reset()
-    done = False
-    while not done:
-        action = agent.act(state)
-        state, _, done, info = val_env.step(action)
+    # 6. Końcowa walidacja per-symbol na danych out-of-sample
+    print("\n📊 Walidacja końcowa (out-of-sample, per symbol):")
+    all_returns = []
+    all_win_rates = []
+    total_trades_all = 0
+    for vsym, venv in val_envs.items():
+        vr, vwr, vt, vb = evaluate_agent(agent, venv)
+        all_returns.append(vr)
+        all_win_rates.append(vwr)
+        total_trades_all += vt
+        print(f"   {vsym}: ${vb:.0f} ({vr:+.1f}%) | trades={vt} | WR={vwr:.0f}%")
 
-    val_balance = info.get('balance', INITIAL_BALANCE)
-    val_return = (val_balance - INITIAL_BALANCE) / INITIAL_BALANCE * 100
-    val_trades = info.get('total_trades', 0)
-    val_win_rate = info.get('win_rate', 0) * 100
-    agent.epsilon = old_epsilon
+    val_return = float(np.mean(all_returns)) if all_returns else 0.0
+    val_win_rate = float(np.mean(all_win_rates)) if all_win_rates else 0.0
+    val_balance = INITIAL_BALANCE * (1 + val_return / 100)
+    val_trades = total_trades_all
 
-    print(f"📈 Wynik walidacji: balance=${val_balance:.0f} ({val_return:+.1f}%)")
-    print(f"   Transakcje: {val_trades} | Win rate: {val_win_rate:.0f}%")
+    print(f"📈 Średnia walidacji: {val_return:+.2f}% | "
+          f"WR={val_win_rate:.0f}% | total trades={val_trades}")
+    if early_stopped:
+        print(f"   (early-stopped, best val był {best_val_return:+.2f}%)")
 
-    # 7. Zapisz model
+    # 8. Zapisz model
     os.makedirs("models", exist_ok=True)
     model_path = "models/rl_agent.keras"
-    agent.save(model_path)
+    agent.save(model_path, data_hash=data_hash)
     logger.info(f"Model zapisany do {model_path}")
 
-    # 8. Zapisz metryki do bazy
+    # 9. Zapisz metryki do bazy
     try:
         from src.core.database import NewsDB
         db = NewsDB()
@@ -200,7 +353,12 @@ def main():
         db.set_param("rl_best_win_rate", best_win_rate)
         db.set_param("rl_val_return", val_return)
         db.set_param("rl_val_win_rate", val_win_rate)
-        db.set_param("rl_episodes_trained", EPISODES)
+        prev_episodes = db.get_param("rl_episodes_trained") or 0
+        try:
+            prev_episodes = int(float(prev_episodes))
+        except (ValueError, TypeError):
+            prev_episodes = 0
+        db.set_param("rl_episodes_trained", prev_episodes + EPISODES)
         print("📝 Metryki zapisane do bazy.")
     except Exception as e:
         print(f"⚠️ Nie udało się zapisać metryk: {e}")

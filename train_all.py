@@ -278,7 +278,7 @@ def train_lstm(train_df: pd.DataFrame, epochs: int = 50, precomputed_features=No
 # 4. TRENING DQN (Double DQN)
 # =====================================================================
 
-def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
+def train_dqn(train_df: pd.DataFrame, episodes: int = 300, data_hash: str = None) -> dict:
     """Trenuj agenta DQN z ulepszonym reward shaping.
 
     Ulepszenia:
@@ -296,16 +296,31 @@ def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
         print("   ❌ Za mało danych")
         return {"error": "insufficient data"}
 
-    env = TradingEnv(train_df, initial_balance=10000, transaction_cost=0.001)
+    env = TradingEnv(train_df, initial_balance=10000, transaction_cost=0.001,
+                     noise_std=0.001)
     state = env.reset()
     state_size = len(state)
     agent = DQNAgent(state_size, action_size=3)
 
+    # Resume z checkpointu jeśli istnieje
+    checkpoint_path = "models/rl_agent.keras"
+    resumed = False
+    if os.path.exists(checkpoint_path) and os.path.exists(checkpoint_path + '.params'):
+        try:
+            agent.load(checkpoint_path)
+            resumed = True
+            print(f"   🔄 Wznowiono z checkpointu: ε={agent.epsilon:.3f}, "
+                  f"train_step={agent.train_step}, memory={len(agent.memory)}")
+        except Exception as e:
+            print(f"   ⚠️ Checkpoint load failed ({e}) — trening od zera")
+            agent = DQNAgent(state_size, action_size=3)
+
     print(f"   State size: {state_size}")
     print(f"   Episodes: {episodes}")
-    print(f"   Memory: {agent.memory.maxlen}")
+    print(f"   Memory: {agent.memory.maxlen} (loaded: {len(agent.memory)})")
     print(f"   LR schedule: cosine {agent.lr_start} → {agent.lr_min}")
     print(f"   Target update: soft (tau={agent.tau})")
+    print(f"   Noise augmentation: 0.1%")
 
     t0 = time.time()
     scores = []
@@ -376,7 +391,7 @@ def train_dqn(train_df: pd.DataFrame, episodes: int = 300) -> dict:
 
     # Zapisz model
     os.makedirs("models", exist_ok=True)
-    agent.save("models/rl_agent.keras")
+    agent.save("models/rl_agent.keras", data_hash=data_hash)
     print(f"\n   ✅ Model zapisany (ep {len(scores)}/{episodes})")
     print(f"   📈 Najlepsza nagroda: {best_reward:.4f}")
     print(f"   ⏱️  Czas: {elapsed:.1f}s")
@@ -587,7 +602,9 @@ def main():
 
     # ---- 4. DQN ----
     if not args.skip_rl:
-        results['dqn'] = train_dqn(train_df, episodes=args.rl_episodes)
+        import hashlib
+        _dh = hashlib.sha256(train_df[['close']].values.tobytes()).hexdigest()[:16]
+        results['dqn'] = train_dqn(train_df, episodes=args.rl_episodes, data_hash=_dh)
     else:
         print("\n⏭️  DQN pominięty (--skip-rl)")
         results['dqn'] = {"skipped": True}

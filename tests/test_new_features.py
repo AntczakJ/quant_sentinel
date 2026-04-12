@@ -68,7 +68,7 @@ except Exception as e:
 print("\n[TEST 2] Double DQN Agent")
 print("-" * 60)
 agent = DQNAgent(state_size=22, action_size=3)
-check(f"memory maxlen = {agent.memory.maxlen}", agent.memory.maxlen == 10000)
+check(f"memory maxlen = {agent.memory.maxlen}", agent.memory.maxlen == 20000)
 check("has target_model", hasattr(agent, 'target_model'))
 check(f"target_update_freq = {agent.target_update_freq}", agent.target_update_freq == 200)
 check("has _sync_target method", hasattr(agent, '_sync_target'))

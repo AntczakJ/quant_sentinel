@@ -195,6 +195,48 @@ class RiskManager:
 
         return True, "OK"
 
+    # ─── VOLATILITY TARGETING ─────────────────────────────────────────
+    def compute_volatility_multiplier(self, atr_current: float) -> float:
+        """Adjust risk percent based on current volatility vs baseline.
+
+        Higher vol → smaller positions (avoid being stopped by noise)
+        Lower vol → larger positions (calmer markets = more predictable)
+
+        Utrzymuje **stałą oczekiwaną volatylność dolarową** portfela —
+        klasyczny "free lunch" w quant tradingu.
+
+        Formula: mult = baseline_atr / current_atr, clipped to [min, max]
+        """
+        if atr_current is None or atr_current <= 0:
+            return 1.0
+
+        try:
+            from src.core.database import NewsDB
+            db = NewsDB()
+            baseline = float(db.get_param("vol_target_atr", 5.0))  # gold default ~5$
+            vol_min = float(db.get_param("vol_min_mult", 0.4))
+            vol_max = float(db.get_param("vol_max_mult", 1.8))
+        except (ImportError, AttributeError, TypeError, ValueError):
+            baseline, vol_min, vol_max = 5.0, 0.4, 1.8
+
+        if baseline <= 0:
+            return 1.0
+
+        multiplier = baseline / atr_current
+        clamped = max(vol_min, min(multiplier, vol_max))
+
+        # Auto-update baseline (EMA, slow) — adapts to long-term regime changes
+        try:
+            from src.core.database import NewsDB
+            db = NewsDB()
+            alpha = 0.01  # very slow EMA — only adapts over weeks
+            new_baseline = (1 - alpha) * baseline + alpha * atr_current
+            db.set_param("vol_target_atr", new_baseline)
+        except (ImportError, AttributeError, TypeError, ValueError):
+            pass
+
+        return clamped
+
     def get_daily_risk_multiplier(self, balance: float) -> float:
         """
         Returns a multiplier (0.0 - 1.0) based on daily drawdown.
