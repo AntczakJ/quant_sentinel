@@ -133,19 +133,25 @@ def _summarize_trades() -> dict:
             else:
                 cur_streak = 0
 
-        # Equity curve from compounding profits (per-trade %return on rolling balance)
-        # Assume 1% risk per trade, SL = 1.5*ATR, so avg risk ~$150 on $10k.
-        # Simplification: use profit (absolute $) as pct of initial balance.
-        # Realistic assumption: 10000 initial, each trade ~1% risk.
+        # Equity curve from compounding (lot-aware) profits.
+        # profit column is in price units per 1 lot; actual $ = profit * lot_size * 100
+        # (1 standard gold lot = 100 oz, so $1 price move × 100 oz × lot = $1 * 100 * lot)
+        # For XTB micro: 1 lot = 10 oz, so multiplier = 10.
+        lot_rows = cur.execute(
+            "SELECT status, profit, lot FROM trades "
+            "WHERE status IN ('WIN','PROFIT','LOSS','LOSE','BREAKEVEN') AND profit IS NOT NULL "
+            "ORDER BY id ASC"
+        ).fetchall()
+        OZ_PER_LOT = 100  # standard gold spec
         equity = [10_000.0]
         peak = 10_000.0
         max_dd = 0.0
-        for s, p in closed_rows:
+        for _status, p, lot in lot_rows:
             if p is None:
                 continue
-            # Scale profit to ~1% risk per trade (SL distance ~$50-70, so $50 profit ~= 0.5% move)
-            # Simpler: treat profit as direct balance change
-            equity.append(equity[-1] + float(p))
+            lot_size = float(lot) if lot else 0.01
+            dollar_pnl = float(p) * OZ_PER_LOT * lot_size
+            equity.append(equity[-1] + dollar_pnl)
             peak = max(peak, equity[-1])
             dd = (equity[-1] - peak) / peak * 100
             max_dd = min(max_dd, dd)
@@ -213,15 +219,20 @@ def _monte_carlo_analysis(n_simulations: int = 1000) -> dict:
     if len(profits) < 5:
         return {"n_trades": len(profits), "note": "too few trades for MC"}
 
+    # Bootstrap with replacement: each simulation draws N trades from the
+    # observed distribution. This varies FINAL return too (vs plain shuffle
+    # which preserves sum). If p5 of final return is still positive, edge
+    # is robust to bad-luck sequences. If p5 is deeply negative, the real
+    # outcome was probably a lucky draw.
     returns = []
     max_dds = []
+    n_trades = len(profits)
     for _ in range(n_simulations):
-        shuffled = profits.copy()
-        random.shuffle(shuffled)
+        sampled = [random.choice(profits) for _ in range(n_trades)]
         equity = [10_000.0]
         peak = 10_000.0
         dd = 0.0
-        for p in shuffled:
+        for p in sampled:
             equity.append(equity[-1] + p)
             peak = max(peak, equity[-1])
             dd = min(dd, (equity[-1] - peak) / peak * 100)
@@ -692,11 +703,45 @@ def main():
     ap.add_argument("--monte-carlo", type=int, default=0,
                     help="shuffle trade order N times, report return / DD "
                          "percentiles. Tests whether edge depends on trade order.")
+    ap.add_argument("--compare", nargs=2, metavar=("A.json", "B.json"),
+                    help="compare two --output JSON files side-by-side")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="random seed for determinism (default 42)")
     ap.add_argument("--strict", action="store_true",
                     help="disable relaxed filters — run with PRODUCTION confluence "
                          "threshold (3+) and Stable=blocked. Useful for apples-to-"
                          "apples comparison vs live.")
     args = ap.parse_args()
+
+    # Determinism — seed random + numpy for reproducible backtest
+    import random as _random
+    _random.seed(args.seed)
+    try:
+        import numpy as _np
+        _np.random.seed(args.seed)
+    except ImportError:
+        pass
+
+    if args.compare:
+        import json
+        from pathlib import Path
+        a_path, b_path = args.compare
+        a = json.loads(Path(a_path).read_text())
+        b = json.loads(Path(b_path).read_text())
+        keys = ["total_trades", "win_rate_pct", "profit_factor",
+                "return_pct", "max_drawdown_pct", "max_consec_losses",
+                "alpha_vs_bh_pct", "breakevens"]
+        print(f"{'Metric':<22} {'A: '+Path(a_path).stem[:12]:>16} {'B: '+Path(b_path).stem[:12]:>16} {'Δ (B-A)':>12}")
+        print("-" * 70)
+        for k in keys:
+            va = a.get(k, "—")
+            vb = b.get(k, "—")
+            if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+                delta = vb - va
+                print(f"{k:<22} {va:>16} {vb:>16} {delta:>+12.2f}")
+            else:
+                print(f"{k:<22} {str(va):>16} {str(vb):>16} {'—':>12}")
+        return
 
     if args.strict:
         os.environ.pop("QUANT_BACKTEST_RELAX", None)
