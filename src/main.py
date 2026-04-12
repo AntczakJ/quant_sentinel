@@ -7,6 +7,15 @@ import io
 import asyncio
 import os
 import re
+
+# ── PRODUCTION HARDENING ──────────────────────────────────────────────
+# Explicitly clear any backtest-mode env vars that might have leaked from
+# a shell session. Production bot must NEVER apply relaxed filters.
+for _bt_flag in ("QUANT_BACKTEST_MODE", "QUANT_BACKTEST_RELAX"):
+    if os.environ.get(_bt_flag):
+        print(f"[PRODUCTION BOT] WARNING: {_bt_flag} was set, clearing for safety", flush=True)
+    os.environ.pop(_bt_flag, None)
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt

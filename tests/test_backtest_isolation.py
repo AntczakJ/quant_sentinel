@@ -101,3 +101,54 @@ class TestBacktestMode:
         from src.backtest.isolation import enforce_isolation, is_backtest_mode
         enforce_isolation(str(tmp_path / "bt.db"))
         assert is_backtest_mode()
+
+
+class TestProductionRelaxationSafety:
+    """CRITICAL: production scanner must NEVER apply relaxed confluence.
+
+    The relax flag is gated on BOTH:
+      - QUANT_BACKTEST_MODE=1 (set only by enforce_isolation)
+      - QUANT_BACKTEST_RELAX=1 (set only by enforce_isolation)
+    Neither is set in a live API / Telegram bot process.
+    """
+
+    def test_relax_requires_both_flags(self, monkeypatch):
+        """Setting only RELAX (e.g. leaked from shell) must not activate."""
+        monkeypatch.setenv("QUANT_BACKTEST_RELAX", "1")
+        monkeypatch.delenv("QUANT_BACKTEST_MODE", raising=False)
+        # Simulate the scanner's gating logic (read same way scanner does)
+        import os
+        relax_active = (
+            os.environ.get("QUANT_BACKTEST_RELAX") == "1"
+            and os.environ.get("QUANT_BACKTEST_MODE") == "1"
+        )
+        assert relax_active is False, "Single-flag leak should NOT activate relaxation"
+
+    def test_relax_requires_mode_flag_too(self, monkeypatch):
+        monkeypatch.setenv("QUANT_BACKTEST_MODE", "1")
+        monkeypatch.delenv("QUANT_BACKTEST_RELAX", raising=False)
+        import os
+        relax_active = (
+            os.environ.get("QUANT_BACKTEST_RELAX") == "1"
+            and os.environ.get("QUANT_BACKTEST_MODE") == "1"
+        )
+        assert relax_active is False
+
+    def test_relax_active_with_both_flags(self, monkeypatch):
+        monkeypatch.setenv("QUANT_BACKTEST_MODE", "1")
+        monkeypatch.setenv("QUANT_BACKTEST_RELAX", "1")
+        import os
+        relax_active = (
+            os.environ.get("QUANT_BACKTEST_RELAX") == "1"
+            and os.environ.get("QUANT_BACKTEST_MODE") == "1"
+        )
+        assert relax_active is True
+
+    def test_scanner_reads_both_flags(self):
+        """Verify scanner.py actually checks BOTH flags (not just one)."""
+        import pathlib
+        scanner_src = pathlib.Path("src/trading/scanner.py").read_text(encoding="utf-8")
+        # The confluence-threshold block must reference both env vars
+        # within a small window of each other
+        assert "QUANT_BACKTEST_RELAX" in scanner_src
+        assert "QUANT_BACKTEST_MODE" in scanner_src

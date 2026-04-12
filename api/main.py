@@ -20,6 +20,15 @@ import logging
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ── PRODUCTION HARDENING ──────────────────────────────────────────────
+# Explicitly clear any backtest-mode env vars that might have leaked from
+# a shell session. Production API must NEVER apply relaxed filters.
+# Runs before any src.* imports.
+for _bt_flag in ("QUANT_BACKTEST_MODE", "QUANT_BACKTEST_RELAX"):
+    if os.environ.get(_bt_flag):
+        print(f"[PRODUCTION API] WARNING: {_bt_flag} was set, clearing for safety", flush=True)
+    os.environ.pop(_bt_flag, None)
+
 # Process start time for uptime tracking
 _start_time = _time.monotonic()
 

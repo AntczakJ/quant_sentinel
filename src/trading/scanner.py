@@ -326,8 +326,18 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # reach confluence=3 in production setups. Lower to 2 and allow Stable.
     # Directional alignment + RSI extreme stay strict — those are reality
     # checks, not data-source-dependent.
+    #
+    # SAFETY: double-gate — requires BOTH env vars. QUANT_BACKTEST_MODE is
+    # only set by src.backtest.isolation.enforce_isolation(), which runs in
+    # a separate process with a separate DB file. Production API never calls
+    # enforce_isolation(), so it never sees either flag. Even if someone has
+    # QUANT_BACKTEST_RELAX=1 leaked in their shell env, the MODE check blocks
+    # the relaxation from reaching live trades.
     import os as _os_bt
-    _relax = _os_bt.environ.get("QUANT_BACKTEST_RELAX") == "1"
+    _relax = (
+        _os_bt.environ.get("QUANT_BACKTEST_RELAX") == "1"
+        and _os_bt.environ.get("QUANT_BACKTEST_MODE") == "1"
+    )
     _min_conf = 2 if _relax else 3
 
     structure = analysis.get('structure', 'Stable')
