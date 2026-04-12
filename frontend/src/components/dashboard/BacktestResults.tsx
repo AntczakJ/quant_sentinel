@@ -7,7 +7,7 @@
 import { useState, useEffect, memo, useMemo } from 'react';
 import {
   Loader2, TrendingUp, TrendingDown, Clock, Activity,
-  CheckCircle, XCircle, BarChart3, Target,
+  CheckCircle, XCircle, BarChart3, Target, Image as ImageIcon,
 } from 'lucide-react';
 import { backtestResultsAPI } from '../../api/client';
 
@@ -192,6 +192,26 @@ export const BacktestResults = memo(function BacktestResults() {
               )}
             </div>
           )}
+
+          {/* Equity curve PNG (if exists) */}
+          <div className="mt-3 pt-3 border-t border-dark-secondary">
+            <div className="text-[10px] text-th-muted uppercase tracking-wider mb-1 flex items-center gap-1">
+              <ImageIcon size={10} /> Equity Curve
+            </div>
+            <img
+              src={backtestResultsAPI.chartUrl(selectedRun.name)}
+              alt={`Equity curve for ${selectedRun.name}`}
+              className="w-full rounded border border-dark-secondary bg-white"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = 'none';
+                const sib = (e.currentTarget as HTMLImageElement).nextElementSibling as HTMLElement | null;
+                if (sib) {sib.style.display = 'block';}
+              }}
+            />
+            <div className="text-[10px] text-th-muted italic" style={{ display: 'none' }}>
+              No equity PNG for this run — add <code>--plot-equity reports/{selectedRun.name}.png</code>
+            </div>
+          </div>
         </div>
       )}
 

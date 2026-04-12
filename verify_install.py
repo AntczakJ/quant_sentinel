@@ -182,6 +182,37 @@ def check_api_metrics(c: Checks):
         c.add("API /api/metrics exposes scanner_health", False, str(e)[:60])
 
 
+def check_api_backtest_endpoints(c: Checks):
+    """Verify /api/backtest/runs + /latest respond (may return 404 if no runs yet)."""
+    try:
+        import urllib.request
+        import urllib.error
+        import json
+        with urllib.request.urlopen(f"{c.api_url}/api/backtest/runs", timeout=3) as r:
+            data = json.load(r)
+        count = data.get("count", 0)
+        detail = f"{count} runs indexed"
+        c.add("API /api/backtest/runs responds", True, detail)
+    except Exception as e:
+        c.add("API /api/backtest/runs responds", False, str(e)[:60])
+
+    # /latest may 404 legitimately if no runs yet — treat 404 as OK
+    try:
+        import urllib.request
+        import urllib.error
+        try:
+            with urllib.request.urlopen(f"{c.api_url}/api/backtest/latest", timeout=3):
+                detail = "returned latest run"
+        except urllib.error.HTTPError as he:
+            if he.code == 404:
+                detail = "404 (no runs yet — expected)"
+            else:
+                raise
+        c.add("API /api/backtest/latest responds", True, detail)
+    except Exception as e:
+        c.add("API /api/backtest/latest responds", False, str(e)[:60])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", default="http://localhost:8000",
@@ -205,6 +236,7 @@ def main():
         if check_api_health(c):
             check_api_scanner_health(c)
             check_api_metrics(c)
+            check_api_backtest_endpoints(c)
     else:
         print(YELLOW("  [SKIP] HTTP checks (--skip-api)"))
 
