@@ -360,6 +360,19 @@ export const healthAPI = {
     const response = await client.get('/health');
     return response.data;
   },
+  scanner: async (): Promise<{
+    status: 'healthy' | 'stale' | 'degraded' | 'no_data';
+    scans_total: number;
+    errors_total: number;
+    error_rate: number;
+    avg_duration_ms: number;
+    p95_duration_ms: number;
+    last_run_seconds_ago: number | null;
+    data_fetch_failures: number;
+  }> => {
+    const response = await client.get('/api/health/scanner');
+    return response.data;
+  },
 };
 
 // Analysis endpoints

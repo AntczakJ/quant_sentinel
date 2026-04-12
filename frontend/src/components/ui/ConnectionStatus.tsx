@@ -3,15 +3,21 @@
  */
 
 import { useState, useEffect, memo, useCallback } from 'react';
-import { Wifi, WifiOff, Clock, AlertTriangle, Radio } from 'lucide-react';
+import { Wifi, WifiOff, Clock, AlertTriangle, Radio, Activity } from 'lucide-react';
 import { useTradingStore } from '../../store/tradingStore';
 import { healthAPI, marketAPI } from '../../api/client';
+
+type ScannerStatus = 'healthy' | 'stale' | 'degraded' | 'no_data';
 
 interface StatusInfo {
   api: boolean;
   isMock: boolean;
   lastCheck: Date | null;
   latencyMs: number | null;
+  scanner: ScannerStatus | null;
+  scannerP95Ms: number | null;
+  scannerLastRunAgoS: number | null;
+  scannerErrorRate: number | null;
 }
 
 export const ConnectionStatus = memo(function ConnectionStatus() {
@@ -21,6 +27,10 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
     isMock: false,
     lastCheck: null,
     latencyMs: null,
+    scanner: null,
+    scannerP95Ms: null,
+    scannerLastRunAgoS: null,
+    scannerErrorRate: null,
   });
   const [expanded, setExpanded] = useState(false);
 
@@ -34,7 +44,22 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
         const marketStatus = await marketAPI.getStatus();
         isMock = !!marketStatus?.is_mock;
       } catch { /* ignore */ }
-      setStatus({ api: true, isMock, lastCheck: new Date(), latencyMs: latency });
+      // Scanner health (best-effort — don't fail the whole status on this)
+      let scanner: ScannerStatus | null = null;
+      let scannerP95Ms: number | null = null;
+      let scannerLastRunAgoS: number | null = null;
+      let scannerErrorRate: number | null = null;
+      try {
+        const sh = await healthAPI.scanner();
+        scanner = sh.status;
+        scannerP95Ms = sh.p95_duration_ms;
+        scannerLastRunAgoS = sh.last_run_seconds_ago;
+        scannerErrorRate = sh.error_rate;
+      } catch { /* ignore */ }
+      setStatus({
+        api: true, isMock, lastCheck: new Date(), latencyMs: latency,
+        scanner, scannerP95Ms, scannerLastRunAgoS, scannerErrorRate,
+      });
       setApiConnected(true);
     } catch {
       const latency = Math.round(performance.now() - start);
@@ -114,6 +139,51 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
                   {status.isMock ? 'Mock' : 'Live'}
                 </span>
               </div>
+            )}
+
+            {/* Scanner health */}
+            {status.api && status.scanner && (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-th-secondary flex items-center gap-1">
+                    <Activity size={10} />
+                    Scanner
+                  </span>
+                  <span className={
+                    status.scanner === 'healthy' ? 'text-accent-green' :
+                    status.scanner === 'degraded' ? 'text-accent-red' :
+                    'text-accent-orange'
+                  }>
+                    {status.scanner === 'healthy' ? 'Healthy' :
+                     status.scanner === 'degraded' ? 'Degraded' :
+                     status.scanner === 'stale' ? 'Stale' : 'No data'}
+                  </span>
+                </div>
+                {status.scannerP95Ms !== null && status.scannerP95Ms > 0 && (
+                  <div className="flex items-center justify-between text-th-muted">
+                    <span>↳ p95 scan time</span>
+                    <span className="font-mono">{status.scannerP95Ms.toFixed(0)}ms</span>
+                  </div>
+                )}
+                {status.scannerLastRunAgoS !== null && (
+                  <div className="flex items-center justify-between text-th-muted">
+                    <span>↳ last run</span>
+                    <span className="font-mono">
+                      {status.scannerLastRunAgoS < 60
+                        ? `${Math.round(status.scannerLastRunAgoS)}s ago`
+                        : `${Math.round(status.scannerLastRunAgoS / 60)}m ago`}
+                    </span>
+                  </div>
+                )}
+                {status.scannerErrorRate !== null && status.scannerErrorRate > 0 && (
+                  <div className="flex items-center justify-between text-th-muted">
+                    <span>↳ error rate</span>
+                    <span className={`font-mono ${status.scannerErrorRate > 0.1 ? 'text-accent-red' : ''}`}>
+                      {(status.scannerErrorRate * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Latency */}
