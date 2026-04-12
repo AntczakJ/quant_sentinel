@@ -12,6 +12,19 @@
     <link rel="dns-prefetch" href="//localhost:8000" />
     <link rel="preconnect" href="http://localhost:8000" crossorigin />
 
+    <!-- PWA disabled: unregister stale service workers + clear caches
+         from previous build. Old SW caches CSS/JS that no longer exists
+         and causes styling bugs until user hard-reloads. -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(regs => {
+          for (const r of regs) { r.unregister(); }
+        }).catch(() => {});
+        if ('caches' in window) {
+          caches.keys().then(names => names.forEach(n => caches.delete(n))).catch(() => {});
+        }
+      }
+    </script>
 
     <title>QUANT SENTINEL — AI Trading</title>
 
