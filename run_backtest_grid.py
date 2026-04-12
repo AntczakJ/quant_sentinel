@@ -167,6 +167,24 @@ async def _run_single_window(days: int, step_minutes: int,
     return await _run_backtest(_make_bt_args(days, step_minutes, start, end))
 
 
+def prefetch_shared_provider(symbol: str = "XAU/USD",
+                             yf_symbol: str = "GC=F",
+                             days: int = 60) -> None:
+    """Fetch HistoricalProvider once so every cell in the sweep reuses the
+    same in-memory DataFrames. Saves 96 cells x 4 TFs worth of parquet
+    reads (~2-5 min on a full grid) and eliminates a class of bugs where
+    a mid-grid cache TTL expiry would silently refresh only some cells."""
+    from run_production_backtest import set_shared_provider
+    from src.backtest.historical_provider import HistoricalProvider
+    period_for_fetch = f"{max(days, 60)}d"
+    provider = HistoricalProvider.from_yfinance(
+        symbol=symbol, yf_symbol=yf_symbol, period=period_for_fetch,
+        intervals=("5m", "15m", "1h", "4h"), use_cache=True,
+    )
+    set_shared_provider(provider, symbol=symbol, yf_symbol=yf_symbol)
+    print(f"[grid] shared provider prefetched for {yf_symbol} ({period_for_fetch})")
+
+
 def _collect_analytics() -> Dict[str, Any]:
     """Call into src/backtest/analytics + monte_carlo after a run."""
     out: Dict[str, Any] = {}
@@ -514,6 +532,9 @@ def main() -> int:
             return 1
         print_leaderboard(results, top=20)
         return 0
+
+    # ONE-TIME data fetch: every cell reuses this provider.
+    prefetch_shared_provider(days=args.days if not args.smoke else 7)
 
     if args.smoke:
         name = args.name if args.name != "default" else "smoke"

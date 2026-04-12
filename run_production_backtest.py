@@ -64,6 +64,32 @@ SWAP_PER_LOT_DAY = 0.50          # USD/day overnight on 1 lot (XAU CFD ~$0.50)
 GAP_HIT_MULTIPLIER = 1.4         # multiply SL/TP miss by this when gap-filled
 
 
+# ── Shared-provider hook (used by run_backtest_grid.py) ──────────────
+# When a multi-cell grid pre-fetches historical data once and wants every
+# cell to reuse the same DataFrame slice, it calls set_shared_provider()
+# before invoking _run_backtest. _run_backtest then skips its own fetch
+# step whenever the shared provider's symbol matches the current args.
+_SHARED_PROVIDER = None
+_SHARED_PROVIDER_KEY: dict = {}
+
+
+def set_shared_provider(provider, *, symbol: str, yf_symbol: str) -> None:
+    """Install a pre-fetched HistoricalProvider to be reused across
+    subsequent _run_backtest calls for the given symbol."""
+    global _SHARED_PROVIDER
+    _SHARED_PROVIDER = provider
+    _SHARED_PROVIDER_KEY.clear()
+    _SHARED_PROVIDER_KEY["symbol"] = symbol
+    _SHARED_PROVIDER_KEY["yf"] = yf_symbol
+
+
+def clear_shared_provider() -> None:
+    """Drop the shared provider. Used by tests and after a grid finishes."""
+    global _SHARED_PROVIDER
+    _SHARED_PROVIDER = None
+    _SHARED_PROVIDER_KEY.clear()
+
+
 def _is_overnight_cross(entry_time, exit_time) -> int:
     """Count number of overnight rollovers (22:00 UTC crossings) between times.
 
@@ -562,13 +588,21 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
 
 async def _run_backtest(args) -> dict:
     # ── 1. Load historical data ───────────────────────────────────────
-    print(f"[backtest] Loading {args.yf} ({args.days} days of 5m/15m/1h/4h)...", flush=True)
-    period_for_fetch = f"{max(args.days, 60)}d"  # yfinance 5m max 60d anyway
-    provider = HistoricalProvider.from_yfinance(
-        symbol=args.symbol, yf_symbol=args.yf, period=period_for_fetch,
-        intervals=("5m", "15m", "1h", "4h"),
-        use_cache=not getattr(args, "no_cache", False),
-    )
+    # When grid search prefetches a shared provider via set_shared_provider(),
+    # reuse it across all cells. This saves 4 parquet reads + DataFrame
+    # construction per cell (~96 cells x 4 TFs x 50-200ms = 20-75s per grid).
+    provider = _SHARED_PROVIDER
+    if provider is not None and getattr(args, "yf", None) == _SHARED_PROVIDER_KEY.get("yf") \
+       and getattr(args, "symbol", None) == _SHARED_PROVIDER_KEY.get("symbol"):
+        print(f"[backtest] Reusing shared HistoricalProvider for {args.yf}", flush=True)
+    else:
+        print(f"[backtest] Loading {args.yf} ({args.days} days of 5m/15m/1h/4h)...", flush=True)
+        period_for_fetch = f"{max(args.days, 60)}d"  # yfinance 5m max 60d anyway
+        provider = HistoricalProvider.from_yfinance(
+            symbol=args.symbol, yf_symbol=args.yf, period=period_for_fetch,
+            intervals=("5m", "15m", "1h", "4h"),
+            use_cache=not getattr(args, "no_cache", False),
+        )
     install_historical_provider(provider)
 
     # ── 2. Import scanner AFTER provider is installed ─────────────────
