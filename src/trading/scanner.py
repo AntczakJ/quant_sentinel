@@ -338,7 +338,12 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         _os_bt.environ.get("QUANT_BACKTEST_RELAX") == "1"
         and _os_bt.environ.get("QUANT_BACKTEST_MODE") == "1"
     )
-    _min_conf = 2 if _relax else 3
+    # Backtest: threshold=1 — yfinance data produces max confluence=2-3,
+    # and we lose news/macro signals (worth ~1-2 confluence in live).
+    # At threshold=2 we got 0.5 trades/day; target is 2-3/day for
+    # meaningful statistical sample. Directional alignment + RSI extreme
+    # still strict — those protect against bad trades regardless.
+    _min_conf = 1 if _relax else 3
 
     structure = analysis.get('structure', 'Stable')
     is_stable = 'Stable' in str(structure)
