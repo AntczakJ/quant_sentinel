@@ -172,6 +172,70 @@ def get_all_metrics() -> Dict:
     }
 
 
+def to_prometheus_text() -> str:
+    """Render all metrics in Prometheus exposition format (text/plain; version=0.0.4).
+
+    Used by GET /metrics — scrape-able by Prometheus / Grafana / Uptime Kuma.
+    Format spec: https://github.com/prometheus/docs/blob/main/content/docs/instrumenting/exposition_formats.md
+    """
+    lines: list[str] = []
+
+    def _counter(name: str, value, help_text: str = ""):
+        if help_text:
+            lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} counter")
+        lines.append(f"{name} {value}")
+
+    def _gauge(name: str, value, help_text: str = ""):
+        if help_text:
+            lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} gauge")
+        lines.append(f"{name} {value}")
+
+    def _histogram(name: str, hist, help_text: str = ""):
+        if help_text:
+            lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} summary")
+        lines.append(f"{name}_count {hist.count}")
+        lines.append(f"{name}_sum {hist.total}")
+        if hist.count > 0:
+            lines.append(f'{name}{{quantile="0.5"}} {hist.avg}')
+            lines.append(f'{name}{{quantile="0.95"}} {hist.p95}')
+
+    # Counters
+    _counter("quant_trades_opened_total", trades_opened.value, "Total trades opened")
+    _counter("quant_trades_won_total", trades_won.value, "Total winning trades")
+    _counter("quant_trades_lost_total", trades_lost.value, "Total losing trades")
+    _counter("quant_trades_rejected_total", trades_rejected.value, "Trades rejected by filters")
+    _counter("quant_trades_blocked_by_risk_total", trades_blocked_by_risk.value, "Trades blocked by risk manager")
+    _counter("quant_api_requests_total", api_requests_total.value, "API requests served")
+    _counter("quant_api_errors_total", api_errors_total.value, "API requests with errors")
+    _counter("quant_scan_errors_total", scan_errors_total.value, "Scan cycles with exceptions")
+    _counter("quant_data_fetch_failures_total", data_fetch_failures.value, "Data provider fetch failures")
+    _counter("quant_scan_signals_long_total", scan_signals_long.value, "Scanner cycles producing LONG")
+    _counter("quant_scan_signals_short_total", scan_signals_short.value, "Scanner cycles producing SHORT")
+    _counter("quant_scan_signals_wait_total", scan_signals_wait.value, "Scanner cycles producing CZEKAJ")
+    _counter("quant_ensemble_signals_long_total", ensemble_signals_long.value, "Ensemble LONG signals")
+    _counter("quant_ensemble_signals_short_total", ensemble_signals_short.value, "Ensemble SHORT signals")
+    _counter("quant_ensemble_signals_wait_total", ensemble_signals_wait.value, "Ensemble CZEKAJ signals")
+
+    # Gauges
+    _gauge("quant_portfolio_balance_usd", portfolio_balance.value, "Current portfolio balance USD")
+    _gauge("quant_portfolio_pnl_usd", portfolio_pnl.value, "Current portfolio P&L USD")
+    _gauge("quant_daily_loss_pct", daily_loss_pct.value, "Current daily loss as percent")
+    _gauge("quant_open_positions", open_positions_count.value, "Currently open positions")
+    _gauge("quant_model_agreement_ratio", model_agreement_ratio.value, "Ensemble agreement ratio 0-1")
+    _gauge("quant_scan_last_ts", scan_last_ts.value, "Unix timestamp of last scan")
+
+    # Histograms
+    _histogram("quant_scan_duration_seconds", scan_duration, "Scan cycle duration")
+    _histogram("quant_api_latency_seconds", api_latency, "API request latency")
+    _histogram("quant_ensemble_prediction_seconds", ensemble_prediction_time, "Ensemble inference time")
+    _histogram("quant_ensemble_confidence", ensemble_confidence, "Ensemble confidence distribution")
+
+    return "\n".join(lines) + "\n"
+
+
 class TimerContext:
     """Context manager for timing operations."""
     def __init__(self, histogram: _Histogram):
