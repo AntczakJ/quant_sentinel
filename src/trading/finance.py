@@ -346,9 +346,9 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
         except (ImportError, AttributeError, TypeError, ValueError):
             balance_in_usd = balance / 4.0
 
-    # --- 4. Slippage adjustment (session-aware spread model) ---
-    spread_buffer = rm.get_spread_buffer()
-    entry, sl, tp = rm.adjust_for_slippage(entry, sl, tp, direction)
+    # --- 4. Slippage adjustment (session + volatility-aware spread) ---
+    spread_buffer = rm.get_spread_buffer(atr=atr)
+    entry, sl, tp = rm.adjust_for_slippage(entry, sl, tp, direction, atr=atr)
 
     # --- 5. Wielkość lota (ryzyko % + volatility targeting) ---
     # Volatility-adjusted sizing: większe pozycje w spokojnych okresach,
