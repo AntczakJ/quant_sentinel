@@ -7,9 +7,55 @@
 @import '@fontsource/jetbrains-mono/500.css';
 @import '@fontsource/jetbrains-mono/600.css';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* ───────────────────────────────────────────────────────────────────
+ * Tailwind 4 theme — custom colors/fonts/shadows via @theme block.
+ * All colors reference CSS vars in :root (defined below) so the
+ * dark/light theme toggle still works by swapping those vars.
+ * ─────────────────────────────────────────────────────────────────── */
+@theme {
+  /* Theme-aware surface colors */
+  --color-dark-bg: rgb(var(--c-bg));
+  --color-dark-surface: rgb(var(--c-surface));
+  --color-dark-secondary: rgb(var(--c-secondary));
+  --color-dark-tertiary: rgb(var(--c-raised));
+
+  /* Theme-aware accent colors */
+  --color-accent-green: rgb(var(--c-green));
+  --color-accent-red: rgb(var(--c-red));
+  --color-accent-blue: rgb(var(--c-blue));
+  --color-accent-cyan: rgb(var(--c-cyan));
+  --color-accent-purple: rgb(var(--c-purple));
+  --color-accent-orange: rgb(var(--c-orange));
+  --color-accent: rgb(var(--c-accent));
+
+  /* Theme-aware text */
+  --color-th: rgb(var(--c-text-1));
+  --color-th-secondary: rgb(var(--c-text-2));
+  --color-th-muted: rgb(var(--c-text-3));
+  --color-th-dim: rgb(var(--c-text-4));
+
+  /* Theme-aware border */
+  --color-th-border: rgb(var(--c-border));
+  --color-th-border-h: rgb(var(--c-border-h));
+  --color-th-hover: rgb(var(--c-hover));
+
+  /* Fonts */
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: 'Inter', sans-serif;
+
+  /* Border radius extensions */
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1rem;
+
+  /* Shadows — glows + panel */
+  --shadow-glow: 0 0 8px rgb(var(--c-green) / 0.15);
+  --shadow-glow-red: 0 0 8px rgb(var(--c-red) / 0.15);
+  --shadow-glow-blue: 0 0 8px rgb(var(--c-blue) / 0.15);
+  --shadow-panel: 0 4px 24px rgba(0, 0, 0, 0.2);
+}
 
 /* ── Accessibility: focus-visible outlines ─────────────────────── */
 @layer base {
