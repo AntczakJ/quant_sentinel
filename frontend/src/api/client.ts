@@ -441,6 +441,42 @@ export const backtestResultsAPI = {
       data: Record<string, unknown>;
     };
   },
+  /** List available grid-sweep result files (metadata only). */
+  listGrids: async (limit = 20) => {
+    const response = await client.get('/backtest/grids', { params: { limit } });
+    return response.data as {
+      count: number;
+      grids: Array<{
+        path: string;
+        name: string;
+        mtime: number;
+        combos: number;
+        best_sharpe: number;
+      }>;
+    };
+  },
+
+  /** Load full grid data for a named file. Entries are {params, stats} pairs. */
+  loadGrid: async (name: string) => {
+    const response = await client.get('/backtest/grid', { params: { name } });
+    return response.data as {
+      path: string;
+      mtime: number;
+      entries: Array<{
+        params: { min_confidence: number; sl_atr_mult: number; target_rr: number };
+        stats?: {
+          total_trades?: number;
+          win_rate_pct?: number;
+          profit_factor?: number | string;
+          sharpe?: number | null;
+          return_pct?: number | null;
+          max_drawdown_pct?: number | null;
+        };
+        error?: string;
+      }>;
+    };
+  },
+
   loadByName: async (name: string) => {
     const response = await client.get('/backtest/run', { params: { name } });
     return response.data as {
@@ -505,6 +541,27 @@ export const trainingHistoryAPI = {
       }>;
       error?: string;
     };
+  },
+
+  /** Live snapshot of currently-running RL training (reads heartbeat file).
+   *  Returns status=idle when no training is active or heartbeat is stale. */
+  active: async () => {
+    const response = await client.get('/training/active');
+    return response.data as
+      | { status: 'idle'; last_seen_sec_ago?: number }
+      | {
+          status: 'running';
+          current_episode: number;
+          total_episodes: number;
+          last_reward: number;
+          avg_reward_20: number;
+          balance: number;
+          win_rate_pct: number;
+          epsilon: number;
+          elapsed_sec: number;
+          eta_sec: number;
+          age_sec: number;
+        };
   },
 };
 

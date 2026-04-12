@@ -248,6 +248,40 @@ def main():
 
     import gc
     import random as _random
+    import time as _time
+    import json as _json
+
+    # Heartbeat path — the API reads this to surface live progress in the UI.
+    # File is rewritten on each episode; absence (or stale mtime) means no
+    # training is active.
+    _heartbeat_path = "data/training_heartbeat.json"
+    _train_start = _time.time()
+
+    def _write_heartbeat(ep: int, reward: float, avg_reward: float,
+                         balance_: float, wr_: float, eps_: float) -> None:
+        try:
+            elapsed = _time.time() - _train_start
+            per_ep = elapsed / max(1, ep)
+            eta_sec = per_ep * (EPISODES - ep)
+            payload = {
+                "status": "running",
+                "current_episode": ep,
+                "total_episodes": EPISODES,
+                "last_reward": float(reward),
+                "avg_reward_20": float(avg_reward),
+                "balance": float(balance_),
+                "win_rate_pct": float(wr_),
+                "epsilon": float(eps_),
+                "elapsed_sec": elapsed,
+                "eta_sec": eta_sec,
+                "updated_at": _time.time(),
+            }
+            import os as _os2
+            _os2.makedirs("data", exist_ok=True)
+            with open(_heartbeat_path, "w", encoding="utf-8") as _f:
+                _json.dump(payload, _f)
+        except Exception:
+            pass  # Heartbeat failure must never stop training.
 
     early_stopped = False
     for episode in range(EPISODES):
@@ -285,6 +319,12 @@ def main():
 
         print(f"  [{episode+1}/{EPISODES}] sym={sym} reward={total_reward:.2f} "
               f"bal=${balance:.0f} ε={agent.epsilon:.3f} replays={replay_count}", flush=True)
+
+        # Non-blocking live progress signal for the UI widget.
+        _write_heartbeat(
+            episode + 1, total_reward, float(avg),
+            float(balance), win_rate, agent.epsilon,
+        )
 
         # Walidacja co VAL_EVERY epizodów (na wszystkich symbolach)
         if (episode + 1) % VAL_EVERY == 0 and (episode + 1) >= VAL_EVERY:

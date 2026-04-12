@@ -1053,6 +1053,64 @@ async def backtest_runs(limit: int = 20):
     return {"count": len(runs), "runs": runs}
 
 
+@app.get("/api/backtest/grids", tags=["System"])
+async def backtest_grids(limit: int = 20):
+    """List available grid-sweep result files.
+
+    Grid sweeps are produced by run_backtest_grid.py and saved as JSON
+    arrays of {params, stats} entries. Each file represents a single
+    systematic parameter search — this endpoint surfaces metadata so the UI
+    can offer them in a selector without loading full payloads.
+    """
+    import os as _os
+    import glob as _glob
+    import json as _json
+
+    files = sorted(
+        _glob.glob("reports/*grid*.json"),
+        key=lambda f: _os.path.getmtime(f),
+        reverse=True,
+    )[:limit]
+
+    grids = []
+    for path in files:
+        try:
+            data = _json.loads(open(path, "r", encoding="utf-8").read())
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        ranked = [e for e in data if isinstance(e, dict) and "stats" in e]
+        grids.append({
+            "path": path,
+            "name": _os.path.basename(path).replace(".json", ""),
+            "mtime": _os.path.getmtime(path),
+            "combos": len(ranked),
+            "best_sharpe": max((e["stats"].get("sharpe") or 0 for e in ranked), default=0),
+        })
+    return {"count": len(grids), "grids": grids}
+
+
+@app.get("/api/backtest/grid", tags=["System"])
+async def backtest_grid(name: str):
+    """Full grid data for a named file. Path-traversal safe (basename only)."""
+    import os as _os
+    import json as _json
+    from fastapi import HTTPException
+
+    safe_name = _os.path.basename(name).replace(".json", "")
+    path = f"reports/{safe_name}.json"
+    if not _os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"Grid '{safe_name}' not found")
+    try:
+        data = _json.loads(open(path, "r", encoding="utf-8").read())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Read failed: {e}")
+    if not isinstance(data, list):
+        raise HTTPException(status_code=400, detail="Not a grid-format file")
+    return {"path": path, "mtime": _os.path.getmtime(path), "entries": data}
+
+
 @app.get("/api/backtest/run", tags=["System"])
 async def backtest_run(name: str):
     """Full JSON for a specific run by name (e.g. 'bt_final'). 404 if not found.
@@ -1120,6 +1178,48 @@ async def backtest_latest():
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=f"Failed to read {latest}: {e}")
     return {"path": latest, "mtime": _os.path.getmtime(latest), "data": data}
+
+
+@app.get("/api/training/active", tags=["System"])
+async def training_active():
+    """Live snapshot of the currently-running RL training (if any).
+
+    Reads data/training_heartbeat.json, written by train_rl.py on every
+    episode. If the heartbeat is older than 90s we consider training dead
+    and return status=idle — the UI hides the live widget in that case.
+    """
+    import os as _os
+    import json as _json
+    import time as _time
+
+    path = "data/training_heartbeat.json"
+    if not _os.path.exists(path):
+        return {"status": "idle"}
+    try:
+        data = _json.loads(open(path, "r", encoding="utf-8").read())
+    except Exception:
+        return {"status": "idle"}
+
+    updated_at = data.get("updated_at", 0)
+    age = _time.time() - updated_at
+    # 90s grace: per-episode time can be 30-60s on CPU, so we allow generous
+    # window before declaring the heartbeat stale.
+    if age > 90:
+        return {"status": "idle", "last_seen_sec_ago": age}
+
+    return {
+        "status": "running",
+        "current_episode": data.get("current_episode"),
+        "total_episodes": data.get("total_episodes"),
+        "last_reward": data.get("last_reward"),
+        "avg_reward_20": data.get("avg_reward_20"),
+        "balance": data.get("balance"),
+        "win_rate_pct": data.get("win_rate_pct"),
+        "epsilon": data.get("epsilon"),
+        "elapsed_sec": data.get("elapsed_sec"),
+        "eta_sec": data.get("eta_sec"),
+        "age_sec": age,
+    }
 
 
 @app.get("/api/training/history", tags=["System"])

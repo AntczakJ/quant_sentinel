@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, ModelsStalenessBadge } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, ModelsStalenessBadge } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
 import { PageHeader } from '../components/ui';
 import { trainingAPI } from '../api/client';
@@ -67,46 +67,58 @@ function TrainingControls() {
 export default function ModelsPage() {
   const widgets: GridWidget[] = useMemo(() => [
     {
+      id: 'training-live',
+      title: 'Live Training',
+      content: <TrainingProgressLive />,
+      defaultLayout: { x: 0, y: 0, w: 12, h: 4, minW: 6, minH: 3 },
+    },
+    {
       id: 'health-monitor',
       title: 'Model Health Monitor',
       content: <ModelDriftAlert />,
-      defaultLayout: { x: 0, y: 0, w: 12, h: 3, minW: 6, minH: 2 },
+      defaultLayout: { x: 0, y: 4, w: 12, h: 3, minW: 6, minH: 2 },
     },
     {
       id: 'ml-models',
       title: 'ML Models',
       content: <ModelStats />,
-      defaultLayout: { x: 0, y: 3, w: 6, h: 5, minW: 4, minH: 3 },
+      defaultLayout: { x: 0, y: 7, w: 6, h: 5, minW: 4, minH: 3 },
     },
     {
       id: 'training',
       title: 'Training',
       content: <TrainingControls />,
-      defaultLayout: { x: 6, y: 3, w: 6, h: 5, minW: 4, minH: 3 },
+      defaultLayout: { x: 6, y: 7, w: 6, h: 5, minW: 4, minH: 3 },
     },
     {
       id: 'training-history',
       title: 'Training History',
       content: <TrainingHistory />,
-      defaultLayout: { x: 0, y: 8, w: 12, h: 5, minW: 6, minH: 3 },
+      defaultLayout: { x: 0, y: 12, w: 12, h: 5, minW: 6, minH: 3 },
     },
     {
       id: 'backtesting',
       title: 'Backtesting (legacy)',
       content: <BacktestPanel />,
-      defaultLayout: { x: 0, y: 13, w: 6, h: 5, minW: 4, minH: 3 },
+      defaultLayout: { x: 0, y: 17, w: 6, h: 5, minW: 4, minH: 3 },
     },
     {
       id: 'backtest-results',
       title: 'Production Backtest Results',
       content: <BacktestResults />,
-      defaultLayout: { x: 6, y: 13, w: 6, h: 5, minW: 4, minH: 3 },
+      defaultLayout: { x: 6, y: 17, w: 6, h: 5, minW: 4, minH: 3 },
+    },
+    {
+      id: 'grid-leaderboard',
+      title: 'Parameter Sweep Leaderboard',
+      content: <BacktestGridLeaderboard />,
+      defaultLayout: { x: 0, y: 22, w: 12, h: 6, minW: 6, minH: 4 },
     },
     {
       id: 'performance',
       title: 'Trading Performance',
       content: <RiskMetrics />,
-      defaultLayout: { x: 0, y: 18, w: 12, h: 5, minW: 6, minH: 3 },
+      defaultLayout: { x: 0, y: 28, w: 12, h: 5, minW: 6, minH: 3 },
     },
   ], []);
 
