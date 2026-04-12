@@ -124,6 +124,11 @@ pip-delete-this-directory.txt
 models/calibration_params.pkl
 models/test/
 models/decompose_scaler.pkl
+# Backtest DB — scratch file, regenerated per run. Never commit.
+data/backtest.db
+data/backtest.db-journal
+data/backtest.db-wal
+data/backtest.db-shm
 
 # ── EKSPERYMENTALNE BACKUPY MODELI ────────────────────────────
 # Lokalne kopie zostawiane przy eksperymentach (np. retrain z innym setupem).
