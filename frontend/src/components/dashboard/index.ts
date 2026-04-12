@@ -22,4 +22,5 @@ export { PatternAnalytics } from './PatternAnalytics';
 export { ExportButtons } from './ExportButtons';
 export { TradeHeatmap } from './TradeHeatmap';
 export { TrainingHistory } from './TrainingHistory';
+export { BacktestResults } from './BacktestResults';
 
