@@ -435,6 +435,15 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
             r_dist = sl - entry  # positive risk distance
         active_sl = sl  # starts at original SL, may be raised
 
+        # P8.21 PARTIAL CLOSE: optional — close half position at 1R, run rest.
+        # Enable via QUANT_BACKTEST_PARTIAL=1. Reduces win size but drastically
+        # reduces loss rate on pullbacks → typically improves expectancy on
+        # trending strategies. Tracked as separate 'partial_profit' field
+        # credited when price crosses 1R.
+        use_partial = os.environ.get("QUANT_BACKTEST_PARTIAL") == "1"
+        partial_taken = False
+        partial_profit = 0.0
+
         for _, bar in window.iterrows():
             bar_high = float(bar["high"])
             bar_low = float(bar["low"])
@@ -443,6 +452,10 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
             if r_dist > 0:
                 if is_long:
                     excursion_r = (bar_high - entry) / r_dist
+                    # Partial close at 1R (half position, locked profit)
+                    if use_partial and not partial_taken and excursion_r >= 1.0:
+                        partial_profit = 0.5 * r_dist  # half position × 1R profit
+                        partial_taken = True
                     if excursion_r >= 2.0:
                         new_sl = entry + 1.5 * r_dist
                         active_sl = max(active_sl, new_sl)
@@ -453,6 +466,9 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
                         active_sl = max(active_sl, entry)  # breakeven
                 else:  # SHORT
                     excursion_r = (entry - bar_low) / r_dist
+                    if use_partial and not partial_taken and excursion_r >= 1.0:
+                        partial_profit = 0.5 * r_dist
+                        partial_taken = True
                     if excursion_r >= 2.0:
                         new_sl = entry - 1.5 * r_dist
                         active_sl = min(active_sl, new_sl)
@@ -529,7 +545,12 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
             nights = _is_overnight_cross(entry_time, exit_time)
             swap_cost = SWAP_PER_LOT_DAY * nights  # in $USD terms per lot
 
-            net = gross - exit_slip - commission - swap_cost
+            # If partial close taken at 1R, credit it and halve remainder P&L
+            if use_partial and partial_taken:
+                # Half position earned +1R locked, remainder earns gross/2
+                net = partial_profit + (gross / 2) - exit_slip - commission - swap_cost
+            else:
+                net = gross - exit_slip - commission - swap_cost
             profit = round(net, 2)
             db._execute("UPDATE trades SET status=?, profit=? WHERE id=?",
                         (hit_status, profit, t_id))
@@ -803,6 +824,10 @@ def main():
                     help="print advanced analytics (Sharpe/Sortino/Calmar, "
                          "expectancy, rolling metrics, temporal heatmap, "
                          "P&L distribution)")
+    ap.add_argument("--partial-close", action="store_true",
+                    help="close 50% of position at 1R, trail remainder. "
+                         "Reduces avg win but dramatically lowers risk of "
+                         "reversal-to-loss after good initial move.")
     ap.add_argument("--resume", action="store_true",
                     help="resume from last checkpoint (skip --reset). Reads "
                          "data/backtest.db current state; continues from last "
@@ -848,6 +873,10 @@ def main():
     if args.strict:
         os.environ.pop("QUANT_BACKTEST_RELAX", None)
         print("[backtest] --strict: production filters active (confluence>=3, Stable blocked)")
+
+    if args.partial_close:
+        os.environ["QUANT_BACKTEST_PARTIAL"] = "1"
+        print("[backtest] --partial-close: 50% locked at 1R, remainder trails")
 
     if args.reset:
         _reset_backtest_db()
