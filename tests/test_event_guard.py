@@ -76,3 +76,37 @@ class TestEventGuard:
             result = get_imminent_high_impact_events(minutes_window=15)
             assert len(result) == 1
             assert result[0]["event"] == "Good"
+
+
+class TestRequiresClearCalendar:
+    def test_allows_call_when_clear(self):
+        from src.data.news import requires_clear_calendar
+        @requires_clear_calendar(minutes_window=15)
+        def fn(x):
+            return x * 2
+        with patch("src.data.news.get_economic_calendar", return_value=[]):
+            assert fn(21) == 42
+
+    def test_blocks_call_when_event_imminent(self):
+        from src.data.news import requires_clear_calendar
+        @requires_clear_calendar(minutes_window=15)
+        def fn(x):
+            return x * 2
+        ev = _make_event("NFP", minutes_from_now=5, impact="high")
+        with patch("src.data.news.get_economic_calendar", return_value=[ev]):
+            assert fn(21) is None  # blocked
+
+    def test_preserves_function_name(self):
+        from src.data.news import requires_clear_calendar
+        @requires_clear_calendar()
+        def my_function():
+            pass
+        assert my_function.__name__ == "my_function"
+
+    def test_soft_fail_on_calendar_error(self):
+        from src.data.news import requires_clear_calendar
+        @requires_clear_calendar()
+        def fn():
+            return "ok"
+        with patch("src.data.news.get_economic_calendar", side_effect=RuntimeError("api")):
+            assert fn() == "ok"  # fail-open, don't block trading

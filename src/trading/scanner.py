@@ -1117,6 +1117,24 @@ async def scan_market_task(context):
             f"{'Trade postawiony na ' + trade_found['tf_label'] if trade_found else 'Brak setupu na żadnym TF.'}"
         )
 
+        # Track signal rate: did this cycle produce a trade direction?
+        try:
+            from src.ops.metrics import (
+                scan_signals_long, scan_signals_short, scan_signals_wait
+            )
+            if trade_found:
+                _dir = (trade_found.get("direction") or "").upper()
+                if "LONG" in _dir:
+                    scan_signals_long.inc()
+                elif "SHORT" in _dir:
+                    scan_signals_short.inc()
+                else:
+                    scan_signals_wait.inc()
+            else:
+                scan_signals_wait.inc()
+        except Exception:
+            pass
+
     except Exception as e:
         try:
             from src.ops.metrics import scan_errors_total

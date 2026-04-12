@@ -373,6 +373,41 @@ export const healthAPI = {
     const response = await client.get('/api/health/scanner');
     return response.data;
   },
+  models: async () => {
+    const response = await client.get('/api/health/models');
+    return response.data as {
+      status: 'fresh' | 'stale' | 'degraded';
+      models: Record<string, {
+        status: 'fresh' | 'stale' | 'missing';
+        path: string;
+        size_kb?: number;
+        age_days?: number;
+        mtime?: string;
+      }>;
+      threshold_days: number;
+    };
+  },
+};
+
+export const trainingHistoryAPI = {
+  list: async (limit = 20, modelType?: string) => {
+    const response = await client.get('/api/training/history', {
+      params: { limit, ...(modelType ? { model_type: modelType } : {}) },
+    });
+    return response.data as {
+      count: number;
+      runs: Array<{
+        model_type: string;
+        timestamp: string;
+        git_commit?: string;
+        git_dirty?: boolean;
+        metrics: Record<string, unknown>;
+        notes?: string | null;
+        artifact_size_kb?: number | null;
+      }>;
+      error?: string;
+    };
+  },
 };
 
 // Analysis endpoints

@@ -967,6 +967,86 @@ async def health_check_detailed():
     }
 
 
+@app.get("/api/training/history", tags=["System"])
+async def training_history(limit: int = 20, model_type: Optional[str] = None):
+    """Recent training runs from models/training_history.jsonl.
+
+    Returns list of {model_type, timestamp, metrics, git_commit, hyperparams}
+    ordered newest-first.
+    """
+    try:
+        from src.ml.training_registry import list_runs
+        runs = list_runs(model_type=model_type, limit=limit)
+        # Slim down payload (artifacts, full hyperparams can be large)
+        return {
+            "count": len(runs),
+            "runs": [
+                {
+                    "model_type": r.get("model_type"),
+                    "timestamp": r.get("timestamp"),
+                    "git_commit": r.get("git_commit"),
+                    "git_dirty": r.get("git_dirty"),
+                    "metrics": r.get("metrics", {}),
+                    "notes": r.get("notes"),
+                    "artifact_size_kb": round(
+                        r.get("artifact", {}).get("size_bytes", 0) / 1024, 1
+                    ) if r.get("artifact") else None,
+                }
+                for r in runs
+            ],
+        }
+    except Exception as e:
+        return {"count": 0, "runs": [], "error": str(e)}
+
+
+@app.get("/api/health/models", tags=["System"])
+async def health_models():
+    """Model artifact health — file ages + staleness warnings.
+
+    Status per model:
+      - "fresh": <14 days old
+      - "stale": >=14 days (warning — consider retraining)
+      - "missing": file not found
+    """
+    import os
+    models = {
+        "rl_agent": "models/rl_agent.keras",
+        "lstm": "models/lstm.keras",
+        "xgb": "models/xgb.pkl",
+        "attention": "models/attention.keras",
+        "decompose": "models/decompose.keras",
+    }
+    now_ts = _time.time()
+    results = {}
+    any_stale = False
+    any_missing = False
+    for name, path in models.items():
+        if not os.path.exists(path):
+            results[name] = {"status": "missing", "path": path}
+            any_missing = True
+            continue
+        age_s = now_ts - os.path.getmtime(path)
+        age_days = age_s / 86400
+        stale = age_days >= 14
+        if stale:
+            any_stale = True
+        results[name] = {
+            "status": "stale" if stale else "fresh",
+            "path": path,
+            "size_kb": round(os.path.getsize(path) / 1024, 1),
+            "age_days": round(age_days, 1),
+            "mtime": datetime.datetime.fromtimestamp(
+                os.path.getmtime(path), tz=datetime.timezone.utc
+            ).isoformat(),
+        }
+    overall = "degraded" if any_missing else ("stale" if any_stale else "fresh")
+    return {
+        "status": overall,
+        "models": results,
+        "threshold_days": 14,
+    }
+
+
 @app.get("/api/health/scanner", tags=["System"])
 async def health_scanner():
     """Scanner health — timing, error rate, last run timestamp.
