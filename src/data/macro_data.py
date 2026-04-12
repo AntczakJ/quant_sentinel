@@ -449,6 +449,18 @@ def get_full_macro_signal() -> Dict:
 
     Returns composite signal and all raw data for transparency.
     """
+    # Backtest mode: macro data (FRED series, Myfxbook retail) is only
+    # available for TODAY — applying it to historical bars = look-ahead.
+    # Seasonality is deterministic (month/weekday) so can stay. But to
+    # keep backtest behavior comparable to strategy-only signal, we
+    # short-circuit the whole thing to neutral.
+    if os.environ.get("QUANT_BACKTEST_MODE") == "1":
+        return {
+            "composite_signal": 0,
+            "signal_text": "backtest neutral",
+            "signals_aligned": False,
+            "data": {"backtest_mode": True},
+        }
     fred = get_fred_data()
     sentiment = get_retail_sentiment()
     seasonality = get_seasonality_signal()
