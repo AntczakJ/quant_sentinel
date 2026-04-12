@@ -351,7 +351,7 @@ class DQNAgent:
         targets      = rewards + self.gamma * max_q_next * (~dones)
         q_values[idx, actions] = targets
 
-        self.model.fit(states, q_values, epochs=1, verbose=0, batch_size=effective_batch)
+        self.model.fit(states, q_values, epochs=1, verbose=0, batch_size=effective_batch, shuffle=False)
 
         self.train_step += 1
 
