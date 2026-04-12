@@ -51,10 +51,19 @@ def enforce_isolation(backtest_db_path: str = "data/backtest.db") -> None:
     # 3. Mark process as backtest-mode (for any code that may check)
     os.environ["QUANT_BACKTEST_MODE"] = "1"
 
-    # 4. Ensure parent dir exists
+    # 4. Relaxed filter mode — backtest uses yfinance data (no Twelve Data
+    # USD/JPY real-time correlation, no Myfxbook macro feed, etc). Production
+    # scanner's confluence threshold assumes these sources are available.
+    # In backtest, allow confluence>=2 (was 3) and non-blocking "Stable"
+    # structure so we actually see the strategy's ability to generate signals.
+    # Directional alignment + RSI extreme checks stay strict (they're not
+    # data-source-dependent).
+    os.environ.setdefault("QUANT_BACKTEST_RELAX", "1")
+
+    # 5. Ensure parent dir exists
     Path(backtest_db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # 5. Defensive: sanity-check that running DB file isn't the prod one
+    # 6. Defensive: sanity-check that running DB file isn't the prod one
     current_path = Path(os.environ["DATABASE_URL"]).resolve()
     for prod_name in PROD_DB_FILENAMES:
         prod_path = Path("data") / prod_name
@@ -66,6 +75,8 @@ def enforce_isolation(backtest_db_path: str = "data/backtest.db") -> None:
     print(f"[backtest isolation] DATABASE_URL={os.environ['DATABASE_URL']}", flush=True)
     print(f"[backtest isolation] TURSO_URL=(disabled)", flush=True)
     print(f"[backtest isolation] QUANT_BACKTEST_MODE=1", flush=True)
+    print(f"[backtest isolation] QUANT_BACKTEST_RELAX={os.environ.get('QUANT_BACKTEST_RELAX','0')} "
+          f"(confluence>=2, Stable allowed — compensates for yfinance data gap)", flush=True)
 
 
 def is_backtest_mode() -> bool:
