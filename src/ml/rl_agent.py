@@ -665,7 +665,7 @@ class DQNAgent:
                     self.memory = PrioritizedReplayBuffer.from_list(
                         saved_memory, capacity=capacity)
                     self.memory.beta = p.get('memory_beta', 0.4)
-                print(f"  📦 Wczytano replay buffer: {len(self.memory)} doświadczeń (PER)")
+                print(f"  [PER] Wczytano replay buffer: {len(self.memory)} doswiadczen")
 
     def build_state(self, close_prices, balance=1.0, position=0):
         """Build state vector for prediction: normalized returns + balance + position.
