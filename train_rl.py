@@ -17,8 +17,8 @@ import numpy as np
 from src.ml.rl_agent import TradingEnv, DQNAgent
 from src.core.logger import logger
 
-# Ustawienia trenowania
-EPISODES = 300          # więcej epizodów dla lepszej zbieżności
+# Ustawienia trenowania (override: python train_rl.py 500)
+EPISODES = 300
 SEQ_LEN = 20            # długość okna stanu (liczba świec)
 INITIAL_BALANCE = 10000
 TRANSACTION_COST = 0.001
@@ -59,8 +59,15 @@ def fetch_historical_data(symbol="GC=F", periods=None, intervals=None):
 
 
 def main():
+    global EPISODES
+    if len(sys.argv) > 1:
+        try:
+            EPISODES = int(sys.argv[1])
+        except ValueError:
+            pass
+
     print("=" * 60)
-    print("🧠 TRENOWANIE AGENTA RL (Double DQN)")
+    print(f"🧠 TRENOWANIE AGENTA RL (Double DQN) — {EPISODES} epizodów")
     print("=" * 60)
 
     # 1. Pobierz dane
@@ -94,6 +101,8 @@ def main():
     best_win_rate = 0
     info = {}
 
+    import gc
+
     for episode in range(EPISODES):
         state = env.reset()
         total_reward = 0
@@ -119,13 +128,32 @@ def main():
             best_balance = balance
             best_win_rate = win_rate
 
-        if (episode + 1) % 10 == 0 or episode == 0:
+        # Every episode: short progress line
+        print(f"  [{episode+1}/{EPISODES}] reward={total_reward:.2f} bal=${balance:.0f} ε={agent.epsilon:.3f}", flush=True)
+
+        # Every 50 episodes: full status report
+        if (episode + 1) % 50 == 0:
             logger.info(
-                f"Ep {episode+1}/{EPISODES} | "
-                f"reward: {total_reward:.4f} | avg: {avg:.4f} | "
-                f"balance: ${balance:.0f} | trades: {info.get('total_trades', 0)} | "
-                f"win_rate: {win_rate:.0f}% | ε: {agent.epsilon:.3f}"
+                f"═══ Ep {episode+1}/{EPISODES} ═══ "
+                f"avg_reward={avg:.4f} | balance=${balance:.0f} | "
+                f"trades={info.get('total_trades', 0)} | win_rate={win_rate:.0f}% | "
+                f"best_balance=${best_balance:.0f} | ε={agent.epsilon:.3f}"
             )
+            # Save checkpoint every 50 episodes (crash-safe)
+            try:
+                agent.save("models/rl_agent.keras")
+                print(f"  💾 Checkpoint saved (ep {episode+1})", flush=True)
+            except Exception as e:
+                print(f"  ⚠️ Checkpoint save failed: {e}", flush=True)
+
+        # Memory cleanup every 100 episodes to prevent PyCharm OOM
+        if (episode + 1) % 100 == 0:
+            gc.collect()
+            try:
+                import tensorflow as tf
+                tf.keras.backend.clear_session()
+            except Exception:
+                pass
 
     # 6. Walidacja na danych testowych
     print("\n📊 Walidacja na danych out-of-sample...")

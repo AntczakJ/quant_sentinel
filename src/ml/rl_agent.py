@@ -274,7 +274,7 @@ class DQNAgent:
                  target_update_freq=200, tau=0.005):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=50000)  # Większa pamięć — lepsze replay sampling
+        self.memory = deque(maxlen=20000)  # Balanced: enough for learning, not OOM
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
