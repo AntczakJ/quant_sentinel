@@ -6,6 +6,7 @@
 import { useState, useMemo } from 'react';
 import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, ModelsStalenessBadge } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
+import { PageHeader } from '../components/ui';
 import { trainingAPI } from '../api/client';
 import { Play, Loader2, CheckCircle, XCircle } from 'lucide-react';
 
@@ -111,9 +112,12 @@ export default function ModelsPage() {
 
   return (
     <div className="max-w-[1600px] mx-auto">
-      <div className="flex items-center justify-end mb-3 px-2">
-        <ModelsStalenessBadge />
-      </div>
+      <PageHeader
+        eyebrow="Ensemble"
+        title="ML Models"
+        subtitle="Live accuracy, training history, drift alerts, and production backtests."
+        actions={<ModelsStalenessBadge />}
+      />
       <DraggableGrid pageKey="models" widgets={widgets} rowHeight={70} />
     </div>
   );

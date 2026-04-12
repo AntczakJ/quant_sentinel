@@ -508,6 +508,7 @@ export function CandlestickChart() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [marketClosed, setMarketClosed] = useState(false);
   const [legendData, setLegendData] = useState<LegendData | null>(null);
   const deferredLegend = useDeferredValue(legendData);
   const [smcLabels, setSmcLabels] = useState<Array<{ x: number; y: number; label: string; color: string }>>([]);
@@ -920,10 +921,14 @@ export function CandlestickChart() {
 
   /* ── Data fetching ─────────────────────────────────────────────────────── */
   const fetchData = useCallback(async (signal?: AbortSignal) => {
+    // Marker to prove which build is running. If you don't see this in the
+    // console on each TF switch, the browser is serving a cached module.
+    console.log('[chart] fetchData start', selectedInterval, 'v2');
+    // Clear error unconditionally on entry — never leave a stale banner up.
+    setError(null);
     try {
       if (isFirstLoad.current) {setLoading(true);}
       else {setRefreshing(true);}
-      setError(null);
 
       // ── Try IndexedDB cache first for instant render ──
       let rawCandles: Candle[] | null = null;
@@ -931,9 +936,36 @@ export function CandlestickChart() {
         rawCandles = await getCachedCandles(selectedInterval);
       }
 
-      // ── Fetch fresh data from API ──
-      const freshCandles: Candle[] = await marketAPI.getCandles('XAU/USD', selectedInterval, 200);
+      // ── Fetch fresh data from API (with market-closed awareness) ──
+      const { candles: freshCandles, marketClosed } =
+        await marketAPI.getCandlesWithStatus('XAU/USD', selectedInterval, 200);
       if (signal?.aborted) {return;}
+      setMarketClosed(marketClosed);
+
+      // When backend explicitly says "market closed + no history", trust it
+      // over any stale IndexedDB cache (which may contain zebra candles from
+      // a pre-fix session). Rendering the overlay beats rendering garbage.
+      if (marketClosed && !freshCandles?.length) {
+        rawCandles = null;
+        // Proactively clear stale cache so next open-session load is clean.
+        void setCachedCandles(selectedInterval, []);
+        // Wipe existing canvas so residual zebra bars don't peek through
+        // the overlay. Catch & ignore — empty setData is a no-op on some
+        // lightweight-charts versions.
+        try {
+          candleSeriesRef.current?.setData([]);
+          volumeSeriesRef.current?.setData([]);
+          emaSeriesRef.current?.setData([]);
+          bbUpperRef.current?.setData([]);
+          bbMiddleRef.current?.setData([]);
+          bbLowerRef.current?.setData([]);
+        } catch { /* ignore clear errors */ }
+        rawCandlesRef.current = [];
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
       if (freshCandles?.length) {
         rawCandles = freshCandles;
         // Store to IndexedDB in background (non-blocking)
@@ -1257,7 +1289,24 @@ export function CandlestickChart() {
       }
 
       isFirstLoad.current = false;
-    } catch {
+    } catch (err) {
+      // Log the real error so we can diagnose 5m/weekend edge cases.
+      console.error('[chart] fetchData failed for', selectedInterval, err);
+
+      // Probe the endpoint's market_closed flag directly. If the backend
+      // says the market is closed we suppress the error banner and let the
+      // "Market closed" overlay handle the empty state — users shouldn't
+      // see red errors on a weekend when the system is working as designed.
+      try {
+        const probe = await marketAPI.getCandlesWithStatus('XAU/USD', selectedInterval, 1);
+        if (probe.marketClosed) {
+          setMarketClosed(true);
+          rawCandlesRef.current = [];
+          // Don't set error — overlay will render instead.
+          return;
+        }
+      } catch { /* probe failed too — fall through to error UI */ }
+
       if (isFirstLoad.current) {
         setError('Failed to load chart data');
         toast.error('Chart data unavailable');
@@ -1271,6 +1320,14 @@ export function CandlestickChart() {
 
   /* ── Fetch on mount + interval change + 30s auto-refresh ───────────────── */
   useEffect(() => {
+    // Hard reset on TF switch: clear sticky error/marketClosed/loading state
+    // so the previous interval's UI doesn't bleed into the next one. This
+    // fixes the case where switching to a closed-market TF (5m on weekend)
+    // left a prior "Failed to load" banner visible.
+    setError(null);
+    setMarketClosed(false);
+    setLoading(true);
+
     const controller = new AbortController();
     void fetchData(controller.signal);
     const timer = setInterval(() => void fetchData(controller.signal), 30_000);
@@ -1577,6 +1634,49 @@ export function CandlestickChart() {
 
       {/* Main candlestick + volume chart */}
       <div className="relative flex-1 min-h-0">
+        {/* Market-closed banner — replayed last session (chart still visible) */}
+        {marketClosed && rawCandlesRef.current.length > 0 && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full
+                            bg-dark-surface/90 border border-th-border backdrop-blur-md
+                            shadow-panel text-[11px] font-medium text-th-secondary">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inset-0 rounded-full bg-accent-orange/40 animate-ping" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-accent-orange" />
+              </span>
+              <span>Market closed · showing last session</span>
+            </div>
+          </div>
+        )}
+
+        {/* Market-closed FULL overlay — shown when backend has no history to
+            replay (e.g. first open during a weekend). Replaces the empty
+            chart with an informative panel so users don't see zebra garbage. */}
+        {marketClosed && rawCandlesRef.current.length === 0 && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--chart-bg)]">
+            <div className="text-center max-w-sm px-6">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl
+                              bg-accent-orange/[0.08] border border-accent-orange/20 mb-4">
+                <span className="relative flex h-3 w-3">
+                  <span className="absolute inset-0 rounded-full bg-accent-orange/40 animate-ping" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-accent-orange" />
+                </span>
+              </div>
+              <h3 className="text-lg font-display font-semibold text-th tracking-tight">
+                Market closed
+              </h3>
+              <p className="mt-2 text-sm text-th-muted leading-relaxed">
+                XAU/USD reopens Sunday 23:00 CET.
+                Live candles will return automatically.
+              </p>
+              <p className="mt-4 text-[11px] text-th-dim">
+                No chart yet? The app has not seen an open session — come back
+                once the market opens and the history will start populating.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Drawing Toolbar (left vertical strip) */}
         <DrawingToolbar
           activeTool={activeTool}

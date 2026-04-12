@@ -90,101 +90,127 @@ def get_latest_news() -> List[Dict]:
     return unique[:20]
 
 
-CALENDAR_SOURCES = [
-    "https://www.forexfactory.com/ffcal_week_this.xml",
-    "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-]
+CALENDAR_JSON_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+CALENDAR_XML_URL = "https://www.forexfactory.com/ffcal_week_this.xml"
 
-CALENDAR_IMPACT_KEYWORDS = {
-    "high": ["nfp", "non-farm", "cpi", "fomc", "interest rate", "gdp", "pce",
-             "employment", "payroll", "fed", "powell", "retail sales", "ism"],
-    "medium": ["pmi", "housing", "consumer confidence", "durable goods",
-               "trade balance", "unemployment", "jolts", "eci"],
-}
+# Majors + gold-relevant crosses. DXY driven by EUR/JPY/GBP/CAD/CHF/SEK, so
+# these currencies' events move XAU/USD even if not USD-denominated. "All" covers
+# IMF/G20/OPEC meetings.
+CALENDAR_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "CNY", "All"}
+
+# Grace window: events within last 6h kept as "just happened" (actual data may
+# still be arriving). Anything older is filtered out.
+_PAST_GRACE_HOURS = 6
+
+# Hard cap on events returned — 80 covers ~1 week of majors at all impact levels
+# without overwhelming the UI.
+_MAX_EVENTS = 80
+
+
+def _parse_event_date(date_str: str):
+    """Parse ForexFactory ISO date into tz-aware UTC datetime. Returns None on
+    failure so callers can skip the row instead of crashing the endpoint."""
+    from datetime import datetime, timezone
+    if not date_str:
+        return None
+    try:
+        ts = date_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
 
 
 @cached('calendar_structured', ttl=300)
 def get_economic_calendar() -> List[Dict]:
     """
-    Fetches upcoming economic events. Tries multiple sources with fallback.
-    Each item: {event, date, time, currency, impact, forecast, previous, actual}
+    Fetches economic events for the current week from ForexFactory.
+
+    Returns events within [now - 6h, +inf) across all majors, sorted ascending.
+    The frontend splits into upcoming vs recent based on countdown.
+
+    Each item: {event, date, time, currency, impact, forecast, previous, actual,
+                date_utc, ts_utc} where date_utc is ISO string and ts_utc is
+                unix epoch seconds (frontend uses ts_utc to avoid re-parsing).
     """
+    from datetime import datetime, timezone, timedelta
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=_PAST_GRACE_HOURS)
     events: List[Dict] = []
 
-    # Source 1: ForexFactory JSON feed (more reliable than XML)
+    def _add_entry(entry: Dict, from_xml: bool = False) -> None:
+        currency = (entry.get('country') or '').strip()
+        if currency and currency not in CALENDAR_CURRENCIES:
+            return
+        date_str = entry.get('date', '')
+        dt = _parse_event_date(date_str)
+        if dt is None or dt < cutoff:
+            return
+        impact_raw = (entry.get('impact') or 'Low').strip()
+        events.append({
+            "event": entry.get('title', 'Unknown Event'),
+            "date": date_str,
+            "time": entry.get('time', ''),
+            "currency": currency or 'All',
+            "impact": impact_raw.lower(),
+            "forecast": entry.get('forecast', ''),
+            "previous": entry.get('previous', ''),
+            "actual": entry.get('actual', ''),
+            "date_utc": dt.isoformat(),
+            "ts_utc": int(dt.timestamp()),
+        })
+
+    # Source 1: FairEconomy JSON mirror — canonical feed, ~100 events/week
     try:
-        resp = requests.get(CALENDAR_SOURCES[1], headers=headers, timeout=10)
+        resp = requests.get(CALENDAR_JSON_URL, headers=headers, timeout=10)
         if resp.status_code == 200:
-            data = resp.json()
-            for entry in data:
-                currency = entry.get('country', '')
-                if currency != 'USD':
-                    continue
-                impact = entry.get('impact', 'Low')
-                if impact not in ('High', 'Medium'):
-                    continue
-                events.append({
-                    "event": entry.get('title', 'Unknown'),
-                    "date": entry.get('date', ''),
-                    "time": entry.get('time', ''),
-                    "currency": currency,
-                    "impact": impact.lower(),
-                    "forecast": entry.get('forecast', ''),
-                    "previous": entry.get('previous', ''),
-                    "actual": entry.get('actual', ''),
-                })
-            if events:
-                return events[:15]
+            for entry in resp.json():
+                _add_entry(entry)
     except Exception as e:
         logger.debug(f"Calendar JSON source failed: {e}")
 
-    # Source 2: ForexFactory XML RSS
-    try:
-        resp = requests.get(CALENDAR_SOURCES[0], headers=headers, timeout=10)
-        feed = feedparser.parse(resp.content)
-        for entry in feed.entries:
-            currency = entry.get('country', '')
-            impact = entry.get('impact', 'low')
-            if currency == 'USD' and impact in ('High', 'Medium', 'high', 'medium'):
-                events.append({
-                    "event": entry.get('title', 'Unknown Event'),
-                    "date": entry.get('date', ''),
-                    "time": entry.get('time', ''),
-                    "currency": currency,
-                    "impact": impact.lower(),
-                    "forecast": entry.get('forecast', ''),
-                    "previous": entry.get('previous', ''),
-                    "actual": entry.get('actual', ''),
-                })
-        if events:
-            return events[:15]
-    except Exception as e:
-        logger.debug(f"Calendar XML source failed: {e}")
+    # Source 2: ForexFactory XML — fallback if JSON feed down
+    if not events:
+        try:
+            resp = requests.get(CALENDAR_XML_URL, headers=headers, timeout=10)
+            feed = feedparser.parse(resp.content)
+            for entry in feed.entries:
+                _add_entry(dict(entry), from_xml=True)
+        except Exception as e:
+            logger.debug(f"Calendar XML source failed: {e}")
 
-    # Source 3: Generate from known schedule (static fallback)
-    from datetime import datetime, timedelta
-    now = datetime.utcnow()
-    # Common recurring USD events
-    known_events = [
-        {"event": "Initial Jobless Claims", "impact": "medium", "recurring": "weekly"},
-        {"event": "CPI m/m", "impact": "high", "recurring": "monthly"},
-        {"event": "Non-Farm Payrolls", "impact": "high", "recurring": "monthly"},
-        {"event": "FOMC Statement", "impact": "high", "recurring": "6weeks"},
-    ]
-    for ev in known_events:
-        events.append({
-            "event": ev["event"],
-            "date": (now + timedelta(days=3)).strftime("%Y-%m-%d"),
-            "time": "13:30",
-            "currency": "USD",
-            "impact": ev["impact"],
-            "forecast": "",
-            "previous": "",
-            "actual": "",
-        })
+    # Source 3: Static fallback — only if everything else failed. Covers the
+    # next ~2 weeks with recurring USD events. Impact-tagged so UI still
+    # renders meaningfully during an outage.
+    if not events:
+        known = [
+            ("Initial Jobless Claims", "medium", 2),
+            ("CPI m/m", "high", 5),
+            ("Non-Farm Payrolls", "high", 7),
+            ("FOMC Statement", "high", 10),
+            ("Retail Sales m/m", "medium", 4),
+            ("PPI m/m", "medium", 6),
+        ]
+        for title, impact, days in known:
+            dt = (now + timedelta(days=days)).replace(hour=12, minute=30, second=0, microsecond=0)
+            events.append({
+                "event": title,
+                "date": dt.isoformat(),
+                "time": dt.strftime("%H:%M"),
+                "currency": "USD",
+                "impact": impact,
+                "forecast": "",
+                "previous": "",
+                "actual": "",
+                "date_utc": dt.isoformat(),
+                "ts_utc": int(dt.timestamp()),
+            })
 
-    return events
+    events.sort(key=lambda e: e["ts_utc"])
+    return events[:_MAX_EVENTS]
 
 
 def requires_clear_calendar(minutes_window: int = 15, impacts: tuple = ("high",)):

@@ -3,12 +3,14 @@
  */
 
 import { useEffect, useState, memo } from 'react';
+import { motion } from 'motion/react';
 import { useTradingStore } from '../../store/tradingStore';
 import { portfolioAPI, signalsAPI } from '../../api/client';
 import type { Portfolio } from '../../types/trading';
-import { Edit2, Plus, Loader2 } from 'lucide-react';
+import { Edit2, Plus, Loader2, TrendingUp, TrendingDown } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { AnimatedNumber } from '../ui/AnimatedNumber';
+import { staggerContainer, staggerItem } from '../../lib/motion';
 
 export const PortfolioStats = memo(function PortfolioStats() {
   const toast = useToast();
@@ -133,28 +135,36 @@ export const PortfolioStats = memo(function PortfolioStats() {
     ? ((portfolio.pnl / portfolio.initial_balance) * 100).toFixed(2)
     : '0.00';
 
+  const TrendIcon = pnlPositive ? TrendingUp : TrendingDown;
+
   return (
-    <div className="space-y-4">
-      {/* Header with Add Trade */}
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] text-th-muted font-medium uppercase tracking-widest">Status</span>
+    <motion.div
+      variants={staggerContainer(0.05)}
+      initial="hidden"
+      animate="show"
+      className="space-y-4"
+    >
+      {/* Header with Quick Trade */}
+      <motion.div variants={staggerItem} className="flex items-center justify-between">
+        <span className="text-[10px] text-th-muted font-medium uppercase tracking-[0.14em]">Status</span>
         <button
           onClick={() => { void handleAddTrade(); }}
           disabled={addingTrade}
-          className="text-[11px] bg-accent-green/10 hover:bg-accent-green/20 border border-accent-green/25 rounded-lg px-3 py-1 text-accent-green transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50"
+          className="text-[11px] bg-accent-green/[0.08] hover:bg-accent-green/15 border border-accent-green/25 rounded-lg px-3 py-1.5 text-accent-green transition-colors flex items-center gap-1.5 disabled:opacity-50"
         >
           {addingTrade ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
           {addingTrade ? 'Wait...' : 'Quick Trade'}
         </button>
-      </div>
+      </motion.div>
 
       {/* Balance + Equity row */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+      <motion.div variants={staggerItem} className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         {/* Balance */}
-        <div className="stat-item">
+        <div className="stat-item transition-colors hover:border-th-border-h">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] text-th-muted font-medium uppercase tracking-widest">Balance</span>
-            <button onClick={() => setShowEditBalance(!showEditBalance)} className="text-th-dim hover:text-th-secondary transition-colors">
+            <span className="text-[10px] text-th-muted font-medium uppercase tracking-[0.14em]">Balance</span>
+            <button onClick={() => setShowEditBalance(!showEditBalance)} aria-label="Edit balance"
+                    className="text-th-dim hover:text-th-secondary transition-colors">
               <Edit2 size={10} />
             </button>
           </div>
@@ -169,61 +179,86 @@ export const PortfolioStats = memo(function PortfolioStats() {
             </div>
           ) : (
             <>
-              <AnimatedNumber value={portfolio.balance} decimals={2} suffix=" PLN" className="text-xl font-bold text-accent-green font-mono tracking-tight" />
-              <div className="text-[10px] text-th-dim mt-1">Initial: {portfolio.initial_balance.toFixed(2)}</div>
+              <AnimatedNumber value={portfolio.balance} decimals={2} suffix=" PLN"
+                className="text-[22px] font-display font-semibold text-accent-green font-mono tabular-nums tracking-tight" />
+              <div className="text-[10px] text-th-dim mt-1 tabular-nums">Initial: {portfolio.initial_balance.toFixed(2)}</div>
             </>
           )}
         </div>
 
         {/* Equity */}
-        <div className="stat-item">
-          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1.5">Equity</div>
-          <AnimatedNumber value={portfolio.equity} decimals={2} suffix=" PLN" className="text-xl font-bold text-accent-blue font-mono tracking-tight" />
+        <div className="stat-item transition-colors hover:border-th-border-h">
+          <div className="text-[10px] text-th-muted font-medium uppercase tracking-[0.14em] mb-1.5">Equity</div>
+          <AnimatedNumber value={portfolio.equity} decimals={2} suffix=" PLN"
+            className="text-[22px] font-display font-semibold text-accent-blue font-mono tabular-nums tracking-tight" />
         </div>
-      </div>
+      </motion.div>
 
-      {/* P&L */}
-      <div className={`rounded-xl p-4 border ${pnlPositive ? 'bg-accent-green/5 border-accent-green/15' : 'bg-accent-red/5 border-accent-red/15'}`}>
-        <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1.5">P&L</div>
-        <div className="flex items-end justify-between">
-          <AnimatedNumber value={portfolio.pnl} decimals={2} prefix={pnlPositive ? '+' : ''} className={`text-2xl font-bold ${pnlColor} font-mono tracking-tight`} />
-          <div className={`text-sm font-semibold ${pnlColor} font-mono`}>{pnlPositive ? '+' : ''}{returnPct}%</div>
+      {/* P&L — hero tile with gradient wash + trend icon */}
+      <motion.div
+        variants={staggerItem}
+        className={`relative overflow-hidden rounded-xl p-4 border
+                    ${pnlPositive ? 'border-accent-green/20' : 'border-accent-red/20'}`}
+      >
+        <div
+          className={`absolute inset-0 pointer-events-none opacity-60
+                      ${pnlPositive
+                        ? 'bg-gradient-to-br from-accent-green/[0.08] via-transparent to-transparent'
+                        : 'bg-gradient-to-br from-accent-red/[0.08] via-transparent to-transparent'}`}
+          aria-hidden
+        />
+        <div className="relative">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] text-th-muted font-medium uppercase tracking-[0.14em]">Profit &amp; Loss</span>
+            <TrendIcon size={14} className={pnlColor} />
+          </div>
+          <div className="flex items-end justify-between gap-3">
+            <AnimatedNumber value={portfolio.pnl} decimals={2} prefix={pnlPositive ? '+' : ''}
+              className={`text-[28px] font-display font-semibold ${pnlColor} font-mono tabular-nums tracking-tight leading-none`} />
+            <div className={`text-sm font-semibold ${pnlColor} font-mono tabular-nums pb-1`}>
+              {pnlPositive ? '+' : ''}{returnPct}%
+            </div>
+          </div>
         </div>
-      </div>
+      </motion.div>
 
-      {/* Position */}
-      {portfolio.has_position ? (
-        <div className="stat-item !border-accent-blue/20">
-          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-2">Aktywna Pozycja</div>
-          <div className="flex items-center justify-between">
-            <span className={`text-base font-bold ${portfolio.position_type === 'LONG' ? 'text-accent-green' : 'text-accent-red'}`}>
-              {portfolio.position_type}
-            </span>
-            <span className="text-xs text-th-muted font-mono">${portfolio.position_entry?.toFixed(2)}</span>
+      {/* Active position */}
+      <motion.div variants={staggerItem}>
+        {portfolio.has_position ? (
+          <div className="stat-item !border-accent-blue/25 bg-accent-blue/[0.03]">
+            <div className="text-[10px] text-th-muted font-medium uppercase tracking-[0.14em] mb-2">Active position</div>
+            <div className="flex items-center justify-between">
+              <span className={`text-base font-bold ${portfolio.position_type === 'LONG' ? 'text-accent-green' : 'text-accent-red'}`}>
+                {portfolio.position_type}
+              </span>
+              <span className="text-xs text-th-muted font-mono tabular-nums">${portfolio.position_entry?.toFixed(2)}</span>
+            </div>
+            <div className={`text-sm font-bold mt-1.5 font-mono tabular-nums ${(portfolio.position_unrealized_pnl ?? 0) >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+              Unrealized: {(portfolio.position_unrealized_pnl ?? 0) >= 0 ? '+' : ''}{portfolio.position_unrealized_pnl?.toFixed(2)}
+            </div>
           </div>
-          <div className={`text-sm font-bold mt-1.5 font-mono ${(portfolio.position_unrealized_pnl ?? 0) >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-            Niezreal.: {(portfolio.position_unrealized_pnl ?? 0) >= 0 ? '+' : ''}{portfolio.position_unrealized_pnl?.toFixed(2)}
+        ) : (
+          <div className="stat-item text-center">
+            <span className="text-xs text-th-dim">No active position</span>
           </div>
-        </div>
-      ) : (
-        <div className="stat-item text-center">
-          <span className="text-xs text-th-dim">Brak aktywnej pozycji</span>
-        </div>
-      )}
+        )}
+      </motion.div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="stat-item">
-          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1">ROE</div>
-          <div className={`text-base font-bold font-mono ${pnlPositive ? 'text-accent-green' : 'text-accent-red'}`}>{returnPct}%</div>
-        </div>
-        <div className="stat-item">
-          <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1">Win Rate</div>
-          <div className={`text-base font-bold font-mono ${winRate !== null ? (winRate >= 50 ? 'text-accent-green' : 'text-accent-red') : 'text-th-dim'}`}>
-            {winRate !== null ? `${winRate.toFixed(1)}%` : '--'}
+      <motion.div variants={staggerItem} className="grid grid-cols-2 gap-3">
+        <div className="stat-item transition-colors hover:border-th-border-h">
+          <div className="text-[10px] text-th-muted font-medium uppercase tracking-[0.14em] mb-1">ROE</div>
+          <div className={`text-base font-bold font-mono tabular-nums ${pnlPositive ? 'text-accent-green' : 'text-accent-red'}`}>
+            {returnPct}%
           </div>
         </div>
-      </div>
-    </div>
+        <div className="stat-item transition-colors hover:border-th-border-h">
+          <div className="text-[10px] text-th-muted font-medium uppercase tracking-[0.14em] mb-1">Win Rate</div>
+          <div className={`text-base font-bold font-mono tabular-nums ${winRate !== null ? (winRate >= 50 ? 'text-accent-green' : 'text-accent-red') : 'text-th-dim'}`}>
+            {winRate !== null ? `${winRate.toFixed(1)}%` : '—'}
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 });

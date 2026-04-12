@@ -195,6 +195,22 @@ export const marketAPI = {
     return response.data.candles;
   },
 
+  /**
+   * Fetch candles AND the market-closed flag. Chart uses this variant so it
+   * can render a "Market closed" overlay when the response is a replayed
+   * last-session snapshot (frozen over the weekend) rather than live data.
+   */
+  getCandlesWithStatus: async (symbol: string = 'XAU/USD', interval: string = '15m', limit: number = 200) => {
+    const response = await client.get<{ candles: Candle[]; market_closed?: boolean }>('/market/candles', {
+      params: { symbol, interval, limit },
+      timeout: 20_000,
+    });
+    return {
+      candles: response.data.candles,
+      marketClosed: Boolean(response.data.market_closed),
+    };
+  },
+
   getTicker: async (symbol: string = 'XAU/USD') => {
     const response = await client.get<Ticker>('/market/ticker', {
       params: { symbol },

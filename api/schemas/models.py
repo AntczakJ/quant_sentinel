@@ -25,6 +25,10 @@ class CandleResponse(BaseModel):
     interval: str
     candles: List[Candle]
     limit: int
+    # When True the response represents the last closed trading session, not
+    # live data. Frontend shows a "Market closed" overlay so users don't
+    # mistake stale candles for a live feed.
+    market_closed: bool = False
 
 class TickerResponse(BaseModel):
     """Live ticker data"""

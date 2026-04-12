@@ -6,6 +6,7 @@
 import { useMemo } from 'react';
 import { TradeHistory, PortfolioStats, SignalHistory, RiskMetrics, ExecutionQuality, EquityCurve, ExportButtons, TradeHeatmap } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
+import { PageHeader } from '../components/ui';
 
 export default function TradesPage() {
   const widgets: GridWidget[] = useMemo(() => [
@@ -61,6 +62,11 @@ export default function TradesPage() {
 
   return (
     <div className="max-w-[1600px] mx-auto">
+      <PageHeader
+        eyebrow="Performance"
+        title="Trades"
+        subtitle="Portfolio, executed orders, risk profile, and the equity curve they produced."
+      />
       <DraggableGrid
         pageKey="trades"
         widgets={widgets}

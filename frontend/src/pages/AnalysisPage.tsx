@@ -6,6 +6,7 @@
 import { useMemo } from 'react';
 import { AnalysisPanel, SignalHistory, PatternAnalytics } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
+import { PageHeader } from '../components/ui';
 
 export default function AnalysisPage() {
   const widgets: GridWidget[] = useMemo(() => [
@@ -31,6 +32,11 @@ export default function AnalysisPage() {
 
   return (
     <div className="max-w-[1600px] mx-auto">
+      <PageHeader
+        eyebrow="Quant Pro"
+        title="Analysis"
+        subtitle="Market narrative, signal history, and pattern performance in one board."
+      />
       <DraggableGrid pageKey="analysis" widgets={widgets} rowHeight={70} />
     </div>
   );

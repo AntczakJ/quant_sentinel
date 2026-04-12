@@ -37,6 +37,12 @@ _INDICATOR_TTL = 120
 _TICKER_TTL = 60             # 60 seconds — matches frontend polling cadence (saves credits)
 _VP_TTL = 120                # 120 seconds — volume profile reuses candle data anyway
 
+# Last-open-session snapshot per (symbol, interval, limit). Updated on every
+# successful market-open fetch, replayed when market is closed so the chart
+# shows the last session's real data instead of weekend flat bars.
+# Key: f"{symbol}_{interval}_{limit}" → {"candles": List[Candle], "saved_at": float}
+_last_session_cache: dict = {}
+
 # Dedup locks — only one external API call per resource at a time
 import asyncio as _asyncio
 _candle_fetch_lock = _asyncio.Lock()
@@ -202,7 +208,7 @@ def get_mock_candles(symbol: str, interval: str, count: int):
     return df
 
 
-def _filter_trading_candles(df, symbol: str, desired_count: int):
+def _filter_trading_candles(df, symbol: str, desired_count: int, strict: bool = False):
     """
     Filter out non-trading period candles — matches TradingView behaviour.
 
@@ -213,6 +219,10 @@ def _filter_trading_candles(df, symbol: str, desired_count: int):
 
     Twelve Data still emits candles during these dead windows (with
     near-zero spread), so we filter them out by timestamp.
+
+    When `strict=True` we never fall back to unfiltered data — even if only a
+    handful of active candles are found, we return them as-is. Used on the
+    weekend cold-start path where unfiltered data would be all zebra bars.
     """
     import pandas as pd
 
@@ -227,6 +237,23 @@ def _filter_trading_candles(df, symbol: str, desired_count: int):
     if ts.isna().all():
         # Fallback: timestamps unparseable → return as-is
         return df.tail(desired_count).reset_index(drop=True)
+
+    # ── Future-timestamp guard ──────────────────────────────────────────
+    # Twelve Data occasionally returns placeholder candles for times that
+    # haven't happened yet (e.g. forward-filling over a weekend with the last
+    # known close + bid/ask noise). These render as zebra bars on the chart.
+    # Anything stamped more than one minute ahead of real wall-clock time is
+    # invalid data, regardless of session status.
+    from datetime import datetime as _dt, timezone as _tz
+    now_utc = pd.Timestamp(_dt.now(_tz.utc))
+    future_mask = ts > (now_utc + pd.Timedelta(minutes=1))
+    if future_mask.any():
+        n_future = int(future_mask.sum())
+        logger.warning(f"⏩ Dropped {n_future} future-stamped candles (Twelve Data filler) [{symbol}]")
+        df = df[~future_mask].reset_index(drop=True)
+        ts = ts[~future_mask].reset_index(drop=True)
+        if df.empty:
+            return df
 
     if 'XAU' in symbol.upper():
         # ── XAU/USD: convert to CET/CEST for accurate DST-aware filtering ──
@@ -268,9 +295,32 @@ def _filter_trading_candles(df, symbol: str, desired_count: int):
         )
         return active.tail(desired_count).reset_index(drop=True)
 
+    # Strict mode never falls back — return whatever active candles we found
+    # (even if very few). This prevents closed-market zebra bars from leaking
+    # through the "last session" path.
+    if strict:
+        logger.warning(
+            f"🌙 Strict filter: only {len(active)} active candles, "
+            f"returning them (no unfiltered fallback) [{symbol}]"
+        )
+        return active.tail(desired_count).reset_index(drop=True)
+
     # Not enough active candles (e.g. entire dataset is weekend) → return original
     logger.warning(f"⚠️ Session filter: only {len(active)} active candles, returning unfiltered")
     return df.tail(desired_count).reset_index(drop=True)
+
+
+def _is_market_open_now(symbol: str) -> bool:
+    """Wrapper around smc_engine.is_market_open. Non-XAU symbols default to
+    open (forex is 24/5 broadly similar, don't block users on those)."""
+    if 'XAU' not in symbol.upper():
+        return True
+    try:
+        from src.trading.smc_engine import is_market_open
+        return is_market_open()
+    except Exception as e:
+        logger.debug(f"is_market_open check failed ({e}) — assuming open")
+        return True
 
 
 @router.get(
@@ -288,19 +338,49 @@ async def get_candles(
     Get candlestick data for a symbol.
 
     Supported intervals: 5m, 15m, 1h, 4h
-    Falls back to mock data if API rate limit is hit.
-    Results are cached for 60 seconds to reduce Twelve Data API usage.
+    Results are cached for 120 seconds to reduce Twelve Data API usage.
     Non-trading (weekend/closed) candles are filtered out like TradingView.
+
+    Weekend behaviour: when the XAU market is closed we serve the last cached
+    open-session response unchanged and flag `market_closed=true`. This
+    prevents the chart from rendering zebra bars from dead-market ticks.
     """
     cache_key = f"{symbol}_{interval}_{limit}"
+    market_open = _is_market_open_now(symbol)
+
+    # ── Market closed path ──────────────────────────────────────────────
+    # Serve the last known open-session snapshot (frozen until market opens).
+    # This is the authoritative path that prevents weekend zebra candles — we
+    # do not call the provider at all when the market is dead.
+    if not market_open:
+        snapshot = _last_session_cache.get(cache_key)
+        if snapshot:
+            logger.debug(f"🌙 Market closed — replaying last session ({cache_key})")
+            return CandleResponse(
+                symbol=symbol, interval=interval,
+                candles=snapshot["candles"], limit=len(snapshot["candles"]),
+                market_closed=True,
+            )
+        # No snapshot yet (first cold start on a weekend). Fall through to
+        # fetch with an enlarged window so we definitely capture the last
+        # pre-close session's candles.
+        logger.info(f"🌙 Market closed + no snapshot — doing one enlarged fetch for {cache_key}")
+
     cached = _candle_cache.get(cache_key)
     if cached and (_time.time() - cached["ts"]) < _CANDLE_TTL:
         logger.debug(f"✅ Serving candles from cache ({cache_key})")
         return cached["candles"]
 
-    # Overfetch to compensate for dead-market candles that will be filtered out.
-    # Weekend = ~48h gap → for 15m that's ~192 dead candles, so 3x covers it.
-    fetch_limit = min(limit * 3, 500)
+    # Overfetch policy:
+    #   - Market open  : 3× limit (cap 500) — plenty for recent session data.
+    #   - Market closed: 5000 (Twelve Data per-call hard limit) — on 5m that's
+    #     ~17 days of history, guaranteeing Friday's trading candles survive
+    #     the weekend/future filter. Without this, 5m on Sunday returns
+    #     entirely empty because the 500-candle window is 100% weekend.
+    if not market_open:
+        fetch_limit = 5000
+    else:
+        fetch_limit = min(limit * 3, 500)
 
     try:
         provider = get_provider()
@@ -314,7 +394,7 @@ async def get_candles(
             logger.info(f"⚡ Credits low (wait {_wait:.0f}s) — using mock candles for {symbol}")
             df = get_mock_candles(symbol, interval, limit)
             if df is not None and not df.empty:
-                df = _filter_trading_candles(df, symbol, limit)
+                df = _filter_trading_candles(df, symbol, limit, strict=not market_open)
                 candles = [
                     Candle(
                         timestamp=row['timestamp'] if 'timestamp' in row else datetime.now(timezone.utc),
@@ -323,7 +403,11 @@ async def get_candles(
                         volume=int(row['volume']) if 'volume' in row else 0,
                     ) for _, row in df.iterrows()
                 ]
-                result = CandleResponse(symbol=symbol, interval=interval, candles=candles, limit=len(candles))
+                result = CandleResponse(
+                    symbol=symbol, interval=interval,
+                    candles=candles, limit=len(candles),
+                    market_closed=not market_open,
+                )
                 _candle_cache[cache_key] = {"candles": result, "ts": _time.time()}
                 return result
 
@@ -367,7 +451,7 @@ async def get_candles(
 
         # Filter out non-trading candles (weekend/closed market)
         # — TradingView does the same; it never shows dead flat bars
-        df = _filter_trading_candles(df, symbol, limit)
+        df = _filter_trading_candles(df, symbol, limit, strict=not market_open)
 
         candles = []
         for idx, row in df.iterrows():
@@ -382,8 +466,36 @@ async def get_candles(
 
         logger.info(f"📊 Returned {len(candles)} candles for {symbol} {interval}")
 
-        result = CandleResponse(symbol=symbol, interval=interval, candles=candles, limit=len(candles))
+        # Weekend cold-start with no real data: Twelve Data's 5m/15m endpoints
+        # don't reach back to Friday's close, so the filter strips everything
+        # as weekend/future filler. Rather than return zebra garbage, we send
+        # an empty list + market_closed=true; the frontend renders a clean
+        # "market closed" state. This is the correct user experience —
+        # showing synthesised-looking candles would be worse than nothing.
+        if not market_open and not candles:
+            logger.info(f"🌙 Market closed, no usable history from provider — empty response [{symbol} {interval}]")
+            return CandleResponse(
+                symbol=symbol, interval=interval,
+                candles=[], limit=0,
+                market_closed=True,
+            )
+
+        result = CandleResponse(
+            symbol=symbol, interval=interval,
+            candles=candles, limit=len(candles),
+            market_closed=not market_open,
+        )
         _candle_cache[cache_key] = {"candles": result, "ts": _time.time()}
+
+        # Preserve this snapshot for weekend replay. Only store when market
+        # is open (real live data) — storing closed-market responses would
+        # defeat the purpose of the freeze mechanism.
+        if market_open and candles:
+            _last_session_cache[cache_key] = {
+                "candles": candles,
+                "saved_at": _time.time(),
+            }
+
         return result
 
     except HTTPException:
