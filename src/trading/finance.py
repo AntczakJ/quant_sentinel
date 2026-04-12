@@ -350,8 +350,17 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str, 
     spread_buffer = rm.get_spread_buffer()
     entry, sl, tp = rm.adjust_for_slippage(entry, sl, tp, direction)
 
-    # --- 5. Wielkość lota (ryzyko %) ---
-    risk_usd = balance_in_usd * (risk_percent / 100)
+    # --- 5. Wielkość lota (ryzyko % + volatility targeting) ---
+    # Volatility-adjusted sizing: większe pozycje w spokojnych okresach,
+    # mniejsze w wysokiej volatilności (utrzymuje stałą $ volatility portfela)
+    vol_mult = rm.compute_volatility_multiplier(atr)
+    if abs(vol_mult - 1.0) > 0.05:
+        logger.info(f"📊 Volatility adjustment: {vol_mult:.2f}x (ATR={atr:.2f})")
+        risk_percent_adj = risk_percent * vol_mult
+    else:
+        risk_percent_adj = risk_percent
+
+    risk_usd = balance_in_usd * (risk_percent_adj / 100)
     dist = abs(entry - sl)
     if dist <= 0:
         dist = 2.0
