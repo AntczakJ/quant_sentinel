@@ -601,8 +601,24 @@ async def _run_backtest(args) -> dict:
         raise ValueError(f"No timestamps after warmup filter. Data starts {data_start}, "
                          f"earliest usable {min_start}, requested end {end_ts}")
 
+    # Resume: skip timestamps up to last checkpoint if --resume given
+    if getattr(args, "resume", False):
+        try:
+            last_ts_row = db._query_one("SELECT param_value FROM dynamic_params "
+                                         "WHERE param_name='backtest_last_checkpoint_ts'")
+            if last_ts_row and last_ts_row[0]:
+                resume_ts = pd.Timestamp(last_ts_row[0], tz="UTC")
+                before = len(timestamps)
+                timestamps = timestamps[timestamps > resume_ts]
+                print(f"[backtest] Resuming from {resume_ts} "
+                      f"({before - len(timestamps)} cycles skipped)", flush=True)
+        except Exception as e:
+            logger.debug(f"Resume check failed: {e}")
+
     print(f"[backtest] Simulating {len(timestamps)} scan cycles from "
-          f"{timestamps[0]} to {timestamps[-1]} (step {args.step_minutes}m)", flush=True)
+          f"{timestamps[0] if len(timestamps) else 'nothing'} to "
+          f"{timestamps[-1] if len(timestamps) else 'nothing'} "
+          f"(step {args.step_minutes}m)", flush=True)
 
     # ── 4. Walk forward ───────────────────────────────────────────────
     t0 = _time.time()
@@ -678,6 +694,16 @@ async def _run_backtest(args) -> dict:
 
         # Resolve any OPEN trades against bars since entry
         await _resolve_open_trades(db, provider)
+
+        # Checkpoint: save last-processed timestamp every N cycles so
+        # --resume can pick up from here if process crashes.
+        ckpt_interval = getattr(args, "checkpoint_every", 100)
+        if (i + 1) % ckpt_interval == 0:
+            try:
+                db.set_param("backtest_last_checkpoint_ts",
+                             ts.strftime("%Y-%m-%d %H:%M:%S"))
+            except Exception:
+                pass
 
         # Progress every 50 cycles (flushes immediately for tail -f)
         if (i + 1) % 50 == 0 or i == len(timestamps) - 1:
@@ -777,6 +803,12 @@ def main():
                     help="print advanced analytics (Sharpe/Sortino/Calmar, "
                          "expectancy, rolling metrics, temporal heatmap, "
                          "P&L distribution)")
+    ap.add_argument("--resume", action="store_true",
+                    help="resume from last checkpoint (skip --reset). Reads "
+                         "data/backtest.db current state; continues from last "
+                         "timestamp where trades were recorded.")
+    ap.add_argument("--checkpoint-every", type=int, default=100,
+                    help="save progress marker every N cycles (default 100)")
     ap.add_argument("--strict", action="store_true",
                     help="disable relaxed filters — run with PRODUCTION confluence "
                          "threshold (3+) and Stable=blocked. Useful for apples-to-"
