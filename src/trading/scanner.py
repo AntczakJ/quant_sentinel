@@ -178,6 +178,19 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     from src.trading.finance import calculate_position
     from src.learning.self_learning import get_pattern_adjustment
 
+    # ─── EVENT GUARD: block new entries 15 min before high-impact news ───
+    # Gold moves 2-3% in 30 sec on NFP/CPI/FOMC — SL hits before signal
+    # matures. Better to miss the trade than guarantee a losing one.
+    try:
+        from src.data.news import get_imminent_high_impact_events
+        imminent = get_imminent_high_impact_events(minutes_window=15)
+        if imminent:
+            titles = ", ".join(e.get("event", "?") for e in imminent[:2])
+            logger.info(f"⏸️ [EVENT GUARD] {tf}: blokuję — high-impact event w <15min: {titles}")
+            return None
+    except Exception as _e:
+        logger.debug(f"Event guard check failed: {_e}")  # soft-fail, don't block trading
+
     analysis = get_smc_analysis(tf)
     if not analysis:
         logger.debug(f"🔍 [MTF] {tf}: brak danych SMC — pomijam")

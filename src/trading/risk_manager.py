@@ -330,24 +330,42 @@ class RiskManager:
 
     # ─── SLIPPAGE MODEL ───────────────────────────────────────────────
 
-    def get_spread_buffer(self, session: Optional[str] = None) -> float:
+    def get_spread_buffer(self, session: Optional[str] = None,
+                          atr: Optional[float] = None,
+                          atr_baseline: float = 5.0) -> float:
         """
         Returns expected spread in USD for current session.
-        Falls back to detecting session from current hour if not provided.
+
+        If `atr` is provided, scales the session spread by current volatility
+        (atr / atr_baseline). Rationale: real spreads widen ~linearly with
+        volatility during news events / high-vol regimes, and narrow in calm
+        markets. Without `atr`, returns legacy session-only spread (backward-
+        compatible).
+
+        Multiplier clamped to [0.5x, 5.0x] of base session spread to avoid
+        extreme values from ATR spikes.
         """
         if session is None:
             session = self._detect_session()
 
         spread = SESSION_SPREADS.get(session, SESSION_SPREADS["off_hours"])
+
+        if atr is not None and atr > 0 and atr_baseline > 0:
+            vol_mult = atr / atr_baseline
+            vol_mult = max(0.5, min(5.0, vol_mult))
+            spread *= vol_mult
+
         return spread
 
     def adjust_for_slippage(self, entry: float, sl: float, tp: float,
-                            direction: str, session: Optional[str] = None) -> tuple[float, float, float]:
+                            direction: str, session: Optional[str] = None,
+                            atr: Optional[float] = None) -> tuple[float, float, float]:
         """
         Adjust entry/SL/TP for expected slippage and spread.
-        Returns (adjusted_entry, adjusted_sl, adjusted_tp).
+        If `atr` is provided, spread scales with volatility (news events
+        hurt execution more). Returns (adjusted_entry, adjusted_sl, adjusted_tp).
         """
-        spread = self.get_spread_buffer(session)
+        spread = self.get_spread_buffer(session, atr=atr)
         half_spread = spread / 2
 
         if "LONG" in direction.upper():

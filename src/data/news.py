@@ -185,3 +185,50 @@ def get_economic_calendar() -> List[Dict]:
         })
 
     return events
+
+
+def get_imminent_high_impact_events(minutes_window: int = 15,
+                                    impacts: tuple = ("high",)) -> List[Dict]:
+    """Return high-impact events scheduled within [now, now + minutes_window].
+
+    Used by trade pipeline to auto-mute before NFP/CPI/FOMC (gold can move
+    2-3% in 30 sec, hitting SL before any signal makes sense).
+
+    Args:
+      minutes_window: look-ahead window in minutes (default 15)
+      impacts: which impact levels to include (default: just 'high')
+
+    Returns list of matching events. Empty list = safe to trade.
+    """
+    from datetime import datetime, timezone, timedelta
+    try:
+        events = get_economic_calendar() or []
+    except Exception as e:
+        logger.debug(f"Event guard: calendar fetch failed ({e}) — assuming clear")
+        return []
+
+    now = datetime.now(timezone.utc)
+    window_end = now + timedelta(minutes=minutes_window)
+    matches: List[Dict] = []
+
+    for ev in events:
+        impact = (ev.get("impact") or "").lower()
+        if impact not in impacts:
+            continue
+        date_str = ev.get("date", "")
+        if not date_str:
+            continue
+        try:
+            # ISO 8601 with timezone — most common case
+            ts = date_str.replace("Z", "+00:00")
+            ev_dt = datetime.fromisoformat(ts)
+            if ev_dt.tzinfo is None:
+                ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+            ev_dt = ev_dt.astimezone(timezone.utc)
+        except (ValueError, TypeError):
+            continue
+
+        if now <= ev_dt <= window_end:
+            matches.append(ev)
+
+    return matches

@@ -86,6 +86,25 @@ class TestSlippageModel:
         assert sl < 1990.0     # SL slightly lower
         assert tp < 2020.0     # TP slightly lower
 
+    def test_spread_scales_with_atr(self):
+        """High ATR should widen spread vs baseline."""
+        from src.trading.risk_manager import get_risk_manager
+        rm = get_risk_manager()
+        baseline = rm.get_spread_buffer("london")  # no atr
+        low_vol = rm.get_spread_buffer("london", atr=2.5, atr_baseline=5.0)   # half
+        high_vol = rm.get_spread_buffer("london", atr=15.0, atr_baseline=5.0)  # 3x
+        assert low_vol < baseline < high_vol
+
+    def test_spread_atr_clamped(self):
+        """ATR multiplier should be clamped at [0.5x, 5.0x]."""
+        from src.trading.risk_manager import get_risk_manager
+        rm = get_risk_manager()
+        base = rm.get_spread_buffer("london")
+        extreme_low = rm.get_spread_buffer("london", atr=0.001, atr_baseline=5.0)
+        extreme_high = rm.get_spread_buffer("london", atr=1000.0, atr_baseline=5.0)
+        assert extreme_low == base * 0.5
+        assert extreme_high == base * 5.0
+
 
 class TestPortfolioHeat:
     """Test aggregate risk tracking."""
