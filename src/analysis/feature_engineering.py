@@ -29,7 +29,7 @@ def add_wavelet_features(df, wavelet='db4', level=3):
     try:
         from pywt import wavedec
 
-        close = df['close'].values
+        close = np.ascontiguousarray(df['close'].to_numpy(dtype=np.float64, copy=True))
         coeffs = wavedec(close, wavelet, level=level)
 
         # High-frequency details (noise/volatility)

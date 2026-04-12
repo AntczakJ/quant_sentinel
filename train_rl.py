@@ -33,8 +33,10 @@ NOISE_STD = 0.001       # augmentacja: 0.1% szumu na cenach per epizod
 MIN_RETRAIN_HOURS = 12  # minimalny odstęp między treningami na tych samych danych
 
 # Multi-asset training — koszyk symboli dla lepszej generalizacji
-SYMBOLS = ["GC=F", "EURUSD=X", "BTC-USD", "ES=F", "CL=F"]
-# GC=F gold, EURUSD=X forex, BTC-USD crypto, ES=F S&P500 futures, CL=F crude oil
+# BTC-USD wykluczone: zbyt wysoka volatility względem pozostałych aktywów
+# (TradingEnv nie skaluje sizing per-asset — BTC wysadza wyniki)
+SYMBOLS = ["GC=F", "EURUSD=X", "ES=F", "CL=F"]
+# GC=F gold, EURUSD=X forex, ES=F S&P500 futures, CL=F crude oil
 
 # Validation early stopping
 VAL_EVERY = 20          # waliduj co N epizodów
@@ -183,9 +185,11 @@ def main():
             print(f"⚠️ {sym}: za mało danych ({len(train_df)}/{len(val_df)}), pomijam")
             continue
         train_envs[sym] = TradingEnv(train_df, initial_balance=INITIAL_BALANCE,
-                                     transaction_cost=TRANSACTION_COST, noise_std=NOISE_STD)
+                                     transaction_cost=TRANSACTION_COST, noise_std=NOISE_STD,
+                                     vol_normalize=True)
         val_envs[sym] = TradingEnv(val_df, initial_balance=INITIAL_BALANCE,
-                                   transaction_cost=TRANSACTION_COST, noise_std=0.0)
+                                   transaction_cost=TRANSACTION_COST, noise_std=0.0,
+                                   vol_normalize=True)
         if state_size is None:
             state_size = len(train_envs[sym].reset())
         print(f"  📈 {sym}: train={len(train_df)} | val={len(val_df)}")
@@ -344,6 +348,15 @@ def main():
     model_path = "models/rl_agent.keras"
     agent.save(model_path, data_hash=data_hash)
     logger.info(f"Model zapisany do {model_path}")
+
+    # 8b. Regeneruj ONNX dla GPU inference (DirectML)
+    try:
+        from src.analysis.compute import convert_keras_to_onnx
+        onnx_path = convert_keras_to_onnx(model_path, "models/rl_agent.onnx")
+        if onnx_path:
+            print(f"   ONNX zregenerowany: {onnx_path}")
+    except Exception as e:
+        print(f"   Ostrzezenie: ONNX regen nieudany ({e}) — stary .onnx pozostaje")
 
     # 9. Zapisz metryki do bazy
     try:

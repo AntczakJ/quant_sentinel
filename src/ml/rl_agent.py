@@ -183,7 +183,8 @@ class TradingEnv:
     Optimized: prices pre-cached as numpy array.
     """
     def __init__(self, data, initial_balance=10000, transaction_cost=0.001,
-                 atr_period=14, sl_atr_mult=1.5, target_rr=2.5, noise_std=0.0):
+                 atr_period=14, sl_atr_mult=1.5, target_rr=2.5, noise_std=0.0,
+                 vol_normalize=False):
         self.data = data
         self._base_prices = np.ascontiguousarray(data['close'].values, dtype=np.float64)
         self._base_highs = np.ascontiguousarray(data['high'].values, dtype=np.float64) if 'high' in data.columns else self._base_prices.copy()
@@ -198,6 +199,10 @@ class TradingEnv:
         self.sl_atr_mult = sl_atr_mult
         self.target_rr = target_rr
         self.noise_std = noise_std  # augmentacja: szum na cenach per reset
+        # vol_normalize=True → balance updates use initial_balance as position size
+        # (fixed-fraction-of-capital). Required for multi-asset training with
+        # assets spanning large price ranges (e.g. BTC $60k vs EURUSD $1).
+        self.vol_normalize = vol_normalize
         self._state_buf = np.zeros(22, dtype=np.float64)
         # Pre-compute ATR for entire dataset
         self._atr = self._compute_atr()
@@ -398,7 +403,13 @@ class TradingEnv:
             self.breakevens += 1
             self.consecutive_losses = 0
 
-        self.balance += pnl * self.entry_price
+        # Balance update: fixed-fraction-of-capital (vol_normalize=True) vs
+        # 1-share sizing (legacy). Fixed-fraction makes per-asset P&L comparable
+        # when training on assets with vastly different price scales.
+        if self.vol_normalize:
+            self.balance += pnl * self.initial_balance
+        else:
+            self.balance += pnl * self.entry_price
         self.total_trades += 1
         self.position = 0
         self.entry_price = 0
