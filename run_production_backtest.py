@@ -48,6 +48,20 @@ from src.backtest.isolation import assert_not_production_db
 from src.core.logger import logger
 
 
+class _UnlimitedRateLimiter:
+    """Stub for backtest — no real rate limits on local data."""
+    def can_use_credits(self, n):
+        return True, 0
+    def use_credits(self, n, endpoint="", symbol=""):
+        return True
+    def wait_for_credits(self, n, max_wait_seconds=10):
+        return True
+    def validate_endpoint_cost(self, endpoint, num_symbols=1):
+        return True, 1, None
+    def get_stats(self):
+        return {"available": 999999, "total": 999999, "used_pct": 0}
+
+
 def _reset_backtest_db() -> None:
     """Wipe data/backtest.db for a clean run."""
     assert_not_production_db()
@@ -108,6 +122,14 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
     match the production resolver output format.
     """
     assert_not_production_db()
+
+    # Fast path: no open trades = nothing to resolve (saves DB hit on every cycle)
+    open_rows = db._query(
+        "SELECT id, direction, entry, sl, tp, timestamp FROM trades WHERE status='OPEN'"
+    )
+    if not open_rows:
+        return
+
     # Use the 5m cache for highest-resolution SL/TP detection
     tf_cache = provider._cache.get("5m")
     if tf_cache is None or tf_cache.empty:
@@ -117,10 +139,6 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
     now_ts = provider.simulated_now
     if now_ts is None:
         return
-
-    open_rows = db._query(
-        "SELECT id, direction, entry, sl, tp, timestamp FROM trades WHERE status='OPEN'"
-    )
     for row in open_rows:
         t_id, direction, entry, sl, tp, ts_str = row
         try:
@@ -184,6 +202,12 @@ async def _run_backtest(args) -> dict:
     smc_engine.is_market_open = lambda dt_cet=None: True  # type: ignore[assignment]
     # Skip cooldown in backtest (we simulate time, not wall-clock)
     scanner_mod._check_trade_cooldown = lambda db, min_hours=None: True  # type: ignore[assignment]
+    # Unlimited API credits in backtest — data is local, no external rate limit
+    try:
+        from src import api_optimizer
+        api_optimizer.get_rate_limiter = lambda: _UnlimitedRateLimiter()  # type: ignore[assignment]
+    except ImportError:
+        pass
 
     db = NewsDB()
 
@@ -207,16 +231,28 @@ async def _run_backtest(args) -> dict:
     t0 = _time.time()
     last_day_logged = None
     last_trade_count = 0
+    skipped_weekend = 0
+    skipped_no_setup = 0
     for i, ts in enumerate(timestamps):
         provider.set_simulated_now(ts)
-        # Run one scan cycle
+
+        # Weekend skip — gold market closed Fri 22:00 UTC -> Sun 23:00 UTC.
+        # Matches production is_market_open() which we bypassed globally.
+        wd = ts.weekday()  # Mon=0 .. Sun=6
+        hh = ts.hour
+        is_weekend = (wd == 5) or (wd == 6 and hh < 23) or (wd == 4 and hh >= 22)
+        if is_weekend:
+            skipped_weekend += 1
+            continue
+
+        # Run one scan cycle (production path)
         try:
-            # Use cascade_mtf_scan directly — avoids weekend guard + heartbeat
-            # which are wall-clock dependent and not useful in backtest.
             trade = scanner_mod.cascade_mtf_scan(db, balance=10_000.0, currency="USD")
         except Exception as e:
             logger.debug(f"[backtest] scan at {ts} failed: {e}")
             trade = None
+        if trade is None:
+            skipped_no_setup += 1
 
         # Persist trade (same path as production log_trade)
         if trade:
@@ -240,23 +276,59 @@ async def _run_backtest(args) -> dict:
         # Resolve any OPEN trades against bars since entry
         await _resolve_open_trades(db, provider)
 
-        # Daily progress log
+        # Progress every 50 cycles (flushes immediately for tail -f)
+        if (i + 1) % 50 == 0 or i == len(timestamps) - 1:
+            stats = _summarize_trades()
+            elapsed = _time.time() - t0
+            pct = (i + 1) / len(timestamps) * 100
+            eta = (elapsed / (i + 1)) * (len(timestamps) - i - 1)
+            print(f"[backtest] {ts.date()} | cycle {i+1}/{len(timestamps)} "
+                  f"({pct:.0f}%) | trades={stats['total_trades']} "
+                  f"WR={stats['win_rate_pct']:.1f}% | "
+                  f"weekend_skip={skipped_weekend} | no_setup={skipped_no_setup} | "
+                  f"elapsed {elapsed:.0f}s ETA {eta:.0f}s", flush=True)
+
+        # Daily marker (for day-change announcement, lightweight)
         day = ts.date()
         if day != last_day_logged:
-            stats = _summarize_trades()
-            new_trades = stats["total_trades"] - last_trade_count
-            last_trade_count = stats["total_trades"]
-            elapsed = _time.time() - t0
-            print(f"[backtest] {day} — trades so far: {stats['total_trades']} "
-                  f"(+{new_trades} today), WR: {stats['win_rate_pct']:.1f}%, "
-                  f"cum_profit: {stats['cumulative_profit']:+.2f} "
-                  f"(elapsed {elapsed:.0f}s)", flush=True)
             last_day_logged = day
+            last_trade_count = _summarize_trades()["total_trades"]
 
     # ── 5. Final forced resolution (close any still-open on last bar) ──
     # Leave still_open as-is; stats show them separately.
 
-    return _summarize_trades()
+    # ── 6. Diagnostic: grab ensemble + rejection stats for post-run analysis ──
+    stats = _summarize_trades()
+    stats["cycles_total"] = len(timestamps)
+    stats["weekend_skipped"] = skipped_weekend
+    stats["no_setup"] = skipped_no_setup
+
+    # Ensemble confidence distribution (populated via scanner instrumentation)
+    try:
+        from src.ops.metrics import get_all_metrics
+        m = get_all_metrics()
+        stats["ensemble_confidence_avg"] = m.get("ensemble", {}).get("confidence_avg", 0)
+        stats["ensemble_sample_count"] = m.get("ensemble", {}).get("sample_count", 0)
+        stats["ensemble_signals_long"] = m.get("ensemble", {}).get("signals_long", 0)
+        stats["ensemble_signals_short"] = m.get("ensemble", {}).get("signals_short", 0)
+        stats["ensemble_signals_wait"] = m.get("ensemble", {}).get("signals_wait", 0)
+    except Exception:
+        pass
+
+    # Top rejection reasons (diagnostic only)
+    try:
+        conn = sqlite3.connect(os.environ["DATABASE_URL"])
+        rows = conn.execute(
+            "SELECT filter_name, rejection_reason, COUNT(*) "
+            "FROM rejected_setups GROUP BY filter_name, rejection_reason "
+            "ORDER BY COUNT(*) DESC LIMIT 5"
+        ).fetchall()
+        stats["top_rejections"] = [(r[0], r[1], r[2]) for r in rows]
+        conn.close()
+    except Exception:
+        pass
+
+    return stats
 
 
 def main():

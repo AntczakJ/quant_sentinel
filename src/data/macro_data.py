@@ -253,6 +253,11 @@ def get_retail_sentiment() -> Dict:
     if cached is not None:
         return cached
 
+    # Backtest mode: skip network call entirely — historical retail sentiment
+    # is not reconstructible and isn't the primary signal anyway.
+    if os.environ.get("QUANT_BACKTEST_MODE") == "1":
+        return {"signal": 0, "signal_text": "backtest_skip"}
+
     email = os.getenv("MYFXBOOK_EMAIL", "")
     password = os.getenv("MYFXBOOK_PASSWORD", "")
 
