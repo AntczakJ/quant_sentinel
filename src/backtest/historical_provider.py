@@ -51,10 +51,24 @@ class HistoricalProvider(DataProvider):
     # ── Lifecycle: set time ────────────────────────────────────────────
 
     def set_simulated_now(self, ts: pd.Timestamp) -> None:
-        """Advance the simulated wall-clock. Future data is hidden from get_candles."""
+        """Advance the simulated wall-clock. Future data is hidden from get_candles.
+
+        Also clears the SMC analysis cache — it uses wall-clock TTL (60s) which
+        makes repeated backtest ticks within the same real second return stale
+        data. Without this invalidation every simulated timestamp returns the
+        first-cached analysis.
+        """
         if ts.tzinfo is None:
             ts = ts.tz_localize("UTC")
         self._simulated_now = ts.tz_convert("UTC")
+
+        # Invalidate function-result cache so smc_engine.get_smc_analysis and
+        # friends re-compute against the new simulated time.
+        try:
+            from src.core import cache as _cache_mod
+            _cache_mod._cache.clear()
+        except Exception:
+            pass
 
     @property
     def simulated_now(self) -> Optional[pd.Timestamp]:
