@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import json as _json
 import logging
+from typing import Optional
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
