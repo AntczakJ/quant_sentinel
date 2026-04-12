@@ -64,10 +64,28 @@ from src.ml.training_registry import log_training_run
 # Data
 # ---------------------------------------------------------------------------
 
-def fetch_ohlcv(symbol: str = "GC=F") -> Optional[pd.DataFrame]:
-    """Match train_all.py's yfinance logic but quieter."""
-    for period, interval in (("2y", "1h"), ("1y", "1h"), ("60d", "15m"),
-                             ("10y", "1d"), ("5y", "1d")):
+def fetch_ohlcv(symbol: str = "GC=F",
+                preferred_window: str = "2y") -> Optional[pd.DataFrame]:
+    """Match train_all.py's yfinance logic but quieter.
+
+    preferred_window: '2y' (default historical), '1y', '6mo', '3mo'.
+    Shorter windows follow the current market regime more tightly at
+    the cost of less training data. For LSTM the regime fit matters
+    more than raw volume — gold volatility doubled in 2026-Q1, so a
+    2y scaler ceiling lives in Q4-2025 land that never happens today.
+    """
+    combos = [
+        (preferred_window, "1h"),
+        ("1y", "1h"),
+        ("6mo", "1h"),
+        ("60d", "15m"),
+        ("2y", "1d"),
+    ]
+    # Dedup while preserving order
+    seen = set()
+    combos = [(p, i) for p, i in combos if (p, i) not in seen and not seen.add((p, i))]
+
+    for period, interval in combos:
         try:
             with contextlib.redirect_stdout(io.StringIO()), \
                  contextlib.redirect_stderr(io.StringIO()):
@@ -87,11 +105,18 @@ def fetch_ohlcv(symbol: str = "GC=F") -> Optional[pd.DataFrame]:
     return None
 
 
-def prepare_xy(df: pd.DataFrame, seq_len: int
+def prepare_xy(df: pd.DataFrame, seq_len: int, scaler_kind: str = "robust"
                ) -> Optional[Tuple[np.ndarray, np.ndarray, object]]:
-    """Return (X, y, fitted_scaler) or None on insufficient data."""
+    """Return (X, y, fitted_scaler) or None on insufficient data.
+
+    scaler_kind: 'robust' (default — median/IQR, insensitive to outliers;
+    the 2026-Q1 volatility doubling pushed MinMaxScaler boundaries into
+    territory that live bars never reach, compressing live features to a
+    narrow band and flattening LSTM outputs), 'minmax' (legacy), or
+    'standard' (z-score).
+    """
     from src.analysis.compute import compute_features, compute_target, FEATURE_COLS
-    from sklearn.preprocessing import MinMaxScaler
+    from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
     feats = compute_features(df).copy()
     feats["direction"] = compute_target(feats)
@@ -100,7 +125,9 @@ def prepare_xy(df: pd.DataFrame, seq_len: int
         return None
 
     data = feats[FEATURE_COLS].values.astype(np.float32)
-    scaler = MinMaxScaler().fit(data)
+    scaler_cls = {"robust": RobustScaler, "minmax": MinMaxScaler,
+                  "standard": StandardScaler}.get(scaler_kind, RobustScaler)
+    scaler = scaler_cls().fit(data)
     scaled = scaler.transform(data)
 
     n_samples = len(scaled) - seq_len
@@ -135,6 +162,7 @@ HPARAM_SPACE = {
     "lr":         (3e-4, 5e-4, 1e-3),
     "batch_size": (32, 64),
     "epochs":     (50, 80),
+    "scaler":     ("robust", "minmax"),  # robust ignores the Q1 vol outlier
 }
 
 
@@ -219,7 +247,8 @@ def train_once(df: pd.DataFrame, hp: Dict, seed: int) -> Optional[Dict]:
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
-    prep = prepare_xy(df, seq_len=hp["seq_len"])
+    prep = prepare_xy(df, seq_len=hp["seq_len"],
+                      scaler_kind=hp.get("scaler", "robust"))
     if prep is None:
         return None
     X, y, scaler = prep
@@ -367,12 +396,17 @@ def main() -> int:
     ap.add_argument("--patience", type=int, default=4,
                     help="abort if no balanced-acc improvement for N iterations")
     ap.add_argument("--symbol", default="GC=F")
+    ap.add_argument("--window", default="6mo",
+                    help="yfinance period for training data. '6mo' tracks "
+                         "the current regime tighter than '2y' (default was "
+                         "'2y', changed because gold ATR doubled 2026-Q1 and "
+                         "a 2y scaler clips current feature dynamics)")
     ap.add_argument("--base-seed", type=int, default=42)
     ap.add_argument("--dry-run", action="store_true",
                     help="run 1 iteration, print result, persist nothing")
     args = ap.parse_args()
 
-    df = fetch_ohlcv(args.symbol)
+    df = fetch_ohlcv(args.symbol, preferred_window=args.window)
     if df is None:
         print(f"[fatal] cannot fetch data for {args.symbol}", file=sys.stderr)
         return 2
