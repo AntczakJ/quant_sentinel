@@ -290,7 +290,61 @@ def rsi_strategy(df: pd.DataFrame, i: int,
     return None
 
 
-STRATEGIES = {"sma": sma_crossover_strategy, "rsi": rsi_strategy}
+def ensemble_strategy(df: pd.DataFrame, i: int,
+                      min_confidence: float = 0.55,
+                      sample_every: int = 1) -> Optional[str]:
+    """Production ensemble backtest strategy.
+
+    Calls `get_ensemble_prediction` with bar history up to i (no look-ahead).
+    Derives smc_trend from simple 20-bar SMA slope to avoid a full SMC engine
+    call per bar (expensive). Respects ensemble's final "LONG"/"SHORT"/"CZEKAJ".
+
+    Args:
+      min_confidence: skip signals below this ensemble confidence
+      sample_every: only evaluate every Nth bar (speedup for long backtests).
+                    Default 1 = every bar. Set to 4 for hourly-on-15m, etc.
+
+    WARNING: slow (~50-500ms per ensemble call). For 2y/1h (~8700 bars)
+    expect 7-70 min. Use `sample_every=4` or subset data for iteration.
+    """
+    if i < 100 or i % sample_every != 0:
+        return None
+
+    window = df.iloc[:i + 1]
+    # Cheap SMC proxy: 20-bar SMA slope direction
+    sma = window["close"].iloc[-20:].mean()
+    sma_prev = window["close"].iloc[-40:-20].mean()
+    smc_trend = "bull" if sma > sma_prev else "bear"
+
+    try:
+        from src.ml.ensemble_models import get_ensemble_prediction
+        result = get_ensemble_prediction(
+            df=window,
+            smc_trend=smc_trend,
+            current_price=float(window["close"].iloc[-1]),
+            balance=10000.0,
+            initial_balance=10000.0,
+            position=0,
+            use_twelve_data=False,
+        )
+    except Exception:
+        return None
+
+    signal = result.get("ensemble_signal", "CZEKAJ")
+    confidence = float(result.get("confidence", 0.0))
+
+    if signal == "LONG" and confidence >= min_confidence:
+        return "LONG"
+    if signal == "SHORT" and confidence >= min_confidence:
+        return "SHORT"
+    return None
+
+
+STRATEGIES = {
+    "sma": sma_crossover_strategy,
+    "rsi": rsi_strategy,
+    "ensemble": ensemble_strategy,
+}
 
 
 def _fetch_data(symbol: str, period: str, interval: str) -> pd.DataFrame:
@@ -312,7 +366,10 @@ def main():
     ap.add_argument("--symbol", default="GC=F")
     ap.add_argument("--period", default="2y")
     ap.add_argument("--interval", default="1h")
-    ap.add_argument("--strategy", default="sma", choices=list(STRATEGIES.keys()))
+    ap.add_argument("--strategy", default="sma", choices=list(STRATEGIES.keys()),
+                    help="sma/rsi for quick tests; ensemble for full pipeline (slow)")
+    ap.add_argument("--sample-every", type=int, default=1,
+                    help="only evaluate every Nth bar (ensemble only, default 1)")
     ap.add_argument("--balance", type=float, default=10_000.0)
     ap.add_argument("--risk", type=float, default=0.01,
                     help="risk per trade as fraction of balance (default 0.01)")
@@ -322,9 +379,17 @@ def main():
     df = _fetch_data(args.symbol, args.period, args.interval)
     print(f"  {len(df)} bars loaded")
 
+    strategy_fn = STRATEGIES[args.strategy]
+    if args.strategy == "ensemble" and args.sample_every > 1:
+        # Wrap to pass sample_every
+        _base = strategy_fn
+        def _strategy(df, i):
+            return _base(df, i, sample_every=args.sample_every)
+        strategy_fn = _strategy
+
     engine = BacktestEngine(
         df=df,
-        strategy=STRATEGIES[args.strategy],
+        strategy=strategy_fn,
         initial_balance=args.balance,
         risk_per_trade=args.risk,
     )
