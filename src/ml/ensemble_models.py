@@ -431,6 +431,9 @@ def update_ensemble_weights(correct_models: list, incorrect_models: list, learni
     """
     Aktualizuj wagi ensemble na podstawie które modele miały rację.
     Wywoływane po rozwiązaniu trade'u (resolve_trades_task).
+
+    Aktualizuje też liczniki per-model (correct/incorrect) w dynamic_params
+    do auditu historycznej skuteczności każdego modelu.
     """
     try:
         from src.core.database import NewsDB
@@ -441,15 +444,55 @@ def update_ensemble_weights(correct_models: list, incorrect_models: list, learni
             if model in current:
                 new_w = current[model] + learning_rate
                 db.set_param(f"ensemble_weight_{model}", min(new_w, 0.6))
+            prev = db.get_param(f"model_{model}_correct", 0) or 0
+            try:
+                prev = int(float(prev))
+            except (ValueError, TypeError):
+                prev = 0
+            db.set_param(f"model_{model}_correct", prev + 1)
 
         for model in incorrect_models:
             if model in current:
                 new_w = current[model] - learning_rate
                 db.set_param(f"ensemble_weight_{model}", max(new_w, 0.05))
+            prev = db.get_param(f"model_{model}_incorrect", 0) or 0
+            try:
+                prev = int(float(prev))
+            except (ValueError, TypeError):
+                prev = 0
+            db.set_param(f"model_{model}_incorrect", prev + 1)
 
         logger.info(f"📊 Ensemble weights updated: correct={correct_models}, incorrect={incorrect_models}")
     except Exception as e:
         logger.warning(f"⚠️ Failed to update ensemble weights: {e}")
+
+
+def get_model_track_record() -> Dict[str, Dict]:
+    """Zwraca historyczny track record per-model: {model: {correct, incorrect, accuracy, n}}.
+
+    Używane do auditu self-learning weight updates: czy model z wysoką wagą
+    faktycznie miał wysoką accuracy, czy został sztucznie pompniety.
+    """
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        models = ["smc", "attention", "dpformer", "lstm", "xgb", "dqn"]
+        result = {}
+        for m in models:
+            correct = db.get_param(f"model_{m}_correct", 0) or 0
+            incorrect = db.get_param(f"model_{m}_incorrect", 0) or 0
+            try:
+                correct = int(float(correct))
+                incorrect = int(float(incorrect))
+            except (ValueError, TypeError):
+                correct, incorrect = 0, 0
+            n = correct + incorrect
+            acc = (correct / n) if n > 0 else None
+            result[m] = {"correct": correct, "incorrect": incorrect, "n": n, "accuracy": acc}
+        return result
+    except Exception as e:
+        logger.warning(f"Failed to get model track record: {e}")
+        return {}
 
 
 def _persist_prediction(results: Dict):
