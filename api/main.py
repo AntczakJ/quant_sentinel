@@ -554,8 +554,11 @@ app = FastAPI(
 # Middleware — custom auth/rate use pure ASGI wrappers that bypass WebSocket
 from api.middleware.rate_limit import RateLimitMiddleware
 from api.middleware.jwt_auth import JwtAuthMiddleware
+from api.middleware.request_id import RequestIDMiddleware
 app.add_middleware(JwtAuthMiddleware)
 app.add_middleware(RateLimitMiddleware)
+# Request ID — must be outermost so IDs are on every response
+app.add_middleware(RequestIDMiddleware)
 # CORS — only needed when frontend runs on different port (vite dev server)
 # When serving from same origin (:8000), CORS is not needed.
 # Using custom ASGI wrapper to avoid CORSMiddleware blocking WebSocket.
