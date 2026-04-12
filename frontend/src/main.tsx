@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App.tsx'
 import { initPerformanceMonitoring } from './hooks/usePerformanceMonitor'
+import './i18n'  // initializes react-i18next — auto-detects browser language (pl/en)
 import './index.css'
 
 // Initialize Web Vitals monitoring (dev only — logs FCP, LCP, CLS, TTFB)
