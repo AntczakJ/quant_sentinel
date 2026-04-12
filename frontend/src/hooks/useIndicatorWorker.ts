@@ -22,9 +22,9 @@ export interface IndicatorOutput {
 function calcEMA(closes: number[], period: number): (number | null)[] {
   const k = 2 / (period + 1);
   const out: (number | null)[] = new Array(closes.length).fill(null);
-  if (closes.length < period) return out;
+  if (closes.length < period) {return out;}
   let sum = 0;
-  for (let i = 0; i < period; i++) sum += closes[i];
+  for (let i = 0; i < period; i++) {sum += closes[i];}
   out[period - 1] = sum / period;
   for (let i = period; i < closes.length; i++) {
     out[i] = closes[i] * k + (out[i - 1] as number) * (1 - k);
@@ -34,11 +34,11 @@ function calcEMA(closes: number[], period: number): (number | null)[] {
 
 function calcRSI(closes: number[], period = 14): (number | null)[] {
   const out: (number | null)[] = new Array(closes.length).fill(null);
-  if (closes.length < period + 1) return out;
+  if (closes.length < period + 1) {return out;}
   let gainSum = 0, lossSum = 0;
   for (let i = 1; i <= period; i++) {
     const d = closes[i] - closes[i - 1];
-    if (d > 0) gainSum += d; else lossSum -= d;
+    if (d > 0) {gainSum += d;} else {lossSum -= d;}
   }
   let avgGain = gainSum / period;
   let avgLoss = lossSum / period;
@@ -54,9 +54,9 @@ function calcRSI(closes: number[], period = 14): (number | null)[] {
 
 function calcSMA(values: number[], period: number): (number | null)[] {
   const out: (number | null)[] = new Array(values.length).fill(null);
-  if (values.length < period) return out;
+  if (values.length < period) {return out;}
   let sum = 0;
-  for (let i = 0; i < period; i++) sum += values[i];
+  for (let i = 0; i < period; i++) {sum += values[i];}
   out[period - 1] = sum / period;
   for (let i = period; i < values.length; i++) {
     sum += values[i] - values[i - period];
@@ -71,9 +71,9 @@ function calcBollingerBands(closes: number[], period = 20, mult = 2) {
   const lower: (number | null)[] = new Array(closes.length).fill(null);
   for (let i = period - 1; i < closes.length; i++) {
     const m = middle[i];
-    if (m === null) continue;
+    if (m === null) {continue;}
     let sqSum = 0;
-    for (let j = i - period + 1; j <= i; j++) sqSum += (closes[j] - m) ** 2;
+    for (let j = i - period + 1; j <= i; j++) {sqSum += (closes[j] - m) ** 2;}
     const std = Math.sqrt(sqSum / period);
     upper[i] = m + mult * std;
     lower[i] = m - mult * std;
@@ -110,14 +110,14 @@ function calcMACD(closes: number[], fastP = 12, slowP = 26, signalP = 9) {
 function calcATR(highs: number[], lows: number[], closes: number[], period = 14): (number | null)[] {
   const n = closes.length;
   const out: (number | null)[] = new Array(n).fill(null);
-  if (n < 2) return out;
+  if (n < 2) {return out;}
   const tr: number[] = [highs[0] - lows[0]];
   for (let i = 1; i < n; i++) {
     tr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
   }
-  if (n < period) return out;
+  if (n < period) {return out;}
   let atr = 0;
-  for (let i = 0; i < period; i++) atr += tr[i];
+  for (let i = 0; i < period; i++) {atr += tr[i];}
   atr /= period;
   out[period - 1] = atr;
   for (let i = period; i < n; i++) {
@@ -133,8 +133,8 @@ function calcStochastic(highs: number[], lows: number[], closes: number[], kP = 
   for (let i = kP - 1; i < n; i++) {
     let hh = -Infinity, ll = Infinity;
     for (let j = i - kP + 1; j <= i; j++) {
-      if (highs[j] > hh) hh = highs[j];
-      if (lows[j] < ll) ll = lows[j];
+      if (highs[j] > hh) {hh = highs[j];}
+      if (lows[j] < ll) {ll = lows[j];}
     }
     const range = hh - ll;
     rawK[i] = range > 0 ? ((closes[i] - ll) / range) * 100 : 50;
@@ -143,12 +143,12 @@ function calcStochastic(highs: number[], lows: number[], closes: number[], kP = 
   for (let i = 0; i < n; i++) { if (rawK[i] !== null) { kVals.push(rawK[i]!); kIdx.push(i); } }
   const smoothed = calcSMA(kVals, kS);
   const k: (number | null)[] = new Array(n).fill(null);
-  for (let j = 0; j < kVals.length; j++) { if (smoothed[j] !== null) k[kIdx[j]] = smoothed[j]; }
+  for (let j = 0; j < kVals.length; j++) { if (smoothed[j] !== null) {k[kIdx[j]] = smoothed[j];} }
   const dVals: number[] = []; const dIdx2: number[] = [];
   for (let i = 0; i < n; i++) { if (k[i] !== null) { dVals.push(k[i]!); dIdx2.push(i); } }
   const dRaw = calcSMA(dVals, dP);
   const d: (number | null)[] = new Array(n).fill(null);
-  for (let j = 0; j < dVals.length; j++) { if (dRaw[j] !== null) d[dIdx2[j]] = dRaw[j]; }
+  for (let j = 0; j < dVals.length; j++) { if (dRaw[j] !== null) {d[dIdx2[j]] = dRaw[j];} }
   return { k, d };
 }
 

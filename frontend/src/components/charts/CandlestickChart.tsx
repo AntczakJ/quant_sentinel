@@ -89,9 +89,9 @@ async function setCachedCandles(interval: string, candles: Candle[]): Promise<vo
 /** Convert any CSS color (including modern `rgb(R G B)`) to hex for lightweight-charts compatibility */
 function cssColorToHex(raw: string, fallback: string): string {
   const trimmed = raw.trim();
-  if (!trimmed) return fallback;
+  if (!trimmed) {return fallback;}
   // Already hex
-  if (trimmed.startsWith('#')) return trimmed;
+  if (trimmed.startsWith('#')) {return trimmed;}
   // Match rgb(R G B) or rgb(R, G, B)
   const m = trimmed.match(/^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/);
   if (m) {
@@ -159,7 +159,7 @@ interface LegendData {
 
 /** Indicator value chip — colored, compact */
 function IndVal({ label, value, color, decimals = 2 }: { label: string; value: number | null | undefined; color: string; decimals?: number }) {
-  if (value === null || value === undefined) return null;
+  if (value === null || value === undefined) {return null;}
   return (
     <span className="inline-flex items-center gap-0.5">
       <span className="text-[var(--chart-text)] opacity-60">{label}</span>
@@ -450,7 +450,8 @@ export function CandlestickChart() {
   });
 
   // Price alerts + browser notifications + sound
-  const alertPriceLinesRef = useRef<Map<string, any>>(new Map());
+  // Stores IPriceLine handles from lightweight-charts (opaque instances — no public type)
+  const alertPriceLinesRef = useRef<Map<string, unknown>>(new Map());
   const [showAlertManager, setShowAlertManager] = useState(false);
   const [showRiskCalc, setShowRiskCalc] = useState(false);
   const { notifyPriceAlert } = useBrowserNotifications();
@@ -459,7 +460,7 @@ export function CandlestickChart() {
     useCallback((alert: PriceAlert) => {
       toast.info(`Price alert: $${alert.price.toFixed(2)} (${alert.direction})`);
       notifyPriceAlert(alert.price, alert.direction);
-      if (alert.direction === 'above') chimeUp(); else chimeDown();
+      if (alert.direction === 'above') {chimeUp();} else {chimeDown();}
     }, [toast, notifyPriceAlert, chimeUp, chimeDown])
   );
 
@@ -746,7 +747,7 @@ export function CandlestickChart() {
     let running = true;
     let prevJson = '';
     const tick = () => {
-      if (!running) return;
+      if (!running) {return;}
       const overlay = smcOverlayRef.current;
       if (overlay) {
         const labels = overlay.getLabels();
@@ -769,7 +770,8 @@ export function CandlestickChart() {
     const container = mainContainerRef.current;
     if (!chart || !series || !container) {return;}
 
-    const mgr = new InteractionManager(chart, series as any, container, {
+    // series is ISeriesApi<'Candlestick', Time>, InteractionManager widens to SeriesType
+    const mgr = new InteractionManager(chart, series, container, {
       onDrawingComplete: (d: Drawing) => {
         const next = [...drawingsRef.current, d];
         drawingsRef.current = next;
@@ -1020,8 +1022,8 @@ export function CandlestickChart() {
       const macdHistSd: HistogramData[] = [];
       for (let i = 0; i < candleData.length; i++) {
         const t = candleData[i]._ts as UTCTimestamp;
-        if (macdData.macd[i] !== null) macdLineSd.push({ time: t, value: macdData.macd[i]! });
-        if (macdData.signal[i] !== null) macdSignalSd.push({ time: t, value: macdData.signal[i]! });
+        if (macdData.macd[i] !== null) {macdLineSd.push({ time: t, value: macdData.macd[i]! });}
+        if (macdData.signal[i] !== null) {macdSignalSd.push({ time: t, value: macdData.signal[i]! });}
         if (macdData.histogram[i] !== null) {
           const v = macdData.histogram[i]!;
           macdHistSd.push({ time: t, value: v, color: v >= 0 ? 'rgba(38,166,154,0.6)' : 'rgba(239,83,80,0.6)' });
@@ -1033,8 +1035,8 @@ export function CandlestickChart() {
       const stochDSd: LineData[] = [];
       for (let i = 0; i < candleData.length; i++) {
         const t = candleData[i]._ts as UTCTimestamp;
-        if (stochData.k[i] !== null) stochKSd.push({ time: t, value: stochData.k[i]! });
-        if (stochData.d[i] !== null) stochDSd.push({ time: t, value: stochData.d[i]! });
+        if (stochData.k[i] !== null) {stochKSd.push({ time: t, value: stochData.k[i]! });}
+        if (stochData.d[i] !== null) {stochDSd.push({ time: t, value: stochData.d[i]! });}
       }
 
       // ── Apply MACD data ──
@@ -1131,7 +1133,7 @@ export function CandlestickChart() {
               ? (candleSd[candleSd.length - 10].time as number)
               : (candleSd[0]?.time as number ?? 0);
             const posZones = buildPositionZones(sig.entry_price, sig.sl, sig.tp, posTime);
-            const smcResult2 = smcVisible ? detectAllSmcZones(candleSd as any) : { zones: [] };
+            const smcResult2 = smcVisible ? detectAllSmcZones(candleSd as Array<{ time: number; open: number; high: number; low: number; close: number }>) : { zones: [] };
             smcOverlayRef.current.setZones([...smcResult2.zones, ...posZones]);
           }
         }
@@ -1142,9 +1144,9 @@ export function CandlestickChart() {
       // ── Volume Profile price lines (POC / VAH / VAL) ──
       // Deferred by 3s to avoid simultaneous Twelve Data API credit usage
       // with candles (which already consumed 1 credit above).
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       void setTimeout(async () => {
-        if (signal?.aborted) return;
+        if (signal?.aborted) {return;}
         try {
           const vp = await marketAPI.getVolumeProfile('XAU/USD', selectedInterval, 100);
           if (!signal?.aborted && vp && candleSeriesRef.current) {
@@ -1197,12 +1199,14 @@ export function CandlestickChart() {
             return best;
           };
 
-          const markers = tradesResp.trades
-            .filter((t: any) => t.timestamp && t.direction && (t.result?.includes('WIN') || t.result?.includes('LOSS')))
-            .map((t: any) => {
+          type TradeRow = { timestamp?: string; direction?: string; result?: string };
+          const markers = (tradesResp.trades as TradeRow[])
+            .filter((t): t is Required<Pick<TradeRow, 'timestamp' | 'direction'>> & TradeRow =>
+              Boolean(t.timestamp) && Boolean(t.direction) && (t.result?.includes('WIN') ?? t.result?.includes('LOSS') ?? false))
+            .map((t) => {
               let ts = t.timestamp.trim();
               ts = ts.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
-              if (!/[Zz+-]/.test(ts.slice(-6))) ts += 'Z';
+              if (!/[Zz+-]/.test(ts.slice(-6))) {ts += 'Z';}
               const rawTime = Math.floor(new Date(ts).getTime() / 1000);
               const time = snapToCandle(rawTime) as UTCTimestamp;
               const isWin = t.result?.includes('WIN');
@@ -1215,8 +1219,8 @@ export function CandlestickChart() {
                 text: isWin ? 'W' : 'L',
               };
             })
-            .sort((a: any, b: any) => (a.time as number) - (b.time as number));
-          if (markers.length) candleSeriesRef.current.setMarkers(markers);
+            .sort((a, b) => (a.time as number) - (b.time as number));
+          if (markers.length) {candleSeriesRef.current.setMarkers(markers);}
         }
       } catch { /* trade markers are optional */ }
 
@@ -1253,7 +1257,7 @@ export function CandlestickChart() {
       }
 
       isFirstLoad.current = false;
-    } catch (err) {
+    } catch {
       if (isFirstLoad.current) {
         setError('Failed to load chart data');
         toast.error('Chart data unavailable');
@@ -1278,7 +1282,7 @@ export function CandlestickChart() {
 
   /* ── Update chart colors on theme change ──────────────────────────────── */
   useEffect(() => {
-    if (!mainChartRef.current || !rsiChartRef.current) return;
+    if (!mainChartRef.current || !rsiChartRef.current) {return;}
     // Small delay to let CSS variables settle after class toggle
     const timer = setTimeout(() => {
       const c = getChartColors();
@@ -1318,12 +1322,12 @@ export function CandlestickChart() {
   /* ── Price alert lines — sync with activeAlerts ──────────────────────── */
   useEffect(() => {
     const cs = candleSeriesRef.current;
-    if (!cs) return;
+    if (!cs) {return;}
 
     // Remove old alert lines that are no longer active
     for (const [id, pl] of alertPriceLinesRef.current) {
       if (!activeAlerts.find(a => a.id === id)) {
-        try { cs.removePriceLine(pl); } catch { /* ok */ }
+        try { cs.removePriceLine(pl as Parameters<typeof cs.removePriceLine>[0]); } catch { /* ok */ }
         alertPriceLinesRef.current.delete(id);
       }
     }
@@ -1349,18 +1353,18 @@ export function CandlestickChart() {
     const container = mainContainerRef.current;
     const chart = mainChartRef.current;
     const series = candleSeriesRef.current;
-    if (!container || !chart || !series) return;
+    if (!container || !chart || !series) {return;}
 
     const handler = (e: MouseEvent) => {
-      if (!e.altKey) return;
+      if (!e.altKey) {return;}
       // Get price at click position
       const rect = container.getBoundingClientRect();
       const y = e.clientY - rect.top;
       const price = series.coordinateToPrice(y);
-      if (price === null) return;
+      if (price === null) {return;}
 
       const currentPrice = rawCandlesRef.current[rawCandlesRef.current.length - 1]?.close;
-      if (!currentPrice) return;
+      if (!currentPrice) {return;}
 
       const priceNum = price as number;
       const alert = addAlert(priceNum, currentPrice);
@@ -1404,7 +1408,7 @@ export function CandlestickChart() {
     const mainTs = mainChartRef.current?.timeScale();
     if (mainTs) {
       mainTs.subscribeVisibleLogicalRangeChange((range) => {
-        if (syncing || !range) return;
+        if (syncing || !range) {return;}
         syncing = true;
         chart.timeScale().setVisibleLogicalRange(range);
         syncing = false;
@@ -1450,7 +1454,7 @@ export function CandlestickChart() {
     const mainTs = mainChartRef.current?.timeScale();
     if (mainTs) {
       mainTs.subscribeVisibleLogicalRangeChange((range) => {
-        if (syncing || !range) return;
+        if (syncing || !range) {return;}
         syncing = true;
         chart.timeScale().setVisibleLogicalRange(range);
         syncing = false;
@@ -1480,7 +1484,7 @@ export function CandlestickChart() {
   useEffect(() => {
     const container = mainContainerRef.current;
     const series = candleSeriesRef.current;
-    if (!container || !series) return;
+    if (!container || !series) {return;}
 
     const handler = (e: MouseEvent) => {
       e.preventDefault();
@@ -1497,11 +1501,11 @@ export function CandlestickChart() {
   /* ── Chart screenshot ────────────────────────────────────────────────── */
   const handleScreenshot = useCallback(() => {
     const chart = mainChartRef.current;
-    if (!chart) return;
+    if (!chart) {return;}
     try {
       const canvas = chart.takeScreenshot();
       canvas.toBlob((blob) => {
-        if (!blob) return;
+        if (!blob) {return;}
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;

@@ -33,8 +33,8 @@ export interface VPData {
 class VPRenderer implements ISeriesPrimitivePaneRenderer {
   bars: { y: number; h: number; w: number; isPoc: boolean; isVA: boolean }[] = [];
 
-  draw(target: { useMediaCoordinateSpace: Function }) {
-    if (!this.bars.length) return;
+  draw(target: { useMediaCoordinateSpace: (cb: (scope: { context: CanvasRenderingContext2D; mediaSize: { width: number } }) => void) => void }) {
+    if (!this.bars.length) {return;}
 
     target.useMediaCoordinateSpace((scope: { context: CanvasRenderingContext2D; mediaSize: { width: number } }) => {
       const ctx = scope.context;
@@ -128,7 +128,7 @@ export class VolumeProfileOverlay implements ISeriesPrimitive<Time> {
       const y1 = series.priceToCoordinate(bar.price + priceStep / 2);
       const y2 = series.priceToCoordinate(bar.price - priceStep / 2);
 
-      if (y1 === null || y2 === null) continue;
+      if (y1 === null || y2 === null) {continue;}
 
       const yTop = Math.min(y1, y2);
       const h = Math.abs(y2 - y1);

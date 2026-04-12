@@ -60,7 +60,7 @@ export const ExportButtons = memo(function ExportButtons() {
       icon: FileText,
       action: async () => {
         const res = await exportAPI.downloadTrades('csv');
-        if (!res.data) throw new Error('Empty response');
+        if (!res.data) {throw new Error('Empty response');}
         triggerDownload(res.data as Blob, `qs-trades-${new Date().toISOString().slice(0, 10)}.csv`);
       },
     },
@@ -70,7 +70,7 @@ export const ExportButtons = memo(function ExportButtons() {
       icon: FileJson,
       action: async () => {
         const res = await exportAPI.downloadTrades('json');
-        if (!res.data) throw new Error('Empty response');
+        if (!res.data) {throw new Error('Empty response');}
         triggerDownload(JSON.stringify(res.data, null, 2), `qs-trades-${new Date().toISOString().slice(0, 10)}.json`);
       },
     },
@@ -80,7 +80,7 @@ export const ExportButtons = memo(function ExportButtons() {
       icon: FileText,
       action: async () => {
         const res = await exportAPI.downloadEquity('csv');
-        if (!res.data) throw new Error('Empty response');
+        if (!res.data) {throw new Error('Empty response');}
         triggerDownload(res.data as Blob, `qs-equity-${new Date().toISOString().slice(0, 10)}.csv`);
       },
     },
@@ -99,7 +99,7 @@ export const ExportButtons = memo(function ExportButtons() {
       icon: CalendarDays,
       action: async () => {
         const res = await exportAPI.downloadMonthlyReport(pdfMonth);
-        if (!res.data) throw new Error('Empty response');
+        if (!res.data) {throw new Error('Empty response');}
         triggerDownload(res.data as Blob, `qs-monthly-report-${pdfMonth}.pdf`);
       },
     },

@@ -58,18 +58,18 @@ export const ConfirmDialog = memo(function ConfirmDialog({
 
   // Focus cancel button on open (safer default)
   useEffect(() => {
-    if (open) cancelRef.current?.focus();
+    if (open) {cancelRef.current?.focus();}
   }, [open]);
 
   // Close on Escape
   useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    if (!open) {return;}
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') {onCancel();} };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [open, onCancel]);
 
-  if (!open) return null;
+  if (!open) {return null;}
 
   return (
     <>

@@ -351,8 +351,8 @@ function AboutTab() {
     const fetchAll = async () => {
       try {
         const [h, m] = await Promise.allSettled([healthAPI.check(), modelsAPI.getStats()]);
-        if (h.status === 'fulfilled') setHealth(h.value);
-        if (m.status === 'fulfilled') setModelStats(m.value as unknown as Record<string, unknown>);
+        if (h.status === 'fulfilled') {setHealth(h.value);}
+        if (m.status === 'fulfilled') {setModelStats(m.value as unknown as Record<string, unknown>);}
       } finally {
         setLoading(false);
       }
@@ -409,7 +409,7 @@ function AboutTab() {
                   <span className="text-xs font-medium text-th uppercase">{m.name}</span>
                 </div>
                 <div className="flex items-center gap-4 text-[10px]">
-                  {m.accuracy != null && (
+                  {m.accuracy !== null && m.accuracy !== undefined && (
                     <span className="text-th-secondary font-mono">
                       Accuracy: <span className="text-accent-green font-bold">{(m.accuracy * 100).toFixed(1)}%</span>
                     </span>

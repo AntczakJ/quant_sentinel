@@ -22,9 +22,9 @@ const routeImports: Record<string, () => Promise<unknown>> = {
  * Safe to call multiple times — deduplicates via Set.
  */
 export function prefetchRoute(path: string): void {
-  if (prefetchedRoutes.has(path)) return;
+  if (prefetchedRoutes.has(path)) {return;}
   const loader = routeImports[path];
-  if (!loader) return;
+  if (!loader) {return;}
 
   prefetchedRoutes.add(path);
 

@@ -20,7 +20,7 @@ export type SSEStatus = 'connecting' | 'connected' | 'disconnected';
  */
 function resolveBase(): string {
   const envUrl = import.meta.env.VITE_API_URL as string | undefined;
-  if (envUrl) return envUrl.replace(/\/$/, '');
+  if (envUrl) {return envUrl.replace(/\/$/, '');}
   return '/api';
 }
 
@@ -42,7 +42,7 @@ export function useSSE<T = unknown>(
   const esRef = useRef<EventSource | null>(null);
 
   const connect = useCallback(() => {
-    if (!enabled) return;
+    if (!enabled) {return;}
 
     const url = `${SSE_BASE}${path}`;
     const es = new EventSource(url);

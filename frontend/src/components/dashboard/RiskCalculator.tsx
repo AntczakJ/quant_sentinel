@@ -33,7 +33,7 @@ export const RiskCalculator = memo(function RiskCalculator({ onClose, initialPri
   const [riskPct, setRiskPct] = useState('1.0');
 
   // Auto-fill entry from live price when user hasn't typed yet
-  const userEditedEntry = useRef(!!initialPrice);
+  const userEditedEntry = useRef(Boolean(initialPrice));
   useEffect(() => {
     if (!userEditedEntry.current && livePrice > 0) {
       setEntry(livePrice.toFixed(2));
@@ -44,7 +44,7 @@ export const RiskCalculator = memo(function RiskCalculator({ onClose, initialPri
   const userEditedSl = useRef(false);
   useEffect(() => {
     const e = parseFloat(entry);
-    if (!e || userEditedSl.current) return; // Don't overwrite manual SL
+    if (!e || userEditedSl.current) {return;} // Don't overwrite manual SL
     const defaultRisk = e * 0.003; // 0.3% = ~$10 for gold
     if (direction === 'LONG') {
       setSl((e - defaultRisk).toFixed(2));
@@ -61,7 +61,7 @@ export const RiskCalculator = memo(function RiskCalculator({ onClose, initialPri
     const t = parseFloat(tp) || 0;
     const rPct = parseFloat(riskPct) || 1;
 
-    if (!e || !s) return null;
+    if (!e || !s) {return null;}
 
     const riskPerOz = Math.abs(e - s); // $ risk per oz
     const rewardPerOz = t ? Math.abs(t - e) : 0;

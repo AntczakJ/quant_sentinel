@@ -55,39 +55,39 @@ const IMPACT_STYLES: Record<string, string> = {
 };
 
 function getSentimentStyle(sentiment: string | undefined) {
-  if (!sentiment) return SENTIMENT_STYLES.neutral;
+  if (!sentiment) {return SENTIMENT_STYLES.neutral;}
   const lower = sentiment.toLowerCase();
   return SENTIMENT_STYLES[lower] ?? SENTIMENT_STYLES.neutral;
 }
 
 function getImpactStyle(impact: string | undefined) {
-  if (!impact) return '';
+  if (!impact) {return '';}
   return IMPACT_STYLES[impact.toLowerCase()] ?? IMPACT_STYLES.low;
 }
 
 function timeAgo(dateStr: string | undefined): string {
-  if (!dateStr) return '';
+  if (!dateStr) {return '';}
   const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return '';
+  if (isNaN(d.getTime())) {return '';}
   const mins = Math.floor((Date.now() - d.getTime()) / 60000);
-  if (mins < 1) return 'teraz';
-  if (mins < 60) return `${mins}m temu`;
+  if (mins < 1) {return 'teraz';}
+  if (mins < 60) {return `${mins}m temu`;}
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h temu`;
+  if (hrs < 24) {return `${hrs}h temu`;}
   return `${Math.floor(hrs / 24)}d temu`;
 }
 
 function timeUntil(dateStr: string, timeStr?: string): string {
   let combined = dateStr;
-  if (timeStr) combined += `T${timeStr}`;
+  if (timeStr) {combined += `T${timeStr}`;}
   const d = new Date(combined);
-  if (isNaN(d.getTime())) return '';
+  if (isNaN(d.getTime())) {return '';}
   const diff = d.getTime() - Date.now();
-  if (diff <= 0) return 'juz bylo';
+  if (diff <= 0) {return 'juz bylo';}
   const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `za ${mins}m`;
+  if (mins < 60) {return `za ${mins}m`;}
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `za ${hrs}h ${mins % 60}m`;
+  if (hrs < 24) {return `za ${hrs}h ${mins % 60}m`;}
   return `za ${Math.floor(hrs / 24)}d`;
 }
 
@@ -205,10 +205,10 @@ export default function NewsPage() {
     const pa: CalendarEvent[] = [];
     for (const ev of calendar) {
       let d = new Date(ev.date + (ev.time ? `T${ev.time}` : ''));
-      if (isNaN(d.getTime())) d = new Date(ev.date);
-      if (isNaN(d.getTime())) continue;
-      if (d.getTime() > now) up.push(ev);
-      else pa.push(ev);
+      if (isNaN(d.getTime())) {d = new Date(ev.date);}
+      if (isNaN(d.getTime())) {continue;}
+      if (d.getTime() > now) {up.push(ev);}
+      else {pa.push(ev);}
     }
     // Sort upcoming by date asc, past by date desc
     up.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());

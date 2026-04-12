@@ -27,12 +27,12 @@ export const FreshnessIndicator = memo(function FreshnessIndicator({
     return () => clearInterval(t);
   }, []);
 
-  if (!lastUpdated) return null;
+  if (!lastUpdated) {return null;}
 
   const ts = typeof lastUpdated === 'number' ? lastUpdated : lastUpdated.getTime();
   const ageSec = Math.floor((now - ts) / 1000);
 
-  if (ageSec < 5) return null; // Too fresh to show
+  if (ageSec < 5) {return null;} // Too fresh to show
 
   const color = ageSec > errorAfterSec
     ? 'text-accent-red'

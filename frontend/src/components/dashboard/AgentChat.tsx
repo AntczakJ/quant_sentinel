@@ -88,9 +88,23 @@ export const AgentChat = memo(function AgentChat() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isAbortedRef = useRef(false);
 
-  // Voice input (Web Speech API)
+  // Voice input (Web Speech API) — minimal typings since the API is not in standard TS lib.
+  type SpeechRecognitionResultEvent = { results: { [index: number]: { [index: number]: { transcript: string } } } };
+  type SpeechRecognitionInstance = {
+    lang: string;
+    continuous: boolean;
+    interimResults: boolean;
+    maxAlternatives: number;
+    onresult: (e: SpeechRecognitionResultEvent) => void;
+    onerror: () => void;
+    onend: () => void;
+    start: () => void;
+    stop: () => void;
+  };
+  type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
+
   const [listening, setListening] = useState(false);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const speechSupported = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
 
   const toggleVoice = useCallback(() => {
@@ -100,8 +114,9 @@ export const AgentChat = memo(function AgentChat() {
       return;
     }
 
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    const w = window as Window & { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor };
+    const SpeechRecognition = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!SpeechRecognition) {return;}
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'pl-PL';
@@ -109,7 +124,7 @@ export const AgentChat = memo(function AgentChat() {
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionResultEvent) => {
       const transcript = event.results[0][0].transcript;
       setInput(prev => prev ? prev + ' ' + transcript : transcript);
       setListening(false);
@@ -199,7 +214,7 @@ export const AgentChat = memo(function AgentChat() {
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-    } catch (err) {
+    } catch {
       clearTimeout(timeoutId);
       if (timerRef.current) {clearInterval(timerRef.current);}
       if (!isAbortedRef.current) {
@@ -267,7 +282,7 @@ export const AgentChat = memo(function AgentChat() {
   }, []);
 
   const resetThread = () => {
-    if (messages.length > 1 && !window.confirm('Wyczyścić historię rozmowy?')) return;
+    if (messages.length > 1 && !window.confirm('Wyczyścić historię rozmowy?')) {return;}
     localStorage.removeItem(THREAD_STORAGE_KEY);
     setThreadId(undefined);
     setMessages([

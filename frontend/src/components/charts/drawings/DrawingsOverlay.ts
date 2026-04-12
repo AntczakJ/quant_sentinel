@@ -38,7 +38,10 @@ class DrawingsPaneRenderer implements ISeriesPrimitivePaneRenderer {
   /** Preview drawing currently being placed (rubber-band). */
   preview: PixelDrawing | null = null;
 
-  draw(target: { useBitmapCoordinateSpace: Function; useMediaCoordinateSpace: Function }) {
+  draw(target: {
+    useBitmapCoordinateSpace: (cb: (scope: { context: CanvasRenderingContext2D; mediaSize: { width: number; height: number } }) => void) => void;
+    useMediaCoordinateSpace: (cb: (scope: { context: CanvasRenderingContext2D; mediaSize: { width: number; height: number } }) => void) => void;
+  }) {
     target.useMediaCoordinateSpace((scope: { context: CanvasRenderingContext2D; mediaSize: { width: number; height: number } }) => {
       const ctx = scope.context;
       const w = this.chartW || scope.mediaSize.width;
@@ -154,7 +157,8 @@ export class DrawingsOverlay implements ISeriesPrimitive<Time> {
     if (!this._chart || !this._series) {return;}
 
     renderer.chartW = this._chart.timeScale().width();
-    renderer.chartH = (this._chart as any).chartElement?.()?.clientHeight ?? 600;
+    // chartElement() exists on IChartApi in lightweight-charts 4.x but isn't in public types
+    renderer.chartH = (this._chart as unknown as { chartElement?: () => HTMLElement | null }).chartElement?.()?.clientHeight ?? 600;
 
     // Convert all drawings
     for (const d of this._drawings) {

@@ -35,7 +35,7 @@ export const EquityCurve = memo(function EquityCurve() {
 
   // Build chart
   useEffect(() => {
-    if (!chartRef.current) return;
+    if (!chartRef.current) {return;}
 
     const bg = isDark ? '#0f1729' : '#ffffff';
     const text = isDark ? 'rgba(148,163,184,0.6)' : 'rgba(100,116,139,0.7)';
@@ -87,8 +87,8 @@ export const EquityCurve = memo(function EquityCurve() {
 
   // Feed data
   useEffect(() => {
-    if (!data || !equitySeriesRef.current || !ddSeriesRef.current) return;
-    if (!data.timestamps?.length || !data.equity_values?.length) return;
+    if (!data || !equitySeriesRef.current || !ddSeriesRef.current) {return;}
+    if (!data.timestamps?.length || !data.equity_values?.length) {return;}
 
     const len = Math.min(data.timestamps.length, data.equity_values.length);
     const equityData = data.timestamps.slice(0, len).map((ts, i) => ({
@@ -99,7 +99,7 @@ export const EquityCurve = memo(function EquityCurve() {
     // Calculate drawdown %
     let peak = equityData[0]?.value ?? 0;
     const ddData = equityData.map(p => {
-      if (p.value > peak) peak = p.value;
+      if (p.value > peak) {peak = p.value;}
       const dd = peak > 0 ? ((p.value - peak) / peak) * 100 : 0;
       return { time: p.time, value: dd };
     });
@@ -144,9 +144,9 @@ export const EquityCurve = memo(function EquityCurve() {
   let peak = first;
   let maxDd = 0;
   for (const v of values) {
-    if (v > peak) peak = v;
+    if (v > peak) {peak = v;}
     const dd = peak > 0 ? ((v - peak) / peak) * 100 : 0;
-    if (dd < maxDd) maxDd = dd;
+    if (dd < maxDd) {maxDd = dd;}
   }
 
   return (

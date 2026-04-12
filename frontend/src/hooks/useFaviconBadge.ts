@@ -15,7 +15,7 @@ export function useFaviconBadge(active: boolean) {
 
   useEffect(() => {
     const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    if (!link) return;
+    if (!link) {return;}
 
     // Store original favicon once
     if (!originalRef.current) {
@@ -24,7 +24,7 @@ export function useFaviconBadge(active: boolean) {
 
     if (!active) {
       // Restore original
-      if (originalRef.current) link.href = originalRef.current;
+      if (originalRef.current) {link.href = originalRef.current;}
       return;
     }
 
@@ -33,7 +33,7 @@ export function useFaviconBadge(active: boolean) {
     canvas.width = CANVAS_SIZE;
     canvas.height = CANVAS_SIZE;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) {return;}
 
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -71,7 +71,7 @@ export function useFaviconBadge(active: boolean) {
     img.src = originalRef.current ?? '/qs-logo.svg';
 
     return () => {
-      if (originalRef.current && link) link.href = originalRef.current;
+      if (originalRef.current && link) {link.href = originalRef.current;}
     };
   }, [active]);
 }

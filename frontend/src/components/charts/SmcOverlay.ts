@@ -32,7 +32,10 @@ interface RectDraw {
 class ZonesPaneRenderer implements ISeriesPrimitivePaneRenderer {
   rects: RectDraw[] = [];
 
-  draw(target: { useBitmapCoordinateSpace: Function; useMediaCoordinateSpace: Function }) {
+  draw(target: {
+    useBitmapCoordinateSpace: (cb: (scope: { context: CanvasRenderingContext2D }) => void) => void;
+    useMediaCoordinateSpace: (cb: (scope: { context: CanvasRenderingContext2D }) => void) => void;
+  }) {
     if (!this.rects.length) {return;}
 
     // Use media coordinate space (CSS pixels — matches timeToCoordinate / priceToCoordinate)

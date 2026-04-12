@@ -205,7 +205,7 @@ export const MtfConfluence = memo(function MtfConfluence() {
         </div>
         {TF_ORDER.map(tf => {
           const t = data.timeframes[tf];
-          if (!t) return null;
+          if (!t) {return null;}
           return <TfRow key={tf} tf={tf} trend={t.trend} rsi={t.rsi} weight={t.weight} />;
         })}
       </div>

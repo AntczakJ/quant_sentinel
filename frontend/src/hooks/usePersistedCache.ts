@@ -38,7 +38,7 @@ export async function setCached<T>(key: string, data: T, ttlMs: number): Promise
 export async function getCached<T>(key: string, ttlMs?: number): Promise<T | null> {
   try {
     const item = await get<CachedItem<T>>(key, cacheStore);
-    if (!item) return null;
+    if (!item) {return null;}
     const maxAge = ttlMs ?? item.ttl;
     if (Date.now() - item.timestamp > maxAge) {
       // Expired — clean up in background
@@ -58,7 +58,7 @@ export async function getCached<T>(key: string, ttlMs?: number): Promise<T | nul
 export async function getCachedStale<T>(key: string): Promise<{ data: T; isStale: boolean } | null> {
   try {
     const item = await get<CachedItem<T>>(key, cacheStore);
-    if (!item) return null;
+    if (!item) {return null;}
     const isStale = Date.now() - item.timestamp > item.ttl;
     return { data: item.data, isStale };
   } catch {

@@ -45,7 +45,7 @@ const circuitBreaker = {
 
   /** Returns true if request should be allowed through */
   canRequest(): boolean {
-    if (this.state === 'CLOSED') return true;
+    if (this.state === 'CLOSED') {return true;}
     if (this.state === 'OPEN') {
       // Allow a probe after cooldown
       if (Date.now() - this.lastFailure >= this.cooldown) {
@@ -60,7 +60,7 @@ const circuitBreaker = {
 
   /** Whether to suppress a console.error for this failure */
   shouldSuppressLog(): boolean {
-    if (this.state !== 'OPEN') return false;
+    if (this.state !== 'OPEN') {return false;}
     this._suppressCount++;
     return this._suppressCount % this.logEvery !== 0;
   },
@@ -88,8 +88,7 @@ const inflightRequests = new Map<string, Promise<AxiosResponse>>();
 client.interceptors.request.use((config) => {
   // Circuit breaker gate — reject immediately when backend is known-down
   if (!circuitBreaker.canRequest()) {
-    const err = new axios.Cancel('Circuit breaker OPEN — backend unreachable');
-    return Promise.reject(err);
+    return Promise.reject(new Error('Circuit breaker OPEN — backend unreachable'));
   }
 
   if (config.method === 'get') {
@@ -109,7 +108,7 @@ client.interceptors.response.use(
     circuitBreaker.recordSuccess();
 
     // Store ETag from response
-    const etag = response.headers['etag'];
+    const etag = response.headers['etag'] as string | undefined;
     if (etag && response.config.method === 'get') {
       const key = `${response.config.baseURL ?? ''}${response.config.url ?? ''}`;
       etagCache.set(key, { etag, data: response.data });
@@ -127,12 +126,15 @@ client.interceptors.response.use(
       }
     }
 
-    const dedupKey = (error.config as any)?.__dedupKey as string | undefined;
-    if (dedupKey) inflightRequests.delete(dedupKey);
+    // Custom fields on config we attach for dedup/retry tracking
+    type ExtConfig = { __dedupKey?: string; __dedupPromise?: Promise<AxiosResponse>; __isRetry?: boolean };
+    const extCfg = error.config as (typeof error.config & ExtConfig) | undefined;
+    const dedupKey = extCfg?.__dedupKey;
+    if (dedupKey) {inflightRequests.delete(dedupKey);}
 
     // If this was a deduped request that got cancelled, return the original promise
-    const dedupPromise = (error.config as any)?.__dedupPromise;
-    if (dedupPromise && axios.isCancel(error)) return dedupPromise;
+    const dedupPromise = extCfg?.__dedupPromise;
+    if (dedupPromise && axios.isCancel(error)) {return dedupPromise;}
 
     // Record network / timeout failures for circuit breaker
     // Only count failures on /market/ endpoints (those hit external Twelve Data API).
@@ -154,10 +156,10 @@ client.interceptors.response.use(
       error.config &&
       error.config.method === 'get' &&
       !reqUrl.includes('/market/') &&
-      !(error.config as any).__isRetry &&
+      !extCfg?.__isRetry &&
       circuitBreaker.state === 'CLOSED'
     ) {
-      const retryConfig = { ...error.config, __isRetry: true } as any;
+      const retryConfig = { ...error.config, __isRetry: true };
       await new Promise(resolve => setTimeout(resolve, 2000));
       return client.request(retryConfig);
     }
@@ -166,17 +168,17 @@ client.interceptors.response.use(
     if (!circuitBreaker.shouldSuppressLog()) {
       console.error('API Error:', error.response?.data ?? error.message);
     }
-    return Promise.reject(error);
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
   }
 );
 
 // Wrap client.get to leverage dedup map
 const originalGet = client.get.bind(client);
-client.get = function dedupGet<T = any>(...args: Parameters<typeof originalGet>): Promise<AxiosResponse<T>> {
+client.get = function dedupGet<T = unknown>(...args: Parameters<typeof originalGet>): Promise<AxiosResponse<T>> {
   const config = args[1] ?? {};
   const key = `get:${API_BASE_URL}${args[0]}:${config.params ? JSON.stringify(config.params) : ''}`;
   const existing = inflightRequests.get(key);
-  if (existing) return existing as Promise<AxiosResponse<T>>;
+  if (existing) {return existing as Promise<AxiosResponse<T>>;}
   const promise = originalGet<T>(...args);
   inflightRequests.set(key, promise);
   void promise.finally(() => inflightRequests.delete(key));

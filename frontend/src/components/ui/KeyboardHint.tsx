@@ -17,7 +17,7 @@ export const KeyboardHint = memo(function KeyboardHint() {
 
   // Listen for Ctrl+K to auto-dismiss
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {return;}
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         setVisible(false);
@@ -30,7 +30,7 @@ export const KeyboardHint = memo(function KeyboardHint() {
 
   // Auto-dismiss after 30s
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {return;}
     const t = setTimeout(() => {
       setVisible(false);
       localStorage.setItem(STORAGE_KEY, 'true');
@@ -38,7 +38,7 @@ export const KeyboardHint = memo(function KeyboardHint() {
     return () => clearTimeout(t);
   }, [visible]);
 
-  if (!visible) return null;
+  if (!visible) {return null;}
 
   return (
     <div className="fixed bottom-20 md:bottom-4 right-4 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border shadow-lg text-[10px] font-medium animate-pulse"
