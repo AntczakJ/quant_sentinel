@@ -170,6 +170,82 @@ def _summarize_trades() -> dict:
         conn.close()
 
 
+def _buy_and_hold_benchmark(provider) -> dict:
+    """Compare strategy return to simple buy-and-hold of the underlying.
+
+    If strategy returns +3% but buy-and-hold returns +8%, strategy has
+    negative alpha (i.e. you'd be better off just holding). If strategy
+    = +5% in a -10% down market, strategy genuinely added value.
+    """
+    cache = provider._cache.get("1h") or provider._cache.get("15m")
+    if cache is None or cache.empty:
+        return {}
+    first_price = float(cache["close"].iloc[0])
+    last_price = float(cache["close"].iloc[-1])
+    bh_return_pct = (last_price / first_price - 1) * 100
+    return {
+        "bh_first_price": round(first_price, 2),
+        "bh_last_price": round(last_price, 2),
+        "bh_return_pct": round(bh_return_pct, 2),
+    }
+
+
+def _monte_carlo_analysis(n_simulations: int = 1000) -> dict:
+    """Shuffle trade order N times — show distribution of outcomes.
+
+    If strategy has real edge, outcomes should be consistently positive
+    regardless of order. High variance across shuffles = order-dependent
+    = probably lucky on the real-order realization.
+
+    Returns percentiles of final return + max drawdown.
+    """
+    assert_not_production_db()
+    import random
+    import statistics as stats_mod
+
+    conn = sqlite3.connect(os.environ["DATABASE_URL"])
+    rows = conn.execute(
+        "SELECT profit FROM trades "
+        "WHERE status IN ('WIN','PROFIT','LOSS','LOSE','BREAKEVEN') AND profit IS NOT NULL"
+    ).fetchall()
+    conn.close()
+    profits = [float(p) for (p,) in rows]
+    if len(profits) < 5:
+        return {"n_trades": len(profits), "note": "too few trades for MC"}
+
+    returns = []
+    max_dds = []
+    for _ in range(n_simulations):
+        shuffled = profits.copy()
+        random.shuffle(shuffled)
+        equity = [10_000.0]
+        peak = 10_000.0
+        dd = 0.0
+        for p in shuffled:
+            equity.append(equity[-1] + p)
+            peak = max(peak, equity[-1])
+            dd = min(dd, (equity[-1] - peak) / peak * 100)
+        returns.append((equity[-1] / 10_000.0 - 1) * 100)
+        max_dds.append(dd)
+
+    def _pctl(vs, q):
+        s = sorted(vs)
+        return s[max(0, min(len(s) - 1, int(len(s) * q / 100)))]
+
+    return {
+        "n_simulations": n_simulations,
+        "n_trades": len(profits),
+        "return_p5": round(_pctl(returns, 5), 2),
+        "return_p50": round(_pctl(returns, 50), 2),
+        "return_p95": round(_pctl(returns, 95), 2),
+        "return_mean": round(stats_mod.mean(returns), 2),
+        "return_stdev": round(stats_mod.stdev(returns) if len(returns) > 1 else 0, 2),
+        "max_dd_p5": round(_pctl(max_dds, 5), 2),   # worst 5% case
+        "max_dd_p50": round(_pctl(max_dds, 50), 2), # median
+        "prob_profitable": round(sum(1 for r in returns if r > 0) / len(returns) * 100, 1),
+    }
+
+
 def _export_equity_curve(path: str) -> int:
     """Save equity curve PNG (or HTML fallback) for visual analysis."""
     assert_not_production_db()
@@ -578,6 +654,16 @@ async def _run_backtest(args) -> dict:
     except Exception:
         pass
 
+    # Buy-and-hold benchmark for context (did strategy beat passive?)
+    try:
+        bh = _buy_and_hold_benchmark(provider)
+        stats.update(bh)
+        stats["alpha_vs_bh_pct"] = round(
+            stats.get("return_pct", 0) - bh.get("bh_return_pct", 0), 2
+        )
+    except Exception:
+        pass
+
     return stats
 
 
@@ -600,6 +686,12 @@ def main():
                     help="dump all trades to CSV for Excel/pandas analysis")
     ap.add_argument("--plot-equity", default=None,
                     help="save equity curve PNG (e.g. reports/equity.png)")
+    ap.add_argument("--walk-forward", type=int, default=0,
+                    help="split data into N non-overlapping windows, run each "
+                         "and aggregate. Exposes consistency of edge across time.")
+    ap.add_argument("--monte-carlo", type=int, default=0,
+                    help="shuffle trade order N times, report return / DD "
+                         "percentiles. Tests whether edge depends on trade order.")
     ap.add_argument("--strict", action="store_true",
                     help="disable relaxed filters — run with PRODUCTION confluence "
                          "threshold (3+) and Stable=blocked. Useful for apples-to-"
@@ -612,6 +704,48 @@ def main():
 
     if args.reset:
         _reset_backtest_db()
+
+    if args.walk_forward and args.walk_forward > 1:
+        # Split the --days window into N non-overlapping chunks and run each
+        import datetime as _dt
+        total_days = args.days
+        chunk = max(total_days // args.walk_forward, 1)
+        print(f"[walk-forward] {args.walk_forward} windows x {chunk} days each\n")
+        window_results = []
+        for w in range(args.walk_forward):
+            _reset_backtest_db()
+            # Fresh args with shifted dates
+            end_offset_days = total_days - w * chunk
+            start_offset_days = end_offset_days - chunk
+            # Use --start/--end via computed dates
+            end_date = _dt.date.today() - _dt.timedelta(days=start_offset_days)
+            start_date = _dt.date.today() - _dt.timedelta(days=end_offset_days)
+            args.start = start_date.isoformat()
+            args.end = end_date.isoformat()
+            print(f"\n[window {w+1}/{args.walk_forward}] {args.start} -> {args.end}")
+            s = asyncio.run(_run_backtest(args))
+            window_results.append({"window": f"{args.start}→{args.end}", **s})
+        # Aggregate
+        print("\n" + "=" * 70)
+        print("WALK-FORWARD AGGREGATE")
+        print("=" * 70)
+        print(f"{'Window':<28} {'Trades':>7} {'WR%':>6} {'PF':>6} {'Return%':>9} {'MaxDD%':>8}")
+        for r in window_results:
+            print(f"{r['window']:<28} {r['total_trades']:>7} {r['win_rate_pct']:>6.1f} "
+                  f"{r['profit_factor']:>6} {r['return_pct']:>9.2f} {r['max_drawdown_pct']:>8.2f}")
+        # Summary stats
+        returns = [r["return_pct"] for r in window_results]
+        if returns:
+            import statistics
+            print(f"{'Mean':<28} {'-':>7} {'-':>6} {'-':>6} {statistics.mean(returns):>9.2f} "
+                  f"{'(stdev ' + f'{statistics.stdev(returns) if len(returns)>1 else 0:.2f}' + ')':>20}")
+        if args.output:
+            import json
+            from pathlib import Path
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.output).write_text(json.dumps({"walk_forward": window_results}, indent=2, default=str))
+            print(f"[walk-forward] saved {args.output}")
+        return
 
     stats = asyncio.run(_run_backtest(args))
 
@@ -641,6 +775,15 @@ def main():
             print(f"[backtest] Equity curve saved ({n} trades) to {args.plot_equity}")
         else:
             print(f"[backtest] No closed trades — equity curve not plotted")
+
+    if args.monte_carlo > 0:
+        mc = _monte_carlo_analysis(args.monte_carlo)
+        print(f"\n[monte-carlo] {mc.get('n_simulations', 0)} simulations on "
+              f"{mc.get('n_trades', 0)} trades:")
+        for k, v in mc.items():
+            if k in ("n_simulations", "n_trades"):
+                continue
+            print(f"  {k:<20} {v}")
 
 
 if __name__ == "__main__":
