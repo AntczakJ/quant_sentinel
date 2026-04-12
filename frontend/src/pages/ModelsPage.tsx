@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
 import { trainingAPI } from '../api/client';
 import { Play, Loader2, CheckCircle, XCircle } from 'lucide-react';
@@ -91,9 +91,15 @@ export default function ModelsPage() {
     },
     {
       id: 'backtesting',
-      title: 'Backtesting',
+      title: 'Backtesting (legacy)',
       content: <BacktestPanel />,
-      defaultLayout: { x: 0, y: 13, w: 12, h: 5, minW: 6, minH: 3 },
+      defaultLayout: { x: 0, y: 13, w: 6, h: 5, minW: 4, minH: 3 },
+    },
+    {
+      id: 'backtest-results',
+      title: 'Production Backtest Results',
+      content: <BacktestResults />,
+      defaultLayout: { x: 6, y: 13, w: 6, h: 5, minW: 4, minH: 3 },
     },
     {
       id: 'performance',

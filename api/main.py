@@ -981,6 +981,78 @@ async def health_check_detailed():
     }
 
 
+@app.get("/api/backtest/runs", tags=["System"])
+async def backtest_runs(limit: int = 20):
+    """List recent backtest run JSON files with summary metadata.
+
+    Reads from reports/*.json and data/bt_*.json. Returns descending by mtime.
+    This is READ-ONLY — never touches backtest.db or sentinel.db.
+    """
+    import os as _os
+    import glob as _glob
+    import json as _json
+
+    patterns = ["reports/*.json", "data/bt_*.json"]
+    files = []
+    for p in patterns:
+        files.extend(_glob.glob(p))
+    # Unique + sort by mtime desc
+    files = sorted(set(files), key=lambda f: _os.path.getmtime(f), reverse=True)[:limit]
+
+    runs = []
+    for path in files:
+        try:
+            data = _json.loads(open(path, "r", encoding="utf-8").read())
+        except Exception:
+            continue
+        runs.append({
+            "path": path,
+            "name": _os.path.basename(path).replace(".json", ""),
+            "mtime": _os.path.getmtime(path),
+            "trades": data.get("total_trades", 0),
+            "wins": data.get("wins", 0),
+            "losses": data.get("losses", 0),
+            "breakevens": data.get("breakevens", 0),
+            "win_rate_pct": data.get("win_rate_pct", 0),
+            "profit_factor": data.get("profit_factor", "—"),
+            "return_pct": data.get("return_pct", 0),
+            "max_drawdown_pct": data.get("max_drawdown_pct", 0),
+            "max_consec_losses": data.get("max_consec_losses", 0),
+            "cycles_total": data.get("cycles_total", 0),
+            "alpha_vs_bh_pct": data.get("alpha_vs_bh_pct"),
+            "sharpe": data.get("analytics", {}).get("risk_adjusted", {}).get("sharpe"),
+            "sortino": data.get("analytics", {}).get("risk_adjusted", {}).get("sortino"),
+            "expectancy": data.get("analytics", {}).get("expectancy", {}).get("expectancy_per_trade_usd"),
+        })
+    return {"count": len(runs), "runs": runs}
+
+
+@app.get("/api/backtest/latest", tags=["System"])
+async def backtest_latest():
+    """Latest backtest run — full JSON of the most recent result.
+
+    Returns 404 if no runs found.
+    """
+    import os as _os
+    import glob as _glob
+    import json as _json
+
+    patterns = ["reports/*.json", "data/bt_*.json"]
+    files = []
+    for p in patterns:
+        files.extend(_glob.glob(p))
+    if not files:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="No backtest runs found")
+    latest = max(files, key=lambda f: _os.path.getmtime(f))
+    try:
+        data = _json.loads(open(latest, "r", encoding="utf-8").read())
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Failed to read {latest}: {e}")
+    return {"path": latest, "mtime": _os.path.getmtime(latest), "data": data}
+
+
 @app.get("/api/training/history", tags=["System"])
 async def training_history(limit: int = 20, model_type: Optional[str] = None):
     """Recent training runs from models/training_history.jsonl.

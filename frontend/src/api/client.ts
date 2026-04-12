@@ -391,6 +391,42 @@ export const healthAPI = {
   },
 };
 
+export const backtestResultsAPI = {
+  listRuns: async (limit = 20) => {
+    const response = await client.get('/api/backtest/runs', { params: { limit } });
+    return response.data as {
+      count: number;
+      runs: Array<{
+        path: string;
+        name: string;
+        mtime: number;
+        trades: number;
+        wins: number;
+        losses: number;
+        breakevens: number;
+        win_rate_pct: number;
+        profit_factor: number | string;
+        return_pct: number;
+        max_drawdown_pct: number;
+        max_consec_losses: number;
+        cycles_total: number;
+        alpha_vs_bh_pct: number | null;
+        sharpe: number | null;
+        sortino: number | null;
+        expectancy: number | null;
+      }>;
+    };
+  },
+  latest: async () => {
+    const response = await client.get('/api/backtest/latest');
+    return response.data as {
+      path: string;
+      mtime: number;
+      data: Record<string, unknown>;
+    };
+  },
+};
+
 export const trainingHistoryAPI = {
   list: async (limit = 20, modelType?: string) => {
     const response = await client.get('/api/training/history', {
