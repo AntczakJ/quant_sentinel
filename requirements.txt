@@ -66,6 +66,9 @@ pytest>=9.0.0
 pytest-asyncio>=1.3.0
 pytest-cov>=6.0.0
 
+# --- HYPERPARAMETER TUNING ---
+optuna>=3.5.0
+
 # --- UTILITIES & UI ---
 colorama>=0.4.6
 tqdm>=4.67.0

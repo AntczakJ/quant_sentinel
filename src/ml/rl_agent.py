@@ -442,10 +442,16 @@ class DQNAgent:
     def __init__(self, state_size, action_size=3, lr=0.001, gamma=0.95,
                  epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995,
                  target_update_freq=200, tau=0.005, memory_size=20000,
-                 n_step=3):
+                 n_step=3, net_config=None, per_alpha=0.6, per_beta_start=0.4,
+                 dropout=0.0):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = PrioritizedReplayBuffer(capacity=memory_size)
+        # net_config: list of hidden layer sizes. None keeps the proven [64,64,32]
+        # topology used by the production checkpoint for back-compat.
+        self.net_config = list(net_config) if net_config else [64, 64, 32]
+        self.dropout = float(dropout)
+        self.memory = PrioritizedReplayBuffer(
+            capacity=memory_size, alpha=per_alpha, beta_start=per_beta_start)
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
@@ -464,12 +470,17 @@ class DQNAgent:
 
     def _build(self, lr):
         import tensorflow as tf
-        model = Sequential([
-            Dense(64, input_dim=self.state_size, activation='relu'),
-            Dense(64, activation='relu'),
-            Dense(32, activation='relu'),
-            Dense(self.action_size, activation='linear', dtype='float32')
-        ])
+        from tensorflow.keras.layers import Dropout
+        layers = []
+        for i, units in enumerate(self.net_config):
+            if i == 0:
+                layers.append(Dense(units, input_dim=self.state_size, activation='relu'))
+            else:
+                layers.append(Dense(units, activation='relu'))
+            if self.dropout > 0:
+                layers.append(Dropout(self.dropout))
+        layers.append(Dense(self.action_size, activation='linear', dtype='float32'))
+        model = Sequential(layers)
         model.compile(loss='huber', optimizer=Adam(learning_rate=lr))
         # Warm up: build computation graph once
         try:

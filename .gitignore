@@ -132,6 +132,18 @@ data/backtest.db-shm
 # Backtest yfinance cache — regenerated, may be large (parquet files)
 data/_backtest_cache/
 
+# Optuna RL sweep — SQLite study + data cache + live heartbeat.
+# All regenerable; do not commit.
+data/optuna_rl.db
+data/optuna_rl.db-journal
+data/optuna_rl.db-wal
+data/optuna_rl.db-shm
+data/_sweep_cache/
+data/sweep_heartbeat.json
+
+# Walk-forward grid backtest reports (per-cell JSONs can be large).
+reports/wf_grid_*/
+
 # ── EKSPERYMENTALNE BACKUPY MODELI ────────────────────────────
 # Lokalne kopie zostawiane przy eksperymentach (np. retrain z innym setupem).
 # Mogą być duże, nie są potrzebne w repo.
