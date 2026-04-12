@@ -1,5 +1,6 @@
 import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import viteCompression from 'vite-plugin-compression'
 import { VitePWA } from 'vite-plugin-pwa'
 import { visualizer } from 'rollup-plugin-visualizer'
@@ -15,6 +16,7 @@ export default defineConfig(({ mode }) => ({
 
   plugins: [
     react(),
+    tailwindcss(),
 
     // ── Brotli pre-compression (~15-20% smaller than gzip) ──
     viteCompression({
@@ -154,10 +156,6 @@ export default defineConfig(({ mode }) => ({
     reportCompressedSize: true,
     chunkSizeWarningLimit: 600,
     target: 'es2020',
-  },
-
-  css: {
-    postcss: './postcss.config.js'
   },
 
   optimizeDeps: {
