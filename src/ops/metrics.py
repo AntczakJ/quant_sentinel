@@ -9,7 +9,6 @@ Access via GET /api/metrics endpoint.
 
 import time
 import threading
-from collections import defaultdict
 from typing import Dict
 
 

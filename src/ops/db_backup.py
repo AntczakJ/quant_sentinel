@@ -15,7 +15,6 @@ Usage:
 """
 
 import os
-import shutil
 import sqlite3
 import datetime
 from pathlib import Path

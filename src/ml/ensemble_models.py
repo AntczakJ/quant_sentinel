@@ -13,7 +13,7 @@ Odpowiada za:
 import os
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from src.core.logger import logger
 from src.analysis.compute import compute_features, FEATURE_COLS
 
@@ -191,7 +191,7 @@ def _get_scaler():
 # HELPER FUNCTIONS
 # ============================================================================
 
-def _fallback_ensemble_result() -> Dict:
+def _fallback_ensemble_result() -> Dict[str, Any]:
     """Zwraca fallback result gdy nie ma danych."""
     return {
         "predictions": {},
@@ -600,7 +600,7 @@ def get_ensemble_prediction(
     if weights is None:
         weights = _load_dynamic_weights()
 
-    results = {
+    results: Dict[str, Any] = {
         "predictions": {},
         "weights": weights,
         "final_score": 0.5,
@@ -797,9 +797,9 @@ def get_ensemble_prediction(
         regime_weights = {k: v / rw_total for k, v in regime_weights.items()}
 
     # ========== FUZJA PREDYKCJI ==========
-    total_weight = 0
-    weighted_sum = 0
-    confidence_sum = 0
+    total_weight = 0.0
+    weighted_sum = 0.0
+    confidence_sum = 0.0
     available_models = 0
     # Model Agreement tracking
     models_long = 0

@@ -351,7 +351,7 @@ def print_gpu_summary():
 # ============================================================================
 
 try:
-    from numba import njit, prange
+    from numba import njit
 
     @njit(cache=True)
     def _swing_points_numba(highs, lows, window):

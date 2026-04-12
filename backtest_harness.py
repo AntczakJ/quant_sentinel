@@ -291,7 +291,7 @@ def rsi_strategy(df: pd.DataFrame, i: int,
 
 
 def ensemble_strategy(df: pd.DataFrame, i: int,
-                      min_confidence: float = 0.55,
+                      min_confidence: float = 0.40,
                       sample_every: int = 1) -> Optional[str]:
     """Production ensemble backtest strategy.
 
