@@ -93,8 +93,8 @@ export function Header() {
 
   return (
     <>
-    <header className={`sticky top-0 z-50 backdrop-blur-xl transition-transform duration-300 ${scrollDir === 'down' ? '-translate-y-full' : 'translate-y-0'}`} style={{ background: `color-mix(in srgb, var(--color-surface) 92%, transparent)` }}>
-      <div className="px-4 lg:px-6 py-2 flex items-center gap-3">
+    <header className={`sticky top-0 z-50 transition-transform duration-300 ${scrollDir === 'down' ? '-translate-y-full' : 'translate-y-0'}`} style={{ background: 'var(--glass-bg)', backdropFilter: `blur(${('var(--glass-blur)')})`, WebkitBackdropFilter: `blur(var(--glass-blur))`, borderBottom: '1px solid var(--glass-border)' }}>
+      <div className="px-5 lg:px-8 py-2.5 flex items-center gap-4">
         {/* Burger + Logo */}
         <button
           onClick={() => setMenuOpen(v => !v)}
@@ -177,8 +177,8 @@ export function Header() {
           animate={{ x: 0 }}
           exit={{ x: '-100%' }}
           transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-          className="fixed left-0 top-0 z-50 h-full w-60 py-5 px-3 space-y-1"
-          style={{ background: 'var(--color-surface)', boxShadow: '4px 0 24px rgba(168,85,247,0.08)' }}
+          className="fixed left-0 top-0 z-50 h-full w-64 py-6 px-4 space-y-0.5"
+          style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', borderRight: '1px solid var(--glass-border)', boxShadow: '8px 0 40px rgba(0,0,0,0.3)' }}
           aria-label="Main navigation"
         >
           <div className="flex items-center justify-between px-2 mb-5">

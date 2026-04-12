@@ -30,7 +30,7 @@ export function Dashboard() {
       <LoadingBar />
       <OfflineBanner />
       <Header />
-      <main id="main-content" key={location.pathname} role="main" aria-label="Page content" className="flex-1 w-full px-2 py-2 md:px-4 md:py-4 lg:px-6 lg:py-6 pb-20 md:pb-8 page-transition">
+      <main id="main-content" key={location.pathname} role="main" aria-label="Page content" className="flex-1 w-full px-3 py-3 md:px-6 md:py-5 lg:px-8 lg:py-6 pb-20 md:pb-8 page-transition">
         <Outlet />
       </main>
       <QuickStatsBar />
