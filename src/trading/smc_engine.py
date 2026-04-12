@@ -911,6 +911,27 @@ def get_smc_analysis(tf: str) -> dict | None:
                 logger.warning(f"Za mało danych po walidacji ({len(df)} < 30) dla {tf}")
                 return None
 
+        # 1c. STALE-DATA DETECTION — wykryj zawieszony feed
+        # Jeśli ostatnie N świec mają identyczny close, feed prawdopodobnie
+        # zawieszony (broker disconnected, data provider glitch).
+        last_closes = df['close'].tail(10)
+        if len(last_closes) >= 5 and last_closes.nunique() == 1:
+            logger.error(f"🚨 [SMC {tf}] Stale feed detected: last 10 closes identical "
+                         f"(${last_closes.iloc[-1]:.2f}) — skipping analysis")
+            return None
+
+        # 1d. OUTLIER DETECTION — spike >10× ATR od poprzedniej świecy
+        # Typowy bug API: jedna świeca z wielokrotnie zawyżoną/zaniżoną ceną
+        closes = df['close'].values
+        if len(closes) >= 20:
+            recent_range = closes[-20:].max() - closes[-20:].min()
+            if recent_range > 0:
+                last_move = abs(closes[-1] - closes[-2])
+                if last_move > recent_range * 3:  # 3× the range of last 20 bars
+                    logger.error(f"🚨 [SMC {tf}] Price outlier detected: last bar moved "
+                                 f"${last_move:.2f} vs range ${recent_range:.2f} — likely bad tick")
+                    return None
+
 
         # 2. POBIERANIE HISTORYCZNEGO USD/JPY
         usdjpy_prices, current_usdjpy = get_usdjpy_history(tf, length=30)
