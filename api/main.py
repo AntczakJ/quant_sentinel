@@ -161,7 +161,15 @@ async def lifespan(app: FastAPI):
     resolver_task = asyncio.create_task(_auto_resolve_trades())
     monitor_task = asyncio.create_task(_monitoring_loop())
     retention_task = asyncio.create_task(_daily_retention_cleanup())
-    logger.info("Background tasks started (scanner 5min | prices 5s | resolver 5min | monitor 1h | retention 24h)")
+    # Health monitor (Telegram alerts on degraded state, 10-min cadence)
+    try:
+        from src.ops.health_monitor import health_monitor_task
+        health_task = asyncio.create_task(health_monitor_task())
+    except Exception as _hm_err:
+        logger.warning(f"Health monitor disabled: {_hm_err}")
+        health_task = None
+    logger.info("Background tasks started (scanner 5min | prices 5s | resolver 5min | "
+                "monitor 1h | retention 24h | health 10min)")
 
     yield
 
