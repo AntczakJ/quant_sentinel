@@ -462,10 +462,13 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         balance = db.get_balance(user_id)
-        currency = USER_PREFS.get("currency", "USD")
+        currency = str(USER_PREFS.get("currency", "USD"))
 
         # --- Obliczenie pozycji ---
-        p = calculate_position(s, balance, currency, TD_API_KEY)
+        # TD_API_KEY może być None (env var brak) — finance guard i tak
+        # fallback'uje do cached rate, ale przekazujemy pusty string żeby
+        # nie wywołało to TypeError w samym calculate_position.
+        p = calculate_position(s, balance, currency, TD_API_KEY or "")
         if p.get("direction") == "CZEKAJ":
             await safe_edit(f"⏸️ *SYGNAŁ ZBLOKOWANY*\n{p.get('reason')}\n\n🤖 *AI:*\n{ai_verdict}")
             return
