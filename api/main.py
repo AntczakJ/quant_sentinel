@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
     resolver_task = asyncio.create_task(_auto_resolve_trades())
     monitor_task = asyncio.create_task(_monitoring_loop())
     retention_task = asyncio.create_task(_daily_retention_cleanup())
-    logger.info("Background tasks started (scanner 15min | prices 5s | resolver 5min | monitor 1h | retention 24h)")
+    logger.info("Background tasks started (scanner 5min | prices 5s | resolver 5min | monitor 1h | retention 24h)")
 
     yield
 
@@ -199,7 +199,7 @@ async def lifespan(app: FastAPI):
 
 async def _background_scanner():
     """
-    Background scanner: cascading multi-timeframe SMC scan every 15 minutes.
+    Background scanner: cascading multi-timeframe SMC scan every 5 minutes.
     Checks 4h → 1h → 15m → 5m and places a trade on the first TF with a valid setup.
 
     Uses the same cascade logic as the Telegram bot scanner (src/scanner.py).
@@ -216,6 +216,11 @@ async def _background_scanner():
     # Initial delay — wait for the API to fully start up
     await asyncio.sleep(45)
 
+    # Scanner cadence (seconds). 300 = 5 min = 4x more opportunities than
+    # old 900/15min setup. Credit cost: ~8 credits per cascade → 1.6/min
+    # avg usage on a 55/min budget = well within limits.
+    _SCAN_INTERVAL_SEC = 300
+
     while True:
         try:
             from src.core.database import NewsDB
@@ -227,7 +232,7 @@ async def _background_scanner():
             _can, _ = _get_rl().can_use_credits(2)
             if not _can:
                 logger.info("📡 [BG Scanner] Credits low — skipping this cycle")
-                await asyncio.sleep(900)
+                await asyncio.sleep(_SCAN_INTERVAL_SEC)
                 continue
 
             # Prefetch all timeframes to warm cache (reduces per-TF API calls in cascade)
@@ -262,7 +267,7 @@ async def _background_scanner():
                 )
             except asyncio.TimeoutError:
                 logger.warning("📡 [BG Scanner] MTF cascade timed out (120s)")
-                await asyncio.sleep(900)
+                await asyncio.sleep(_SCAN_INTERVAL_SEC)
                 continue
 
             if trade:
@@ -334,8 +339,8 @@ async def _background_scanner():
         except Exception as e:
             logger.warning(f"📡 [BG Scanner] Error: {e}")
 
-        # Wait 15 minutes until next scan
-        await asyncio.sleep(900)
+        # Wait until next scan cycle
+        await asyncio.sleep(_SCAN_INTERVAL_SEC)
 
 
 async def _broadcast_prices_task():

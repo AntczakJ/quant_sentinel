@@ -749,8 +749,8 @@ def run_bot():
         # Sprawdzenie czy zadania istnieją i logowanie
         try:
             if scan_market_task is not None:
-                logger.info("📡 Rejestrowanie zadania: scan_market_task (co 15 min)")
-                app.job_queue.run_repeating(scan_market_task, interval=900, first=30, job_kwargs=job_settings)
+                logger.info("📡 Rejestrowanie zadania: scan_market_task (co 5 min)")
+                app.job_queue.run_repeating(scan_market_task, interval=300, first=30, job_kwargs=job_settings)
             else:
                 logger.warning("⚠️ scan_market_task = None, nie będzie skanowania rynku")
 
