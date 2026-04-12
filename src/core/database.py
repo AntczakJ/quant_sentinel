@@ -381,6 +381,12 @@ class NewsDB:
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_direction ON trades(direction)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_trades_profit ON trades(profit)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_scanner_direction ON scanner_signals(direction)")
+            # ml_predictions: largest table (4k+ rows), queried by timestamp
+            # for recent fetch + JOIN to trades for regime accuracy analysis.
+            self._execute("CREATE INDEX IF NOT EXISTS idx_ml_pred_timestamp ON ml_predictions(timestamp DESC)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_ml_pred_trade_id ON ml_predictions(trade_id)")
+            # rejected_setups: queried by filter_name for filter accuracy
+            self._execute("CREATE INDEX IF NOT EXISTS idx_rejected_filter ON rejected_setups(filter_name)")
         except Exception as e:
             logger.warning(f"Index creation: {e}")
 

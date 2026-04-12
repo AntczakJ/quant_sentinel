@@ -88,6 +88,11 @@ trades_blocked_by_risk = _Counter()
 api_requests_total = _Counter()
 api_errors_total = _Counter()
 
+# Scanner health
+scan_errors_total = _Counter()
+scan_last_ts = _Gauge()
+data_fetch_failures = _Counter()  # yfinance/twelve rate limits etc.
+
 # Latency
 scan_duration = _Histogram()
 api_latency = _Histogram()
@@ -123,6 +128,13 @@ def get_all_metrics() -> Dict:
             "api_avg_ms": round(api_latency.avg * 1000, 1),
             "api_p95_ms": round(api_latency.p95 * 1000, 1),
             "ensemble_avg_ms": round(ensemble_prediction_time.avg * 1000, 1),
+        },
+        "scanner_health": {
+            "scan_count": scan_duration.count,
+            "scan_errors_total": scan_errors_total.value,
+            "scan_error_rate": round(scan_errors_total.value / max(scan_duration.count, 1), 3),
+            "scan_last_ts": scan_last_ts.value,
+            "data_fetch_failures": data_fetch_failures.value,
         },
         "portfolio": {
             "balance": portfolio_balance.value,

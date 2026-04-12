@@ -748,7 +748,13 @@ async def scan_market_task(context):
     - Alerty o liquidity grab na M5
     - Alerty o zmianach trendu i nowych strefach FVG
     - Heartbeat co 30 min
+    - Metryki: scan_duration (timing), scan_errors_total (error rate)
     """
+    from src.ops.metrics import scan_duration, scan_last_ts, TimerContext
+    import time as _time
+    scan_last_ts.set(_time.time())
+    _scan_timer = TimerContext(scan_duration)
+    _scan_timer.__enter__()
     try:
         # ── Weekend guard: rynek XAU/USD zamknięty pt 22:00 → nd 23:00 CET ──
         from src.trading.smc_engine import is_market_open
@@ -1099,7 +1105,14 @@ async def scan_market_task(context):
         )
 
     except Exception as e:
+        try:
+            from src.ops.metrics import scan_errors_total
+            scan_errors_total.inc()
+        except Exception:
+            pass
         logger.error(f"❌ [SCANNER] Błąd: {e}")
+    finally:
+        _scan_timer.__exit__(None, None, None)
 
 
 async def resolve_trades_task(context):

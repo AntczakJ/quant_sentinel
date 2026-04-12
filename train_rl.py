@@ -33,14 +33,20 @@ NOISE_STD = 0.001       # augmentacja: 0.1% szumu na cenach per epizod
 MIN_RETRAIN_HOURS = 12  # minimalny odstęp między treningami na tych samych danych
 
 # Multi-asset training — koszyk symboli dla lepszej generalizacji
-# BTC-USD wykluczone: zbyt wysoka volatility względem pozostałych aktywów
-# (TradingEnv nie skaluje sizing per-asset — BTC wysadza wyniki)
-SYMBOLS = ["GC=F", "EURUSD=X", "ES=F", "CL=F"]
-# GC=F gold, EURUSD=X forex, ES=F S&P500 futures, CL=F crude oil
+# BTC-USD wykluczone: zbyt wysoka volatility (miało sens przed vol_normalize,
+#   ale po naprawie TradingEnv możnaby dodać z powrotem — zostawiam jako
+#   eksperyment na później).
+# ES=F wykluczone: chroniczny loser we WSZYSTKICH modelach (-23 do -44% OOS).
+#   S&P futures mają strukturalną dynamikę wymagającą market-wide features
+#   (VIX, sektor rotation), których nie mamy w stanie 22-wymiarowym.
+SYMBOLS = ["GC=F", "EURUSD=X", "CL=F"]
+# GC=F gold, EURUSD=X forex, CL=F crude oil
 
 # Validation early stopping
 VAL_EVERY = 20          # waliduj co N epizodów
-VAL_PATIENCE = 50       # zatrzymaj jeśli brak poprawy przez N epizodów
+VAL_PATIENCE = 30       # zatrzymaj jeśli brak poprawy przez N epizodów
+# (obniżone z 50 po obserwacji że best val zwykle osiągany ~ep 40,
+#  więc czekanie 50 ep po tym to zbędna strata czasu)
 
 
 def compute_data_hash(df):
@@ -75,11 +81,14 @@ def fetch_historical_data(symbol="GC=F", periods=None, intervals=None):
     """
     Pobiera dane historyczne z yfinance.
     Próbuje kolejne kombinacje period/interval aż znajdzie wystarczająco danych.
+
+    Preferowane: 2y/1h dla szerszej dystrybucji i mniejszego overfitu.
+    Fallback: 6mo/15m lub dzień dla symboli z brakiem 1h.
     """
     if periods is None:
-        periods = ["6mo", "3mo", "1mo"]
+        periods = ["2y", "1y", "6mo", "3mo"]
     if intervals is None:
-        intervals = ["15m", "1h", "1d"]
+        intervals = ["1h", "1d", "15m"]
 
     ticker = yf.Ticker(symbol)
 
