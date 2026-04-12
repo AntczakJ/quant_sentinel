@@ -25,5 +25,6 @@ export { TrainingHistory } from './TrainingHistory';
 export { BacktestResults } from './BacktestResults';
 export { BacktestGridLeaderboard } from './BacktestGridLeaderboard';
 export { TrainingProgressLive } from './TrainingProgressLive';
+export { SweepProgressLive } from './SweepProgressLive';
 export { ModelsStalenessBadge } from './ModelsStalenessBadge';
 

@@ -565,6 +565,40 @@ export const trainingHistoryAPI = {
   },
 };
 
+/** Live snapshot of the Optuna RL hyperparameter sweep. Separate from
+ *  trainingHistoryAPI because a sweep is a population of trials, not a
+ *  single run — the shape (trial_number, best_val_so_far, etc.) is
+ *  distinct enough to warrant its own client group. */
+export const sweepAPI = {
+  active: async () => {
+    const response = await client.get('/sweep/active');
+    return response.data as
+      | {
+          status: 'idle';
+          last_seen_sec_ago?: number;
+          study_name?: string | null;
+        }
+      | {
+          status: 'running' | 'completed' | 'interrupted';
+          study_name: string;
+          n_trials_target: number;
+          completed_trials: number;
+          pruned_trials: number;
+          trial_number: number | null;
+          current_episode: number | null;
+          total_episodes: number | null;
+          current_val_return: number | null;
+          current_trial_best: number | null;
+          current_trial_elapsed_sec: number | null;
+          best_val_so_far: number | null;
+          last_trial_state: string | null;
+          elapsed_total_sec: number | null;
+          eta_sec: number | null;
+          age_sec: number;
+        };
+  },
+};
+
 // Analysis endpoints
 export const analysisAPI = {
   getQuantPro: async (tf: string = '15m', force: boolean = false) => {

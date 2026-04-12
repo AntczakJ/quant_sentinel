@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, ModelsStalenessBadge } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, ModelsStalenessBadge } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
 import { PageHeader } from '../components/ui';
 import { trainingAPI } from '../api/client';
@@ -73,10 +73,16 @@ export default function ModelsPage() {
       defaultLayout: { x: 0, y: 0, w: 12, h: 4, minW: 6, minH: 3 },
     },
     {
+      id: 'sweep-live',
+      title: 'Hyperparameter Sweep',
+      content: <SweepProgressLive />,
+      defaultLayout: { x: 0, y: 4, w: 12, h: 5, minW: 6, minH: 4 },
+    },
+    {
       id: 'health-monitor',
       title: 'Model Health Monitor',
       content: <ModelDriftAlert />,
-      defaultLayout: { x: 0, y: 4, w: 12, h: 3, minW: 6, minH: 2 },
+      defaultLayout: { x: 0, y: 9, w: 12, h: 3, minW: 6, minH: 2 },
     },
     {
       id: 'ml-models',

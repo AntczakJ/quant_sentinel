@@ -1222,6 +1222,66 @@ async def training_active():
     }
 
 
+@app.get("/api/sweep/active", tags=["System"])
+async def sweep_active():
+    """Live snapshot of the Optuna RL hyperparameter sweep (if running).
+
+    Reads data/sweep_heartbeat.json, written by tune_rl.py at every val
+    checkpoint + at trial completion. The sweep cadence is coarser than
+    per-episode RL training (heartbeat refreshes roughly every 100-300s),
+    so we use a more generous 300s staleness grace before declaring idle.
+    """
+    import os as _os
+    import json as _json
+    import time as _time
+
+    path = "data/sweep_heartbeat.json"
+    if not _os.path.exists(path):
+        return {"status": "idle"}
+    try:
+        data = _json.loads(open(path, "r", encoding="utf-8").read())
+    except Exception:
+        return {"status": "idle"}
+
+    updated_at = data.get("updated_at", 0)
+    age = _time.time() - updated_at
+    # 600s grace — between trials the sweep refetches data (yfinance) and
+    # builds a fresh TF graph, which can eat 2-5 minutes on CPU. 300s
+    # tripped false-idle at the trial boundary; 600s covers the worst case
+    # without letting a truly-dead sweep look alive for too long.
+    if age > 600:
+        return {"status": "idle", "last_seen_sec_ago": age,
+                "study_name": data.get("study_name")}
+
+    completed = data.get("completed_trials", 0) or 0
+    pruned = data.get("pruned_trials", 0) or 0
+    target = data.get("n_trials_target", 0) or 0
+    started_at = data.get("started_at", 0) or 0
+    elapsed_total = max(0.0, _time.time() - started_at) if started_at else None
+    trials_done = completed + pruned
+    per_trial_sec = (elapsed_total / trials_done) if trials_done > 0 and elapsed_total else None
+    eta_sec = (per_trial_sec * (target - trials_done)) if per_trial_sec and target else None
+
+    return {
+        "status": data.get("status", "running"),
+        "study_name": data.get("study_name"),
+        "n_trials_target": target,
+        "completed_trials": completed,
+        "pruned_trials": pruned,
+        "trial_number": data.get("trial_number"),
+        "current_episode": data.get("current_episode"),
+        "total_episodes": data.get("total_episodes") or data.get("episodes_per_trial"),
+        "current_val_return": data.get("current_val_return"),
+        "current_trial_best": data.get("current_trial_best"),
+        "current_trial_elapsed_sec": data.get("current_trial_elapsed_sec"),
+        "best_val_so_far": data.get("best_val_so_far"),
+        "last_trial_state": data.get("last_trial_state"),
+        "elapsed_total_sec": elapsed_total,
+        "eta_sec": eta_sec,
+        "age_sec": age,
+    }
+
+
 @app.get("/api/training/history", tags=["System"])
 async def training_history(limit: int = 20, model_type: Optional[str] = None):
     """Recent training runs from models/training_history.jsonl.
