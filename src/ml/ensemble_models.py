@@ -324,11 +324,22 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
                     probs = results[1]
                     if isinstance(probs, list) and len(probs) > 0:
                         if isinstance(probs[0], dict):
-                            return float(probs[0].get(1, 0.5))
-                        return float(probs[0][1]) if len(probs[0]) > 1 else 0.5
+                            if 1 in probs[0]:
+                                return float(probs[0][1])
+                            logger.warning("XGB ONNX: prob dict missing class-1 key")
+                            return None
+                        if len(probs[0]) > 1:
+                            return float(probs[0][1])
+                        logger.warning(f"XGB ONNX: prob array too short ({len(probs[0])})")
+                        return None
                     elif isinstance(probs, np.ndarray) and probs.shape[-1] >= 2:
                         return float(probs[0, 1])
-                return 0.5
+                # Malformed output — return None so the ensemble marks this
+                # voter 'unavailable' instead of silently injecting neutral
+                # 0.5 into the weighted fusion (which used to mask real
+                # broken-model failures as "no signal").
+                logger.warning(f"XGB ONNX: unexpected output shape, skipping voter")
+                return None
             else:
                 pred = model.predict_proba(X)
                 return float(pred[0, 1])

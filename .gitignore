@@ -144,6 +144,10 @@ data/sweep_heartbeat.json
 # Walk-forward grid backtest reports (per-cell JSONs can be large).
 reports/wf_grid_*/
 
+# Archived / orphaned model artifacts — experiments kept locally for
+# rollback but not needed in git.
+models/_archive/
+
 # ── EKSPERYMENTALNE BACKUPY MODELI ────────────────────────────
 # Lokalne kopie zostawiane przy eksperymentach (np. retrain z innym setupem).
 # Mogą być duże, nie są potrzebne w repo.

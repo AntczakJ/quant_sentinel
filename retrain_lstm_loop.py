@@ -164,12 +164,56 @@ def build_lstm(seq_len: int, n_features: int, hidden: int, dropout: float):
     return model
 
 
+def live_stdev_check(model, scaler, seq_len: int, n_features: int,
+                     symbol: str = "GC=F", n_windows: int = 10) -> Optional[float]:
+    """Evaluate the trained model on ~n_windows rolling slices of the most
+    recent live data. Returns stdev of predictions — a flat model
+    (stdev < 0.02) is not producing signal regardless of what the
+    held-out test accuracy says."""
+    from src.analysis.compute import compute_features, FEATURE_COLS
+    import contextlib, io as _io
+    try:
+        with contextlib.redirect_stdout(_io.StringIO()), \
+             contextlib.redirect_stderr(_io.StringIO()):
+            live = yf.Ticker(symbol).history(period="2mo", interval="1h")
+    except Exception:
+        return None
+    live = live.reset_index()
+    live.columns = [c.lower() for c in live.columns]
+    cols = [c for c in ("open", "high", "low", "close", "volume") if c in live.columns]
+    live = live[cols].dropna().reset_index(drop=True)
+    if len(live) < seq_len + n_windows * 5:
+        return None
+
+    preds = []
+    for i in range(n_windows):
+        end = len(live) - i * 5 - 1
+        if end < seq_len:
+            break
+        feats = compute_features(live.iloc[:end]).dropna()
+        if len(feats) < seq_len:
+            continue
+        data = feats[FEATURE_COLS].values[-seq_len:].astype(np.float32)
+        if data.shape[1] != n_features:
+            continue
+        scaled = scaler.transform(data).astype(np.float32)
+        p = float(model(scaled.reshape(1, seq_len, -1), training=False).numpy()[0, 0])
+        preds.append(p)
+    if len(preds) < 3:
+        return None
+    import statistics
+    return statistics.stdev(preds)
+
+
 def train_once(df: pd.DataFrame, hp: Dict, seed: int) -> Optional[Dict]:
-    """Single retrain attempt. Returns summary dict with val_acc, test_acc,
-    the fitted model + scaler + seq_len for the caller to persist."""
+    """Single retrain attempt. Returns summary dict with val/test accuracy
+    AND balanced_accuracy + F1 (class-imbalance-robust) + live prediction
+    stdev (catches flat-output models that score high only because one
+    class dominates the test split)."""
     import tensorflow as tf
     from tensorflow.keras.callbacks import EarlyStopping
     from tensorflow.keras.optimizers import Adam
+    from sklearn.metrics import balanced_accuracy_score, f1_score
 
     random.seed(seed)
     np.random.seed(seed)
@@ -218,6 +262,24 @@ def train_once(df: pd.DataFrame, hp: Dict, seed: int) -> Optional[Dict]:
     val_acc = float(max(history.history.get("val_accuracy", [0.5])))
     test_loss, test_acc = model.evaluate(*splits["test"], verbose=0)
 
+    # Class-imbalance-robust metrics. A model that always predicts SHORT
+    # on a 60/40-SHORT test split scores 60% raw accuracy but 50% balanced
+    # accuracy — balanced_acc is the honest signal.
+    X_test, y_test = splits["test"]
+    y_pred_proba = model(X_test, training=False).numpy().flatten()
+    y_pred = (y_pred_proba > 0.5).astype(int)
+    balanced_acc = float(balanced_accuracy_score(y_test, y_pred))
+    f1 = float(f1_score(y_test, y_pred, average="binary", zero_division=0))
+    import statistics as _stats
+    test_pred_stdev = float(_stats.stdev(y_pred_proba)) if len(y_pred_proba) > 1 else 0.0
+    test_class_balance = float(y_test.mean())  # fraction of positives
+
+    # Live-data stdev: a last-mile sanity check that the model actually
+    # varies its output on fresh bars. Several LSTM configs score well
+    # offline but output a near-constant on live data.
+    live_stdev = live_stdev_check(model, scaler, hp["seq_len"],
+                                  n_features=int(X.shape[2]))
+
     return {
         "model": model,
         "scaler": scaler,
@@ -226,6 +288,11 @@ def train_once(df: pd.DataFrame, hp: Dict, seed: int) -> Optional[Dict]:
         "seed": seed,
         "val_acc": val_acc,
         "test_acc": float(test_acc),
+        "test_balanced_acc": balanced_acc,
+        "test_f1": f1,
+        "test_pred_stdev": test_pred_stdev,
+        "test_class_balance": test_class_balance,
+        "live_pred_stdev": live_stdev,
         "test_loss": float(test_loss),
         "train_sec": round(train_sec, 1),
         "n_features": int(X.shape[2]),
@@ -289,11 +356,16 @@ def persist_winner(result: Dict, model_dir: str = "models") -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--iterations", type=int, default=5)
+    ap.add_argument("--iterations", type=int, default=8,
+                    help="max iterations (was 5 — raised because the balanced "
+                         "metric is stricter and needs more sampling)")
     ap.add_argument("--target", type=float, default=0.55,
-                    help="stop as soon as test_acc >= target")
-    ap.add_argument("--patience", type=int, default=3,
-                    help="abort if no improvement for this many iterations")
+                    help="stop as soon as balanced_accuracy >= target")
+    ap.add_argument("--min-live-stdev", type=float, default=0.05,
+                    help="reject a winner whose predictions are flat on live "
+                         "data (stdev below this on 10 rolling windows)")
+    ap.add_argument("--patience", type=int, default=4,
+                    help="abort if no balanced-acc improvement for N iterations")
     ap.add_argument("--symbol", default="GC=F")
     ap.add_argument("--base-seed", type=int, default=42)
     ap.add_argument("--dry-run", action="store_true",
@@ -324,22 +396,49 @@ def main() -> int:
             print("  [iter] skipped (insufficient data or build error)")
             continue
 
-        print(f"  val_acc={res['val_acc']:.3f}  test_acc={res['test_acc']:.3f}  "
-              f"train={res['train_sec']}s  train_n={res['n_train']}/val={res['n_val']}/test={res['n_test']}")
-        history.append({"iter": i + 1, "test_acc": res["test_acc"],
-                        "val_acc": res["val_acc"], "hparams": hp, "seed": seed})
+        live_s = res["live_pred_stdev"]
+        live_s_str = f"{live_s:.4f}" if live_s is not None else "n/a"
+        flat_flag = " [FLAT]" if live_s is not None and live_s < args.min_live_stdev else ""
+        imbalance_flag = ""
+        if abs(res["test_class_balance"] - 0.5) > 0.15:
+            imbalance_flag = f" [imbalanced test: {res['test_class_balance']:.0%} pos]"
 
-        improved = best is None or res["test_acc"] > best["test_acc"]
-        if improved:
+        print(f"  raw_acc={res['test_acc']:.3f}  balanced_acc={res['test_balanced_acc']:.3f}  "
+              f"f1={res['test_f1']:.3f}  test_stdev={res['test_pred_stdev']:.4f}  "
+              f"live_stdev={live_s_str}{flat_flag}{imbalance_flag}")
+
+        history.append({
+            "iter": i + 1,
+            "balanced_acc": res["test_balanced_acc"],
+            "raw_acc": res["test_acc"],
+            "f1": res["test_f1"],
+            "live_stdev": live_s,
+            "hparams": hp,
+            "seed": seed,
+        })
+
+        # Rank by BALANCED accuracy, not raw — raw is cheatable on class-imbalanced
+        # splits. Also gate: a flat-output model cannot become 'best' regardless
+        # of metric; it's not producing signal in production.
+        candidate_better = (best is None or
+                            res["test_balanced_acc"] > best["test_balanced_acc"])
+        candidate_signal_ok = (live_s is None or live_s >= args.min_live_stdev)
+        # If we can't measure live stdev at all, we accept the candidate but
+        # print a warning. If we can measure AND it's flat, reject.
+        if candidate_better and candidate_signal_ok:
             best = res
             best_iter = i + 1
             no_improve = 0
-            print(f"  ** new best test_acc={res['test_acc']:.3f} **")
+            print(f"  ** new best balanced_acc={res['test_balanced_acc']:.3f} "
+                  f"live_stdev={live_s_str} **")
+        elif candidate_better and not candidate_signal_ok:
+            no_improve += 1
+            print(f"  (better balanced_acc but FLAT on live — rejected)")
         else:
             no_improve += 1
 
-        if res["test_acc"] >= args.target:
-            print(f"\n[stop] target hit (test_acc >= {args.target})")
+        if best is not None and best["test_balanced_acc"] >= args.target:
+            print(f"\n[stop] target hit (balanced_acc >= {args.target})")
             break
         if no_improve >= args.patience:
             print(f"\n[stop] patience exhausted ({args.patience} iter without improvement)")
@@ -350,33 +449,44 @@ def main() -> int:
     print("history:")
     for h in history:
         marker = " <- best" if h["iter"] == best_iter else ""
-        print(f"  iter {h['iter']}: test_acc={h['test_acc']:.3f} val={h['val_acc']:.3f}{marker}")
+        live_s = h.get("live_stdev")
+        live_s_str = f"{live_s:.4f}" if live_s is not None else "n/a"
+        print(f"  iter {h['iter']}: balanced_acc={h['balanced_acc']:.3f} "
+              f"raw={h['raw_acc']:.3f} f1={h['f1']:.3f} "
+              f"live_stdev={live_s_str}{marker}")
 
     if best is None:
         print("[fatal] no successful iteration", file=sys.stderr)
         return 3
 
-    print(f"\nBest: test_acc={best['test_acc']:.3f}  val_acc={best['val_acc']:.3f}  "
-          f"seed={best['seed']}  hp={best['hparams']}")
+    live_s = best.get("live_pred_stdev")
+    live_s_str = f"{live_s:.4f}" if live_s is not None else "n/a"
+    print(f"\nBest: balanced_acc={best['test_balanced_acc']:.3f}  "
+          f"raw_acc={best['test_acc']:.3f}  f1={best['test_f1']:.3f}  "
+          f"live_stdev={live_s_str}  seed={best['seed']}  hp={best['hparams']}")
 
     if args.dry_run:
         print("[dry-run] persisting nothing")
         return 0
 
-    # Promotion decision: only overwrite production if the winner clears
-    # a sensible floor. If every iteration was <45%, escalate to Optuna.
-    ESCALATION_FLOOR = 0.45
-    if best["test_acc"] < ESCALATION_FLOOR:
-        print(f"\n[WARN] best test_acc {best['test_acc']:.3f} below {ESCALATION_FLOOR}.")
-        print("[WARN] Skipping persist. Recommend escalating to tune_lstm.py "
-              "(Optuna-based — same framework as tune_rl.py).")
+    # Promotion decision: two independent gates. A winner must clear BOTH.
+    ESCALATION_FLOOR = 0.52  # balanced_acc — above coin flip by ≥2pp
+    if best["test_balanced_acc"] < ESCALATION_FLOOR:
+        print(f"\n[WARN] best balanced_acc {best['test_balanced_acc']:.3f} "
+              f"below floor {ESCALATION_FLOOR}.")
+        print("[WARN] Skipping persist. Escalate to Optuna-based tune_lstm.py.")
         return 4
+    if live_s is not None and live_s < args.min_live_stdev:
+        print(f"\n[WARN] best candidate is FLAT on live data "
+              f"(stdev {live_s:.4f} < {args.min_live_stdev}).")
+        print("[WARN] Skipping persist. The model would ship as a constant voter.")
+        return 5
 
     persist_winner(best)
-    print(f"\n[persist] models/lstm.keras updated (test_acc={best['test_acc']:.3f})")
-    print("Set ensemble weight check: `python -c \"from src.ml.ensemble_models import get_model_track_record; "
-          "import json; print(json.dumps(get_model_track_record(), indent=2))\"`")
-    return 0 if best["test_acc"] >= args.target else 1
+    print(f"\n[persist] models/lstm.keras updated "
+          f"(balanced_acc={best['test_balanced_acc']:.3f} "
+          f"live_stdev={live_s_str})")
+    return 0 if best["test_balanced_acc"] >= args.target else 1
 
 
 if __name__ == "__main__":
