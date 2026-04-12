@@ -91,7 +91,21 @@ jobs:
     - name: Lint with flake8 (critical errors only)
       run: |
         pip install flake8
-        flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Extended to api/ + tests/ — today's NameError on api/main.py:1125
+        # (Optional undefined) would have been caught by F82 but we only
+        # checked src/. Lesson learned: check ALL executable Python.
+        flake8 src/ api/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+
+    - name: Mypy (critical modules only, non-blocking report)
+      run: |
+        pip install mypy
+        # Mypy on files where a type error = runtime crash (as opposed to
+        # research code). Soft-fails to surface issues without blocking PRs.
+        # Graduate to blocking once error count approaches 0.
+        python -m mypy api/main.py src/backtest/ src/ops/metrics.py \
+          src/ops/health_monitor.py src/ml/training_registry.py \
+          --ignore-missing-imports 2>&1 | tail -30 || true
+      continue-on-error: true
 
   # Backend Lint (non-blocking)
   backend-lint:
