@@ -406,6 +406,9 @@ def _load_dynamic_weights() -> Dict[str, float]:
         "lstm": 0.15,
         "xgb": 0.18,
         "dqn": 0.12,
+        # deeptrans is ignored unless QUANT_ENABLE_TRANSFORMER=1 — starts
+        # tiny so self-learning has to earn its weight.
+        "deeptrans": 0.05,
     }
     try:
         from src.core.database import NewsDB
@@ -476,7 +479,7 @@ def get_model_track_record() -> Dict[str, Dict]:
     try:
         from src.core.database import NewsDB
         db = NewsDB()
-        models = ["smc", "attention", "dpformer", "lstm", "xgb", "dqn"]
+        models = ["smc", "attention", "dpformer", "lstm", "xgb", "dqn", "deeptrans"]
         result = {}
         for m in models:
             correct = db.get_param(f"model_{m}_correct", 0) or 0
@@ -635,6 +638,30 @@ def get_ensemble_prediction(
     except Exception as e:
         logger.debug(f"Attention model skipped: {e}")
         results["predictions"]["attention"] = {
+            "value": 0.5, "direction": "NEUTRAL",
+            "confidence": 0.0, "status": "unavailable"
+        }
+
+    # --- 2c. DeepTrans (pre-LN deep transformer, flag-gated) ---
+    # QUANT_ENABLE_TRANSFORMER=1 activates. Otherwise `predict_deeptrans`
+    # returns None and the voter is marked unavailable (skipped in fusion).
+    try:
+        from src.ml.transformer_model import predict_deeptrans
+        dt_pred = predict_deeptrans(df)
+        if dt_pred is not None:
+            results["predictions"]["deeptrans"] = {
+                "value": dt_pred,
+                "direction": "LONG" if dt_pred > 0.5 else "SHORT",
+                "confidence": abs(dt_pred - 0.5) * 2,
+            }
+        else:
+            results["predictions"]["deeptrans"] = {
+                "value": 0.5, "direction": "NEUTRAL",
+                "confidence": 0.0, "status": "unavailable"
+            }
+    except Exception as e:
+        logger.debug(f"DeepTrans skipped: {e}")
+        results["predictions"]["deeptrans"] = {
             "value": 0.5, "direction": "NEUTRAL",
             "confidence": 0.0, "status": "unavailable"
         }
