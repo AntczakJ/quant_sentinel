@@ -25,9 +25,13 @@ def get_fx_rate(base: str = "USD", target: str = "PLN") -> float:
         return 4.00
 
 
-def calculate_position(analysis_data: dict, balance: float, user_currency: str, td_api_key: str, df=None) -> dict:
+def calculate_position(analysis_data: dict, balance: float, user_currency: str,
+                       td_api_key: str = "", df=None) -> dict:
     """
     SMC MASTER VERSION: Oblicza pozycję w oparciu o Liquidity Grab, MSS, FVG, DBR/RBD, makro i ALL ML MODELS.
+
+    Note: `td_api_key` is DEPRECATED and unused (FX rate fetch uses yfinance).
+    Kept in signature for backward compat with existing callers.
 
     Integruje:
     - SMC Engine (trend, struktura, FVG)
