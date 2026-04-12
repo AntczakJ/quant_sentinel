@@ -354,6 +354,15 @@ async def _run_backtest(args) -> dict:
                     factors={},
                     profit=None,
                 )
+                # CRITICAL: db.log_trade uses datetime.now() for timestamp.
+                # In backtest that's wall-clock (today), but we need SIMULATED
+                # time so _resolve_open_trades can walk bars from entry to now.
+                # Patch the just-inserted row to use simulated_now.
+                sim_ts = ts.strftime("%Y-%m-%d %H:%M:%S")
+                db._execute(
+                    "UPDATE trades SET timestamp=? WHERE id=(SELECT MAX(id) FROM trades)",
+                    (sim_ts,)
+                )
             except Exception as e:
                 logger.debug(f"[backtest] log_trade failed: {e}")
 
