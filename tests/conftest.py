@@ -19,6 +19,23 @@ if sys.platform == "win32":
             except Exception:
                 pass
 
+@pytest.fixture(autouse=True)
+def _reset_backtest_env(monkeypatch):
+    """Clear backtest-isolation env vars before every test.
+
+    Some tests (notably test_backtest_grid) import run_backtest_grid.py
+    which calls enforce_isolation() at module load — that permanently
+    mutates os.environ for the lifetime of the pytest process. Later
+    tests (e.g. test_macro_data) then hit the backtest code path and
+    see 'signal_text: backtest neutral' stubs instead of real outputs.
+    Scrub the env at every test boundary to keep tests independent.
+    """
+    for var in ("QUANT_BACKTEST_MODE", "QUANT_BACKTEST_RELAX",
+                "QUANT_BACKTEST_PARTIAL", "QUANT_BACKTEST_MIN_CONF"):
+        monkeypatch.delenv(var, raising=False)
+    yield
+
+
 @pytest.fixture
 def db():
     """Database fixture"""

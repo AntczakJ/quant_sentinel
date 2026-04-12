@@ -15,6 +15,14 @@ import pytest
 @pytest.fixture(autouse=True)
 def _cwd_tmp(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    # Clear isolation-related env that may leak in from a prior test run
+    # or a live API server in the same process tree. enforce_isolation()
+    # re-sets these itself on import, but it FIRST asserts that any
+    # existing DATABASE_URL doesn't already point at production — so we
+    # have to unset before importing run_backtest_grid.
+    for var in ("DATABASE_URL", "QUANT_BACKTEST_MODE", "QUANT_BACKTEST_RELAX",
+                "TURSO_URL", "TURSO_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
     (tmp_path / "data").mkdir()
     (tmp_path / "reports").mkdir()
     yield
