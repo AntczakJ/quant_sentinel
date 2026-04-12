@@ -1027,6 +1027,30 @@ async def backtest_runs(limit: int = 20):
     return {"count": len(runs), "runs": runs}
 
 
+@app.get("/api/backtest/chart", tags=["System"])
+async def backtest_chart(name: str):
+    """Serve a PNG chart for a backtest run. `name` = filename without ext.
+    Looks up reports/{name}.png or reports/{name}_equity.png.
+    Read-only — serves pre-generated PNGs only.
+    """
+    import os as _os
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
+    # Sanitize — only basename, no path traversal
+    safe_name = _os.path.basename(name).replace(".png", "").replace(".json", "")
+    candidates = [
+        f"reports/{safe_name}.png",
+        f"reports/{safe_name}_equity.png",
+        f"data/{safe_name}.png",
+        f"data/{safe_name}_equity.png",
+    ]
+    for path in candidates:
+        if _os.path.exists(path) and path.endswith(".png"):
+            return FileResponse(path, media_type="image/png")
+    raise HTTPException(status_code=404, detail=f"No chart found for '{safe_name}'")
+
+
 @app.get("/api/backtest/latest", tags=["System"])
 async def backtest_latest():
     """Latest backtest run — full JSON of the most recent result.

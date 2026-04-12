@@ -425,6 +425,11 @@ export const backtestResultsAPI = {
       data: Record<string, unknown>;
     };
   },
+  chartUrl: (name: string) => {
+    // Returns URL that React <img> can load directly (FastAPI serves PNG)
+    const base = (client.defaults.baseURL ?? '').replace(/\/$/, '');
+    return `${base}/api/backtest/chart?name=${encodeURIComponent(name)}`;
+  },
 };
 
 export const trainingHistoryAPI = {
