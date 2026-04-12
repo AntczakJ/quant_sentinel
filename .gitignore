@@ -124,6 +124,16 @@ pip-delete-this-directory.txt
 models/calibration_params.pkl
 models/test/
 models/decompose_scaler.pkl
+
+# ── EKSPERYMENTALNE BACKUPY MODELI ────────────────────────────
+# Lokalne kopie zostawiane przy eksperymentach (np. retrain z innym setupem).
+# Mogą być duże, nie są potrzebne w repo.
+models/*_v[0-9]*.keras
+models/*_v[0-9]*.keras.params
+models/*_candidate.keras
+models/*_candidate.keras.params
+models/*_backup.keras
+models/*_backup.keras.params
 .coverage
 htmlcov/
 
