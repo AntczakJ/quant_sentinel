@@ -13,6 +13,7 @@ import os
 import numpy as np
 import pandas as pd
 from functools import lru_cache
+from typing import Optional
 from src.core.logger import logger
 
 # ============================================================================
@@ -178,7 +179,7 @@ def get_tf_batch_size(default_cpu: int = 32, default_gpu: int = 128) -> int:
 # ONNX RUNTIME GPU INFERENCE (DirectML — AMD/Intel/NVIDIA on Windows)
 # ============================================================================
 
-_onnx_sessions = {}  # cache: model_path -> ort.InferenceSession
+_onnx_sessions: dict = {}  # cache: model_path -> ort.InferenceSession
 
 
 def get_onnx_providers() -> list:
@@ -193,8 +194,8 @@ def get_onnx_providers() -> list:
     return providers
 
 
-def convert_keras_to_onnx(keras_model_path: str, onnx_path: str = None,
-                          opset: int = 15) -> str:
+def convert_keras_to_onnx(keras_model_path: str, onnx_path: Optional[str] = None,
+                          opset: int = 15) -> Optional[str]:
     """Convert Keras .keras model to ONNX format for GPU inference via DirectML.
 
     Uses tf2onnx.convert.from_function with a tf.function wrapper — compatible
@@ -258,7 +259,7 @@ def get_onnx_session(model_path: str):
         return None
 
 
-def onnx_predict(session, input_data: np.ndarray) -> np.ndarray:
+def onnx_predict(session, input_data: np.ndarray) -> Optional[np.ndarray]:
     """Run inference on ONNX model. input_data must be float32 numpy array."""
     if session is None:
         return None
@@ -271,7 +272,7 @@ def onnx_predict(session, input_data: np.ndarray) -> np.ndarray:
         return None
 
 
-def convert_xgboost_to_onnx(xgb_model, n_features: int, onnx_path: str = "models/xgb.onnx") -> str:
+def convert_xgboost_to_onnx(xgb_model, n_features: int, onnx_path: str = "models/xgb.onnx") -> Optional[str]:
     """Convert trained XGBoost model to ONNX for GPU inference via DirectML.
     Handles named features by temporarily remapping to f0..fN format.
     Returns path to ONNX file, or None on failure."""

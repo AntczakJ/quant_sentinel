@@ -13,22 +13,23 @@ Struktura .env:
 
 import os
 import threading
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
 # Wczytuje zmienne środowiskowe z pliku .env znajdującego się w katalogu głównym projektu
 load_dotenv()
 
 # --- KLUCZE API I TOKENY ---
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")       # Token bota Telegram (od @BotFather)
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")       # ID czatu, na który bot wysyła powiadomienia
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")      # Klucz do modeli OpenAI (GPT-4o)
-TD_API_KEY = os.getenv("TWELVE_DATA_API_KEY") # Klucz do Twelve Data (dane rynkowe XAU/USD)
+TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")       # Token bota Telegram (od @BotFather)
+CHAT_ID: Optional[str] = os.getenv("TELEGRAM_CHAT_ID")       # ID czatu, na który bot wysyła powiadomienia
+OPENAI_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")      # Klucz do modeli OpenAI (GPT-4o)
+TD_API_KEY: Optional[str] = os.getenv("TWELVE_DATA_API_KEY") # Klucz do Twelve Data (dane rynkowe XAU/USD)
 
 # --- PREFERENCJE UŻYTKOWNIKA ---
 # Słownik trzymający bieżący stan ustawień sesji.
 # Uwaga: to stan w pamięci — resetuje się przy restarcie bota.
 # Trwałe ustawienia (np. kapitał) są przechowywane w bazie SQLite (database.py).
-USER_PREFS = {
+USER_PREFS: Dict[str, Any] = {
     "currency": "PLN",       # Waluta portfela użytkownika
     "capital": 5000.0,       # Kwota bazowa (używana jako fallback jeśli baza zawiedzie)
     "risk_pc": 1.0,          # Procent kapitału ryzykowany na jeden trade
