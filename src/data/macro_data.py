@@ -271,7 +271,10 @@ def get_retail_sentiment() -> Dict:
         )
         login_data = login_resp.json()
         if login_data.get("error"):
-            logger.warning(f"[MACRO] Myfxbook login failed: {login_data.get('message', '?')}")
+            # Downgrade to debug in backtest mode — gets called 100s of times
+            import os as _os
+            _log = logger.debug if _os.environ.get("QUANT_BACKTEST_MODE") == "1" else logger.warning
+            _log(f"[MACRO] Myfxbook login failed: {login_data.get('message', '?')}")
             return {"signal": 0, "error": login_data.get("message")}
 
         session_id = login_data.get("session")
