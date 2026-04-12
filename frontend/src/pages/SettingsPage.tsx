@@ -514,7 +514,14 @@ function AboutTab() {
     );
   }
 
-  const modelNames = ['xgboost', 'lstm', 'attention', 'dqn', 'rl_agent'];
+  // Full ensemble voter list (keep in sync with default_weights in
+  // src/ml/ensemble_models.py::_load_dynamic_weights). `xgboost` and
+  // `rl_agent` remain for backward-compat with older /api/model-stats
+  // responses that used those keys.
+  const modelNames = [
+    'smc', 'attention', 'dpformer', 'lstm', 'xgb', 'xgboost',
+    'dqn', 'rl_agent', 'deeptrans',
+  ];
   const modelInfos: { name: string; lastTrained?: string; accuracy?: number }[] = [];
   if (modelStats) {
     for (const name of modelNames) {
