@@ -385,6 +385,48 @@ def main():
     except Exception as e:
         print(f"⚠️ Nie udało się zapisać metryk: {e}")
 
+    # 10. Log run do training registry (historia eksperymentów)
+    try:
+        from src.ml.training_registry import log_training_run
+        per_symbol = {}
+        for sym, venv in val_envs.items():
+            vr, vwr, vt, vb = evaluate_agent(agent, venv)
+            per_symbol[sym] = {"return_pct": round(vr, 2), "win_rate": round(vwr, 1),
+                              "trades": vt, "balance": round(vb, 2)}
+        log_training_run(
+            model_type="rl_agent",
+            hyperparams={
+                "episodes": EPISODES,
+                "episodes_completed": len(scores),
+                "early_stopped": early_stopped,
+                "vol_normalize": True,
+                "noise_std": NOISE_STD,
+                "val_every": VAL_EVERY,
+                "val_patience": VAL_PATIENCE,
+                "memory_maxlen": agent.memory.maxlen,
+                "tau": agent.tau,
+                "target_update_freq": agent.target_update_freq,
+                "epsilon_final": round(agent.epsilon, 4),
+            },
+            data_signature={
+                "symbols": list(val_envs.keys()),
+                "data_hash": data_hash,
+                "train_samples_per_symbol": {s: len(e._base_prices) for s, e in train_envs.items()},
+            },
+            metrics={
+                "val_return": round(val_return, 2),
+                "val_win_rate": round(val_win_rate, 1),
+                "val_trades": val_trades,
+                "best_val_return": round(best_val_return, 2),
+                "best_reward": round(best_reward, 4),
+                "best_win_rate": round(best_win_rate, 1),
+                "per_symbol": per_symbol,
+            },
+            artifact_path=model_path,
+        )
+    except Exception as e:
+        print(f"⚠️ Training registry log failed: {e}")
+
     print("\n✅ Trenowanie zakończone.")
     print(f"   Najlepsza nagroda: {best_reward:.4f}")
     print(f"   Walidacja: ${val_balance:.0f} ({val_return:+.1f}%)")
