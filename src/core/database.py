@@ -205,10 +205,15 @@ class NewsDB:
         self._execute("""CREATE TABLE IF NOT EXISTS agent_threads (
             user_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP, last_used DATETIME DEFAULT CURRENT_TIMESTAMP)""")
+        # ml_predictions has legacy per-model columns (lstm_pred, xgb_pred,
+        # dqn_action) for fast filtering; newer voters are added as nullable
+        # columns by the migration block below so the schema evolves without
+        # rewriting historical rows.
         self._execute("""CREATE TABLE IF NOT EXISTS ml_predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             trade_id INTEGER, lstm_pred REAL, xgb_pred REAL, dqn_action INTEGER,
-            ensemble_score REAL, ensemble_signal TEXT, confidence REAL, predictions_json TEXT)""")
+            ensemble_score REAL, ensemble_signal TEXT, confidence REAL, predictions_json TEXT,
+            smc_pred REAL, attention_pred REAL, dpformer_pred REAL, deeptrans_pred REAL)""")
         self._execute("""CREATE TABLE IF NOT EXISTS regime_stats (
             id INTEGER PRIMARY KEY AUTOINCREMENT, regime TEXT NOT NULL, session TEXT NOT NULL,
             direction TEXT NOT NULL, count INTEGER DEFAULT 0, wins INTEGER DEFAULT 0,
@@ -305,6 +310,21 @@ class NewsDB:
             err_msg = str(e).lower()
             if "duplicate" not in err_msg and "already exists" not in err_msg:
                 logger.debug(f"Migration skip dynamic_params.param_text: {e}")
+
+        # Per-voter columns on ml_predictions — idempotent ALTER for DBs
+        # created before the ensemble grew past lstm/xgb/dqn. predictions_json
+        # already stores the full payload; these columns are for cheap SQL
+        # filtering / joins without JSON parsing.
+        for col in ("smc_pred", "attention_pred", "dpformer_pred", "deeptrans_pred"):
+            try:
+                with _db_locked():
+                    self.cursor.execute(f"ALTER TABLE ml_predictions ADD COLUMN {col} REAL")
+                    self.conn.commit()
+                logger.info(f"Migration: added column ml_predictions.{col}")
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "duplicate" not in err_msg and "already exists" not in err_msg:
+                    logger.debug(f"Migration skip ml_predictions.{col}: {e}")
 
         # Migrate text values from param_value to param_text
         try:

@@ -528,10 +528,21 @@ def _persist_prediction(results: Dict):
             'regime_weights': {k: round(v, 4) for k, v in results.get('regime_weights', {}).items()},
         })
 
+        # Per-voter columns mirror the JSON blob for fast SQL filtering
+        # (e.g. "give me rows where deeptrans disagreed with SMC"). Writing
+        # None for absent voters keeps historical queries clean.
+        def _voter_value(name: str):
+            v = results['predictions'].get(name, {})
+            if 'status' in v:  # voter marked 'unavailable'
+                return None
+            return v.get('value')
+
         db._execute("""
             INSERT INTO ml_predictions
-            (lstm_pred, xgb_pred, dqn_action, ensemble_score, ensemble_signal, confidence, predictions_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (lstm_pred, xgb_pred, dqn_action, ensemble_score, ensemble_signal,
+             confidence, predictions_json,
+             smc_pred, attention_pred, dpformer_pred, deeptrans_pred)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             results['predictions'].get('lstm', {}).get('value'),
             results['predictions'].get('xgb', {}).get('value'),
@@ -539,7 +550,11 @@ def _persist_prediction(results: Dict):
             results.get('final_score', 0),
             results.get('ensemble_signal', 'CZEKAJ'),
             results.get('confidence', 0),
-            predictions_json_ext
+            predictions_json_ext,
+            _voter_value('smc'),
+            _voter_value('attention'),
+            _voter_value('dpformer'),
+            _voter_value('deeptrans'),
         ))
     except Exception as e:
         logger.debug(f"Could not persist prediction: {e}")
