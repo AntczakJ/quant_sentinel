@@ -48,6 +48,18 @@ from src.backtest.isolation import assert_not_production_db
 from src.core.logger import logger
 
 
+# ── Execution cost model ─────────────────────────────────────────────
+# Realistic XAU/USD broker costs. Applied on entry + exit.
+#   spread: avg 0.30 USD per ounce (tight hours) to 1.50 (off-hours).
+#            We use session-aware in risk_manager; here we model the
+#            net cost already baked into entry (SL/TP already shifted
+#            by adjust_for_slippage). So just commission + half of
+#            expected slippage at exit.
+#   commission: typical ~$0.50-1.00 per 0.01 lot round-trip on gold CFDs.
+COMMISSION_PER_LOT = 1.0    # USD round-trip per 0.01 lot
+SLIPPAGE_EXIT_USD = 0.40    # avg slippage on SL/TP fill (market impact)
+
+
 class _UnlimitedRateLimiter:
     """Stub for backtest — no real rate limits on local data."""
     def can_use_credits(self, n):
@@ -82,10 +94,12 @@ def _summarize_trades() -> dict:
             "SUM(CASE WHEN status IN ('WIN','PROFIT') THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN status IN ('LOSS','LOSE') THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END), "
-            "AVG(profit) "
+            "AVG(profit), "
+            "SUM(CASE WHEN status = 'BREAKEVEN' THEN 1 ELSE 0 END) "
             "FROM trades"
         ).fetchone()
-        total, wins, losses, still_open, avg_profit = row
+        total, wins, losses, still_open, avg_profit, breakevens = row
+        breakevens = breakevens or 0
         total = total or 0
         wins = wins or 0
         losses = losses or 0
@@ -93,17 +107,17 @@ def _summarize_trades() -> dict:
         closed = (wins + losses)
         wr = (wins / closed * 100) if closed else 0.0
 
-        # Cumulative profit (closed trades only)
+        # Cumulative profit (any closed trade, including breakeven + trailed)
         cum_row = cur.execute(
             "SELECT SUM(profit) FROM trades "
-            "WHERE status IN ('WIN','PROFIT','LOSS','LOSE') AND profit IS NOT NULL"
+            "WHERE status IN ('WIN','PROFIT','LOSS','LOSE','BREAKEVEN') AND profit IS NOT NULL"
         ).fetchone()
         cum_profit = cum_row[0] or 0.0
 
         # ── Quant metrics: profit factor, max consecutive losses, max DD ──
         closed_rows = cur.execute(
             "SELECT status, profit FROM trades "
-            "WHERE status IN ('WIN','PROFIT','LOSS','LOSE') AND profit IS NOT NULL "
+            "WHERE status IN ('WIN','PROFIT','LOSS','LOSE','BREAKEVEN') AND profit IS NOT NULL "
             "ORDER BY id ASC"
         ).fetchall()
         gross_win = sum(float(p) for s, p in closed_rows if p and float(p) > 0)
@@ -141,6 +155,7 @@ def _summarize_trades() -> dict:
             "closed": closed,
             "wins": wins,
             "losses": losses,
+            "breakevens": breakevens,
             "still_open": still_open,
             "win_rate_pct": round(wr, 1),
             "avg_profit": round(avg_profit, 2) if avg_profit is not None else 0.0,
@@ -153,6 +168,71 @@ def _summarize_trades() -> dict:
         }
     finally:
         conn.close()
+
+
+def _export_equity_curve(path: str) -> int:
+    """Save equity curve PNG (or HTML fallback) for visual analysis."""
+    assert_not_production_db()
+    conn = sqlite3.connect(os.environ["DATABASE_URL"])
+    rows = conn.execute(
+        "SELECT timestamp, status, profit FROM trades "
+        "WHERE status IN ('WIN','PROFIT','LOSS','LOSE','BREAKEVEN') AND profit IS NOT NULL "
+        "ORDER BY id ASC"
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return 0
+
+    # Build equity curve
+    equity = [10_000.0]
+    times = [None]
+    for ts, _status, p in rows:
+        equity.append(equity[-1] + float(p))
+        times.append(ts)
+    peak = pd.Series(equity).cummax()
+    dd = (pd.Series(equity) - peak) / peak * 100
+
+    from pathlib import Path
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Try matplotlib for PNG, fallback to HTML if unavailable
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True,
+                                        gridspec_kw={"height_ratios": [3, 1]})
+        x = list(range(len(equity)))
+        ax1.plot(x, equity, linewidth=1.5, color="#2e7d32")
+        ax1.fill_between(x, equity, 10_000, where=[e >= 10_000 for e in equity],
+                         alpha=0.15, color="#2e7d32")
+        ax1.fill_between(x, equity, 10_000, where=[e < 10_000 for e in equity],
+                         alpha=0.15, color="#c62828")
+        ax1.axhline(y=10_000, color="gray", linestyle="--", linewidth=0.8)
+        ax1.set_title(f"Equity Curve — {len(rows)} trades")
+        ax1.set_ylabel("Balance ($)")
+        ax1.grid(alpha=0.3)
+
+        ax2.fill_between(x, dd, 0, color="#c62828", alpha=0.4)
+        ax2.set_ylabel("Drawdown (%)")
+        ax2.set_xlabel("Trade #")
+        ax2.grid(alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(path, dpi=110, bbox_inches="tight")
+        plt.close()
+        return len(rows)
+    except ImportError:
+        # HTML fallback — simple SVG line chart
+        svg_points = " ".join(f"{i*5},{200 - (e - 10000)*0.1}" for i, e in enumerate(equity))
+        html = f"""<!DOCTYPE html><html><head><title>Equity Curve</title></head>
+<body><h2>Equity Curve ({len(rows)} trades)</h2>
+<svg width="{len(equity)*5+40}" height="220" style="background:#f5f5f5">
+<polyline fill="none" stroke="#2e7d32" stroke-width="2" points="{svg_points}"/>
+</svg></body></html>"""
+        Path(path).write_text(html, encoding="utf-8")
+        return len(rows)
 
 
 def _export_trades_csv(path: str) -> int:
@@ -218,32 +298,92 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
         is_long = "LONG" in (direction or "").upper()
         hit_status: Optional[str] = None
         hit_price: Optional[float] = None
+
+        # Trailing stop state — matches production resolve_trades_task logic:
+        #   r_mult >= 1.0  → SL to breakeven (entry)
+        #   r_mult >= 1.5  → SL to entry + 1R (lock profit)
+        #   r_mult >= 2.0  → SL trails at +1.5R (walk-up)
+        if is_long:
+            r_dist = entry - sl  # positive risk distance
+        else:
+            r_dist = sl - entry  # positive risk distance
+        active_sl = sl  # starts at original SL, may be raised
+
         for _, bar in window.iterrows():
             bar_high = float(bar["high"])
             bar_low = float(bar["low"])
+
+            # 1. Update trailing SL based on excursion
+            if r_dist > 0:
+                if is_long:
+                    excursion_r = (bar_high - entry) / r_dist
+                    if excursion_r >= 2.0:
+                        new_sl = entry + 1.5 * r_dist
+                        active_sl = max(active_sl, new_sl)
+                    elif excursion_r >= 1.5:
+                        new_sl = entry + 1.0 * r_dist
+                        active_sl = max(active_sl, new_sl)
+                    elif excursion_r >= 1.0:
+                        active_sl = max(active_sl, entry)  # breakeven
+                else:  # SHORT
+                    excursion_r = (entry - bar_low) / r_dist
+                    if excursion_r >= 2.0:
+                        new_sl = entry - 1.5 * r_dist
+                        active_sl = min(active_sl, new_sl)
+                    elif excursion_r >= 1.5:
+                        new_sl = entry - 1.0 * r_dist
+                        active_sl = min(active_sl, new_sl)
+                    elif excursion_r >= 1.0:
+                        active_sl = min(active_sl, entry)
+
+            # 2. Check TP/SL (using trailing SL)
             if is_long:
                 if bar_high >= tp:
                     hit_status, hit_price = "WIN", tp
                     break
-                if bar_low <= sl:
-                    hit_status, hit_price = "LOSS", sl
+                if bar_low <= active_sl:
+                    # Determine status: SL at or above entry = trail exit (WIN-ish)
+                    if active_sl > entry:
+                        hit_status, hit_price = "WIN", active_sl  # trailed profit
+                    elif active_sl == entry:
+                        hit_status, hit_price = "BREAKEVEN", active_sl
+                    else:
+                        hit_status, hit_price = "LOSS", active_sl
                     break
             else:  # SHORT
                 if bar_low <= tp:
                     hit_status, hit_price = "WIN", tp
                     break
-                if bar_high >= sl:
-                    hit_status, hit_price = "LOSS", sl
+                if bar_high >= active_sl:
+                    if active_sl < entry:
+                        hit_status, hit_price = "WIN", active_sl  # trailed profit
+                    elif active_sl == entry:
+                        hit_status, hit_price = "BREAKEVEN", active_sl
+                    else:
+                        hit_status, hit_price = "LOSS", active_sl
                     break
         if hit_status and hit_price is not None:
-            # Compute profit in price units (matches production log_trade style)
+            # Compute gross P&L in price units
             if is_long:
-                profit = round(hit_price - entry, 2)
+                gross = hit_price - entry
             else:
-                profit = round(entry - hit_price, 2)
+                gross = entry - hit_price
+
+            # Apply execution costs:
+            # - Exit slippage: SL/TP rarely fills exactly at level (market gaps)
+            #   For WIN: TP filled slightly worse (less profit)
+            #   For LOSS: SL filled slightly worse (bigger loss)
+            # - Commission: small fee per round-trip
+            exit_slip = SLIPPAGE_EXIT_USD  # reduces both WIN and LOSS profit
+            commission = COMMISSION_PER_LOT  # always negative
+
+            net = gross - exit_slip - commission
+            profit = round(net, 2)
             db._execute("UPDATE trades SET status=?, profit=? WHERE id=?",
                         (hit_status, profit, t_id))
-            logger.debug(f"[backtest] Trade #{t_id} resolved {hit_status} profit={profit}")
+            logger.debug(f"[backtest] Trade #{t_id} resolved {hit_status} "
+                         f"gross={gross:+.2f} net={profit:+.2f} "
+                         f"(slip={exit_slip} + comm={commission})")
 
 
 async def _run_backtest(args) -> dict:
@@ -340,6 +480,23 @@ async def _run_backtest(args) -> dict:
 
         # Persist trade (same path as production log_trade)
         if trade:
+            # Avoid look-ahead bias: scanner returns entry = current bar's close,
+            # but realistically you can only execute on the NEXT bar's open.
+            # Shift entry to next bar's open on the decision TF; keep SL/TP
+            # distances from original entry so R:R stays the same.
+            tf_for_entry = trade.get("tf", "15m")
+            tf_bars = provider._cache.get(tf_for_entry)
+            original_entry = trade["entry"]
+            actual_entry = original_entry
+            if tf_bars is not None and not tf_bars.empty:
+                future_bars = tf_bars[tf_bars["timestamp"] > ts]
+                if not future_bars.empty:
+                    actual_entry = float(future_bars.iloc[0]["open"])
+                    # Preserve SL/TP $ distance from the decision price
+                    gap = actual_entry - original_entry
+                    trade["entry"] = actual_entry
+                    trade["sl"] = trade["sl"] + gap
+                    trade["tp"] = trade["tp"] + gap
             try:
                 db.log_trade(
                     direction=trade["direction"],
@@ -441,6 +598,8 @@ def main():
                     help="save final stats JSON to this path")
     ap.add_argument("--export-csv", default=None,
                     help="dump all trades to CSV for Excel/pandas analysis")
+    ap.add_argument("--plot-equity", default=None,
+                    help="save equity curve PNG (e.g. reports/equity.png)")
     ap.add_argument("--strict", action="store_true",
                     help="disable relaxed filters — run with PRODUCTION confluence "
                          "threshold (3+) and Stable=blocked. Useful for apples-to-"
@@ -475,6 +634,13 @@ def main():
     if args.export_csv:
         n = _export_trades_csv(args.export_csv)
         print(f"[backtest] Exported {n} trades to {args.export_csv}")
+
+    if args.plot_equity:
+        n = _export_equity_curve(args.plot_equity)
+        if n:
+            print(f"[backtest] Equity curve saved ({n} trades) to {args.plot_equity}")
+        else:
+            print(f"[backtest] No closed trades — equity curve not plotted")
 
 
 if __name__ == "__main__":
