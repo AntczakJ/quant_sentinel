@@ -32,8 +32,16 @@
     <style>
       /* ================================================================
          SPLASH SCREEN — shows instantly before React bundle loads
-         ================================================================ */
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+         ================================================================
+         CRITICAL: box-sizing reset is in @layer so Tailwind 4 utilities
+         (which live in @layer utilities) aren't overridden. Previously
+         the `* { margin: 0; padding: 0 }` reset was unlayered → higher
+         cascade priority than all Tailwind spacing utilities → entire
+         UI rendered without padding/margin. */
+      @layer base {
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; }
+      }
 
       body { background: #0b0e14; color-scheme: dark; }
 
