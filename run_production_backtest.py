@@ -960,6 +960,16 @@ def main():
             if k in ("n_simulations", "n_trades"):
                 continue
             print(f"  {k:<20} {v}")
+        # Save to JSON so UI/downstream tools can read
+        if args.output:
+            import json
+            from pathlib import Path
+            try:
+                existing = json.loads(Path(args.output).read_text())
+            except Exception:
+                existing = {}
+            existing["monte_carlo"] = mc
+            Path(args.output).write_text(json.dumps(existing, indent=2, default=str))
 
     if args.analytics:
         from src.backtest.analytics import full_analytics_report

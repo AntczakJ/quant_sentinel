@@ -8,6 +8,7 @@ import { useState, useEffect, memo, useMemo } from 'react';
 import {
   Loader2, TrendingUp, TrendingDown, Clock, Activity,
   CheckCircle, XCircle, BarChart3, Target, Image as ImageIcon,
+  XOctagon, Dices, GitCompare,
 } from 'lucide-react';
 import { backtestResultsAPI } from '../../api/client';
 
@@ -46,11 +47,171 @@ function colorForReturn(pct: number): string {
   return 'text-accent-orange';
 }
 
+type RunDetails = Awaited<ReturnType<typeof backtestResultsAPI.loadByName>>['data'];
+
+
+// ── Small inline bar chart (SVG, no recharts dep) ────────────────────
+function RejectionsChart({ rejections }: { rejections: Array<[string, string, number]> }) {
+  if (!rejections.length) {return null;}
+  const max = Math.max(...rejections.map(r => r[2]));
+  return (
+    <div className="space-y-1">
+      {rejections.map(([filter, reason, count], i) => {
+        const pct = (count / max) * 100;
+        return (
+          <div key={i} className="text-[10px]">
+            <div className="flex items-center justify-between text-th-muted mb-0.5">
+              <span className="truncate" title={`${filter}: ${reason}`}>
+                {filter}
+              </span>
+              <span className="font-mono">{count}</span>
+            </div>
+            <div className="relative h-2 bg-dark-bg rounded overflow-hidden">
+              <div
+                className="absolute inset-y-0 left-0 bg-accent-orange/60"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+function MonteCarloChart({ mc }: { mc: NonNullable<RunDetails['monte_carlo']> }) {
+  const p5 = mc.return_p5 ?? 0;
+  const p50 = mc.return_p50 ?? 0;
+  const p95 = mc.return_p95 ?? 0;
+  const prob = mc.prob_profitable ?? 0;
+  // Render a distribution bar: red → gray → green based on where 0 falls
+  const minV = Math.min(p5, 0) - 0.5;
+  const maxV = Math.max(p95, 0) + 0.5;
+  const range = maxV - minV;
+  const p5Pos = ((p5 - minV) / range) * 100;
+  const p50Pos = ((p50 - minV) / range) * 100;
+  const p95Pos = ((p95 - minV) / range) * 100;
+  const zeroPos = ((0 - minV) / range) * 100;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-[10px]">
+        <span className="text-th-muted">{mc.n_simulations} sims × {mc.n_trades} trades</span>
+        <span className={prob > 70 ? 'text-accent-green' : prob > 50 ? 'text-accent-cyan' : 'text-accent-red'}>
+          {prob.toFixed(0)}% profitable
+        </span>
+      </div>
+      <div className="relative h-3 bg-dark-bg rounded overflow-hidden">
+        <div
+          className="absolute inset-y-0 bg-accent-purple/40"
+          style={{ left: `${p5Pos}%`, width: `${p95Pos - p5Pos}%` }}
+        />
+        {/* Zero marker */}
+        <div
+          className="absolute inset-y-0 w-px bg-white/70"
+          style={{ left: `${zeroPos}%` }}
+          title="break-even (0%)"
+        />
+        {/* Median marker */}
+        <div
+          className="absolute inset-y-0 w-0.5 bg-accent-purple"
+          style={{ left: `${p50Pos}%` }}
+          title={`p50: ${p50.toFixed(2)}%`}
+        />
+      </div>
+      <div className="grid grid-cols-3 text-[10px] font-mono">
+        <div className="text-th-muted">p5: <span className={p5 > 0 ? 'text-accent-green' : 'text-accent-red'}>{p5.toFixed(2)}%</span></div>
+        <div className="text-center">p50: {p50.toFixed(2)}%</div>
+        <div className="text-right text-th-muted">p95: {p95.toFixed(2)}%</div>
+      </div>
+    </div>
+  );
+}
+
+
+function CompareDialog({ runs, onClose }: { runs: Run[]; onClose: () => void }) {
+  const [a, setA] = useState(runs[0]?.name ?? '');
+  const [b, setB] = useState(runs[1]?.name ?? runs[0]?.name ?? '');
+  const runA = runs.find(r => r.name === a);
+  const runB = runs.find(r => r.name === b);
+  const rows: Array<[string, (r: Run) => number | string | null]> = [
+    ['Trades', r => r.trades],
+    ['WR %', r => r.win_rate_pct],
+    ['Profit Factor', r => r.profit_factor],
+    ['Return %', r => r.return_pct],
+    ['Max DD %', r => r.max_drawdown_pct],
+    ['Max Loss Streak', r => r.max_consec_losses],
+    ['Sharpe', r => r.sharpe],
+    ['Sortino', r => r.sortino],
+    ['Alpha vs B&H pp', r => r.alpha_vs_bh_pct],
+    ['Expectancy $', r => r.expectancy],
+  ];
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-surface border border-dark-secondary rounded-lg p-4 max-w-2xl w-full shadow-panel">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <GitCompare size={14} /> Compare Runs
+          </h3>
+          <button onClick={onClose} className="text-th-muted hover:text-th p-1">
+            <XOctagon size={14} />
+          </button>
+        </div>
+        <div className="flex gap-2 mb-3 text-xs">
+          <select value={a} onChange={e => setA(e.target.value)}
+                  className="flex-1 bg-dark-bg border border-dark-secondary rounded px-2 py-1">
+            {runs.map(r => <option key={r.name} value={r.name}>A: {r.name}</option>)}
+          </select>
+          <select value={b} onChange={e => setB(e.target.value)}
+                  className="flex-1 bg-dark-bg border border-dark-secondary rounded px-2 py-1">
+            {runs.map(r => <option key={r.name} value={r.name}>B: {r.name}</option>)}
+          </select>
+        </div>
+        {runA && runB && (
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-th-muted border-b border-dark-secondary">
+                <th className="text-left py-1">Metric</th>
+                <th className="text-right">A</th>
+                <th className="text-right">B</th>
+                <th className="text-right">Δ (B-A)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(([label, get]) => {
+                const va = get(runA);
+                const vb = get(runB);
+                const aNum = typeof va === 'number' ? va : null;
+                const bNum = typeof vb === 'number' ? vb : null;
+                const delta = aNum !== null && bNum !== null ? bNum - aNum : null;
+                return (
+                  <tr key={label} className="border-b border-dark-secondary/30">
+                    <td className="py-1 text-th-secondary">{label}</td>
+                    <td className="text-right font-mono">{va ?? '—'}</td>
+                    <td className="text-right font-mono">{vb ?? '—'}</td>
+                    <td className={`text-right font-mono ${delta && delta > 0 ? 'text-accent-green' : delta && delta < 0 ? 'text-accent-red' : ''}`}>
+                      {delta !== null ? (delta > 0 ? '+' : '') + delta.toFixed(2) : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 export const BacktestResults = memo(function BacktestResults() {
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [details, setDetails] = useState<RunDetails | null>(null);
+  const [showCompare, setShowCompare] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,6 +239,16 @@ export const BacktestResults = memo(function BacktestResults() {
     () => runs?.find(r => r.path === selected) ?? runs?.[0],
     [runs, selected],
   );
+
+  // Fetch full JSON for selected run (rejections, MC, analytics)
+  useEffect(() => {
+    if (!selectedRun) {return;}
+    let cancelled = false;
+    backtestResultsAPI.loadByName(selectedRun.name)
+      .then(res => { if (!cancelled) {setDetails(res.data);} })
+      .catch(() => { if (!cancelled) {setDetails(null);} });
+    return () => { cancelled = true; };
+  }, [selectedRun?.name]);
 
   if (loading) {
     return (
@@ -212,13 +383,41 @@ export const BacktestResults = memo(function BacktestResults() {
               No equity PNG for this run — add <code>--plot-equity reports/{selectedRun.name}.png</code>
             </div>
           </div>
+
+          {/* Monte Carlo distribution */}
+          {details?.monte_carlo && (
+            <div className="mt-3 pt-3 border-t border-dark-secondary">
+              <div className="text-[10px] text-th-muted uppercase tracking-wider mb-2 flex items-center gap-1">
+                <Dices size={10} /> Monte Carlo (bootstrap)
+              </div>
+              <MonteCarloChart mc={details.monte_carlo} />
+            </div>
+          )}
+
+          {/* Rejection reasons */}
+          {details?.top_rejections && details.top_rejections.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-dark-secondary">
+              <div className="text-[10px] text-th-muted uppercase tracking-wider mb-2 flex items-center gap-1">
+                <XOctagon size={10} /> Top rejection reasons
+              </div>
+              <RejectionsChart rejections={details.top_rejections} />
+            </div>
+          )}
         </div>
       )}
 
       {/* Run list (click to select) */}
       <div className="space-y-1">
-        <div className="text-[10px] text-th-muted uppercase tracking-wider px-1">
-          Recent runs ({runs.length})
+        <div className="text-[10px] text-th-muted uppercase tracking-wider px-1 flex items-center justify-between">
+          <span>Recent runs ({runs.length})</span>
+          {runs.length >= 2 && (
+            <button
+              onClick={() => setShowCompare(true)}
+              className="flex items-center gap-1 text-accent-cyan hover:text-accent-blue normal-case tracking-normal"
+            >
+              <GitCompare size={10} /> Compare
+            </button>
+          )}
         </div>
         {runs.map(r => (
           <button
@@ -249,6 +448,10 @@ export const BacktestResults = memo(function BacktestResults() {
           </button>
         ))}
       </div>
+
+      {showCompare && runs.length >= 2 && (
+        <CompareDialog runs={runs} onClose={() => setShowCompare(false)} />
+      )}
     </div>
   );
 });

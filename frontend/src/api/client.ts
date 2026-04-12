@@ -425,6 +425,44 @@ export const backtestResultsAPI = {
       data: Record<string, unknown>;
     };
   },
+  loadByName: async (name: string) => {
+    const response = await client.get('/api/backtest/run', { params: { name } });
+    return response.data as {
+      path: string;
+      mtime: number;
+      data: {
+        total_trades?: number;
+        wins?: number;
+        losses?: number;
+        breakevens?: number;
+        win_rate_pct?: number;
+        profit_factor?: number | string;
+        return_pct?: number;
+        max_drawdown_pct?: number;
+        max_consec_losses?: number;
+        alpha_vs_bh_pct?: number | null;
+        cycles_total?: number;
+        top_rejections?: Array<[string, string, number]>;
+        monte_carlo?: {
+          n_simulations?: number;
+          n_trades?: number;
+          return_p5?: number;
+          return_p50?: number;
+          return_p95?: number;
+          return_mean?: number;
+          return_stdev?: number;
+          prob_profitable?: number;
+          max_dd_p5?: number;
+          max_dd_p50?: number;
+        };
+        analytics?: {
+          risk_adjusted?: { sharpe?: number; sortino?: number; calmar?: number | string };
+          expectancy?: { expectancy_per_trade_usd?: number; payoff_ratio?: number };
+          pnl_distribution?: { skewness?: number; excess_kurtosis?: number };
+        };
+      };
+    };
+  },
   chartUrl: (name: string) => {
     // Returns URL that React <img> can load directly (FastAPI serves PNG)
     const base = (client.defaults.baseURL ?? '').replace(/\/$/, '');

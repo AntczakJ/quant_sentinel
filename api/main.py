@@ -1027,6 +1027,25 @@ async def backtest_runs(limit: int = 20):
     return {"count": len(runs), "runs": runs}
 
 
+@app.get("/api/backtest/run", tags=["System"])
+async def backtest_run(name: str):
+    """Full JSON for a specific run by name (e.g. 'bt_final'). 404 if not found.
+    Read-only, path-traversal safe (basename only)."""
+    import os as _os
+    import json as _json
+    from fastapi import HTTPException
+
+    safe_name = _os.path.basename(name).replace(".json", "")
+    for path in [f"reports/{safe_name}.json", f"data/{safe_name}.json"]:
+        if _os.path.exists(path):
+            try:
+                data = _json.loads(open(path, "r", encoding="utf-8").read())
+                return {"path": path, "mtime": _os.path.getmtime(path), "data": data}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Read failed: {e}")
+    raise HTTPException(status_code=404, detail=f"Run '{safe_name}' not found")
+
+
 @app.get("/api/backtest/chart", tags=["System"])
 async def backtest_chart(name: str):
     """Serve a PNG chart for a backtest run. `name` = filename without ext.
