@@ -1282,6 +1282,143 @@ async def sweep_active():
     }
 
 
+def _artifact_info(path: str) -> dict:
+    """Return {exists, size_bytes, mtime_iso, age_hours} for a model artifact."""
+    import os as _os
+    import datetime as _dt
+    if not _os.path.exists(path):
+        return {"exists": False, "path": path}
+    st = _os.stat(path)
+    return {
+        "exists": True,
+        "path": path,
+        "size_bytes": st.st_size,
+        "mtime_iso": _dt.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+        "age_hours": round((_dt.datetime.now().timestamp() - st.st_mtime) / 3600, 2),
+    }
+
+
+@app.get("/api/sweep/winner-info", tags=["System"])
+async def sweep_winner_info():
+    """Side-by-side info on the sweep winner and the live production RL
+    model. Used by the UI to render a 'Promote winner to production'
+    panel without actually taking any action — this endpoint is pure
+    filesystem stat, no copy / no db write."""
+    prod = _artifact_info("models/rl_agent.keras")
+    winner = _artifact_info("models/rl_sweep_winner.keras")
+    prod_params = _artifact_info("models/rl_agent.keras.params")
+    winner_params = _artifact_info("models/rl_sweep_winner.keras.params")
+    prod_onnx = _artifact_info("models/rl_agent.onnx")
+    winner_onnx = _artifact_info("models/rl_sweep_winner.onnx")
+
+    last_promote_ts = None
+    last_promote_backup = None
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        last_promote_ts = db.get_param("rl_last_promote_ts", None)
+        last_promote_backup = db.get_param("rl_last_promote_backup", None)
+    except Exception:
+        pass
+
+    return {
+        "production": {"model": prod, "params": prod_params, "onnx": prod_onnx},
+        "winner": {"model": winner, "params": winner_params, "onnx": winner_onnx},
+        "winner_available": winner.get("exists", False) and winner_params.get("exists", False),
+        "last_promote_ts": last_promote_ts,
+        "last_promote_backup": last_promote_backup,
+    }
+
+
+@app.post("/api/sweep/promote", tags=["System"])
+async def sweep_promote(confirm: bool = False, force: bool = False):
+    """Copy the sweep winner over the production RL model.
+
+    **Irreversible unless the backup is kept.** The endpoint:
+      1. Refuses to run without ?confirm=true (deliberate friction — UI
+         must show operator what they're replacing before calling this).
+      2. Creates a timestamped backup of the current production model.
+      3. Atomically copies winner .keras / .params / .onnx files into
+         the production slots.
+      4. Writes audit params (rl_last_promote_ts, rl_last_promote_backup).
+
+    Returns the backup path so the UI can display it for rollback.
+    """
+    import datetime as _dt
+    import os as _os
+    import shutil
+
+    if not confirm:
+        return {"status": "rejected", "reason": "confirm=true required"}
+
+    winner_keras = "models/rl_sweep_winner.keras"
+    winner_params = "models/rl_sweep_winner.keras.params"
+    winner_onnx = "models/rl_sweep_winner.onnx"  # optional
+    prod_keras = "models/rl_agent.keras"
+    prod_params = "models/rl_agent.keras.params"
+    prod_onnx = "models/rl_agent.onnx"  # optional
+
+    if not _os.path.exists(winner_keras) or not _os.path.exists(winner_params):
+        return {"status": "error",
+                "reason": f"winner artifacts missing ({winner_keras} or its .params)"}
+
+    # 1. Backup current production, timestamped.
+    ts = _dt.datetime.now().strftime("%Y%m%dT%H%M%S")
+    backup_keras = f"models/rl_agent.pre_promote_{ts}.keras"
+    backup_params = backup_keras + ".params"
+    backup_onnx = f"models/rl_agent.pre_promote_{ts}.onnx"
+
+    prod_existed = _os.path.exists(prod_keras)
+    if prod_existed:
+        if not force and not _os.path.exists(prod_params):
+            return {"status": "error",
+                    "reason": "prod .params missing — refusing to promote "
+                              "without a complete backup (pass force=true to override)"}
+        try:
+            shutil.copy2(prod_keras, backup_keras)
+            if _os.path.exists(prod_params):
+                shutil.copy2(prod_params, backup_params)
+            if _os.path.exists(prod_onnx):
+                shutil.copy2(prod_onnx, backup_onnx)
+        except Exception as e:
+            return {"status": "error", "reason": f"backup failed: {e}"}
+
+    # 2. Atomic-ish copy: write to .tmp first, then replace.
+    try:
+        for src, dst in ((winner_keras, prod_keras),
+                         (winner_params, prod_params)):
+            tmp = dst + ".tmp"
+            shutil.copy2(src, tmp)
+            _os.replace(tmp, dst)
+        if _os.path.exists(winner_onnx):
+            tmp = prod_onnx + ".tmp"
+            shutil.copy2(winner_onnx, tmp)
+            _os.replace(tmp, prod_onnx)
+    except Exception as e:
+        return {"status": "error", "reason": f"promote copy failed: {e}",
+                "backup": backup_keras if prod_existed else None}
+
+    # 3. Audit.
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        db.set_param("rl_last_promote_ts", _dt.datetime.now().isoformat(timespec="seconds"))
+        db.set_param("rl_last_promote_backup", backup_keras if prod_existed else "")
+    except Exception as e:
+        # Do NOT fail the promote — the copy already succeeded. Surface via log.
+        print(f"[promote] audit write failed: {e}")
+
+    return {
+        "status": "ok",
+        "promoted_from": winner_keras,
+        "promoted_to": prod_keras,
+        "backup": backup_keras if prod_existed else None,
+        "backup_params": backup_params if prod_existed and _os.path.exists(backup_params) else None,
+        "backup_onnx": backup_onnx if prod_existed and _os.path.exists(backup_onnx) else None,
+        "timestamp": ts,
+    }
+
+
 @app.get("/api/sweep/leaderboard", tags=["System"])
 async def sweep_leaderboard(
     study_name: str = "rl_sweep_v1",

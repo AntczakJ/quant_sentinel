@@ -565,6 +565,14 @@ export const trainingHistoryAPI = {
   },
 };
 
+type ArtifactInfo = {
+  exists: boolean;
+  path: string;
+  size_bytes?: number;
+  mtime_iso?: string;
+  age_hours?: number;
+};
+
 /** Live snapshot of the Optuna RL hyperparameter sweep. Separate from
  *  trainingHistoryAPI because a sweep is a population of trials, not a
  *  single run — the shape (trial_number, best_val_so_far, etc.) is
@@ -595,6 +603,46 @@ export const sweepAPI = {
           elapsed_total_sec: number | null;
           eta_sec: number | null;
           age_sec: number;
+        };
+  },
+
+  /** Production vs. winner artifact info — what the Promote panel renders. */
+  winnerInfo: async () => {
+    const response = await client.get('/sweep/winner-info');
+    return response.data as {
+      production: {
+        model: ArtifactInfo;
+        params: ArtifactInfo;
+        onnx: ArtifactInfo;
+      };
+      winner: {
+        model: ArtifactInfo;
+        params: ArtifactInfo;
+        onnx: ArtifactInfo;
+      };
+      winner_available: boolean;
+      last_promote_ts: string | null;
+      last_promote_backup: string | null;
+    };
+  },
+
+  /** Copy sweep winner over the production RL model. Requires confirm=true.
+   *  Irreversible; backup is returned in the response for rollback. */
+  promote: async (confirm: boolean) => {
+    const response = await client.post('/sweep/promote', null, {
+      params: { confirm },
+    });
+    return response.data as
+      | { status: 'rejected'; reason: string }
+      | { status: 'error'; reason: string; backup?: string | null }
+      | {
+          status: 'ok';
+          promoted_from: string;
+          promoted_to: string;
+          backup: string | null;
+          backup_params: string | null;
+          backup_onnx: string | null;
+          timestamp: string;
         };
   },
 

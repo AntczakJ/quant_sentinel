@@ -27,5 +27,6 @@ export { BacktestGridLeaderboard } from './BacktestGridLeaderboard';
 export { TrainingProgressLive } from './TrainingProgressLive';
 export { SweepProgressLive } from './SweepProgressLive';
 export { SweepLeaderboard } from './SweepLeaderboard';
+export { SweepPromotePanel } from './SweepPromotePanel';
 export { ModelsStalenessBadge } from './ModelsStalenessBadge';
 
