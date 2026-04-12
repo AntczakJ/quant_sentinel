@@ -707,6 +707,10 @@ def main():
                     help="compare two --output JSON files side-by-side")
     ap.add_argument("--seed", type=int, default=42,
                     help="random seed for determinism (default 42)")
+    ap.add_argument("--analytics", action="store_true",
+                    help="print advanced analytics (Sharpe/Sortino/Calmar, "
+                         "expectancy, rolling metrics, temporal heatmap, "
+                         "P&L distribution)")
     ap.add_argument("--strict", action="store_true",
                     help="disable relaxed filters — run with PRODUCTION confluence "
                          "threshold (3+) and Stable=blocked. Useful for apples-to-"
@@ -829,6 +833,40 @@ def main():
             if k in ("n_simulations", "n_trades"):
                 continue
             print(f"  {k:<20} {v}")
+
+    if args.analytics:
+        from src.backtest.analytics import full_analytics_report
+        report = full_analytics_report()
+        print("\n" + "=" * 62)
+        print("ADVANCED ANALYTICS (P5)")
+        print("=" * 62)
+        import json as _json
+        for section, data in report.items():
+            print(f"\n─── {section} ───")
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if isinstance(v, dict):
+                        print(f"  {k}:")
+                        if len(v) <= 10:
+                            for k2, v2 in v.items():
+                                print(f"    {k2}: {v2}")
+                        else:
+                            print(f"    ({len(v)} entries — see JSON output)")
+                    else:
+                        print(f"  {k:<26} {v}")
+            else:
+                print(f"  {data}")
+        # Include in JSON output
+        if args.output:
+            import json
+            from pathlib import Path
+            existing = {}
+            try:
+                existing = json.loads(Path(args.output).read_text())
+            except Exception:
+                pass
+            existing["analytics"] = report
+            Path(args.output).write_text(json.dumps(existing, indent=2, default=str))
 
 
 if __name__ == "__main__":
