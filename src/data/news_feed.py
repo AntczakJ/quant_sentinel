@@ -204,6 +204,20 @@ def get_gold_news_signal() -> Dict:
         "headlines": [...],         # top 5 headlines with scores
       }
     """
+    # Backtest mode: don't leak LIVE sentiment (today's news) into historical
+    # scans — it's not reconstructible and would be pure look-ahead bias.
+    # Return neutral, forces strategy to decide without news input.
+    import os as _os
+    if _os.environ.get("QUANT_BACKTEST_MODE") == "1":
+        return {
+            "signal": 0,
+            "signal_text": "backtest neutral (no historical sentiment)",
+            "avg_score": 0.0,
+            "news_count": 0,
+            "high_impact_count": 0,
+            "headlines": [],
+        }
+
     # Cache check
     now = time.time()
     if _NEWS_CACHE["data"] and (now - _NEWS_CACHE["ts"]) < _NEWS_CACHE_TTL:
