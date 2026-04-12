@@ -921,6 +921,25 @@ def get_ensemble_prediction(
     results["regime_weights"] = regime_weights
     results["volatility_percentile"] = round(vol_pctile, 3)
 
+    # Instrument ensemble outcome for /api/metrics (confidence distribution + signal rate)
+    try:
+        from src.ops.metrics import (
+            ensemble_confidence,
+            ensemble_signals_long,
+            ensemble_signals_short,
+            ensemble_signals_wait,
+        )
+        ensemble_confidence.observe(float(results.get("confidence", 0.0)))
+        _sig = results.get("ensemble_signal", "CZEKAJ")
+        if _sig == "LONG":
+            ensemble_signals_long.inc()
+        elif _sig == "SHORT":
+            ensemble_signals_short.inc()
+        else:
+            ensemble_signals_wait.inc()
+    except Exception:
+        pass
+
     logger.info(
         f"Ensemble: {available_models} modele | "
         f"Score: {results.get('final_score', 0):.3f} | "

@@ -21,4 +21,5 @@ export { RiskKillSwitch } from './RiskKillSwitch';
 export { PatternAnalytics } from './PatternAnalytics';
 export { ExportButtons } from './ExportButtons';
 export { TradeHeatmap } from './TradeHeatmap';
+export { TrainingHistory } from './TrainingHistory';
 

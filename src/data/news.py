@@ -187,6 +187,32 @@ def get_economic_calendar() -> List[Dict]:
     return events
 
 
+def requires_clear_calendar(minutes_window: int = 15, impacts: tuple = ("high",)):
+    """Decorator: skip a trade-open function if a high-impact event is imminent.
+
+    Usage:
+        @requires_clear_calendar(minutes_window=15)
+        def open_trade(...): ...
+
+    Wrapped function returns None (instead of executing) when event guard
+    fires. Logs the blocking event name. Soft-fails on calendar API errors
+    (does NOT block trading if calendar fetch itself fails).
+    """
+    def _decorator(fn):
+        import functools
+        @functools.wraps(fn)
+        def _wrapped(*args, **kwargs):
+            imminent = get_imminent_high_impact_events(minutes_window=minutes_window, impacts=impacts)
+            if imminent:
+                titles = ", ".join(e.get("event", "?") for e in imminent[:2])
+                logger.info(f"[EVENT GUARD] {fn.__name__} blocked — imminent event: {titles}")
+                return None
+            return fn(*args, **kwargs)
+        _wrapped.__wrapped__ = fn  # type: ignore[attr-defined]
+        return _wrapped
+    return _decorator
+
+
 def get_imminent_high_impact_events(minutes_window: int = 15,
                                     impacts: tuple = ("high",)) -> List[Dict]:
     """Return high-impact events scheduled within [now, now + minutes_window].

@@ -91,6 +91,15 @@ api_errors_total = _Counter()
 scan_errors_total = _Counter()
 scan_last_ts = _Gauge()
 data_fetch_failures = _Counter()  # yfinance/twelve rate limits etc.
+scan_signals_long = _Counter()   # cycles that produced LONG signal
+scan_signals_short = _Counter()  # cycles that produced SHORT signal
+scan_signals_wait = _Counter()   # cycles that ended with CZEKAJ / no setup
+
+# Ensemble confidence distribution (histogram samples)
+ensemble_confidence = _Histogram(max_samples=500)
+ensemble_signals_long = _Counter()
+ensemble_signals_short = _Counter()
+ensemble_signals_wait = _Counter()
 
 # Latency
 scan_duration = _Histogram()
@@ -134,6 +143,22 @@ def get_all_metrics() -> Dict:
             "scan_error_rate": round(scan_errors_total.value / max(scan_duration.count, 1), 3),
             "scan_last_ts": scan_last_ts.value,
             "data_fetch_failures": data_fetch_failures.value,
+            "signals_long": scan_signals_long.value,
+            "signals_short": scan_signals_short.value,
+            "signals_wait": scan_signals_wait.value,
+            "signal_rate": round(
+                (scan_signals_long.value + scan_signals_short.value)
+                / max(scan_signals_long.value + scan_signals_short.value + scan_signals_wait.value, 1),
+                3,
+            ),
+        },
+        "ensemble": {
+            "confidence_avg": round(ensemble_confidence.avg, 3),
+            "confidence_p95": round(ensemble_confidence.p95, 3),
+            "sample_count": ensemble_confidence.count,
+            "signals_long": ensemble_signals_long.value,
+            "signals_short": ensemble_signals_short.value,
+            "signals_wait": ensemble_signals_wait.value,
         },
         "portfolio": {
             "balance": portfolio_balance.value,
