@@ -372,11 +372,11 @@ export const healthAPI = {
     last_run_seconds_ago: number | null;
     data_fetch_failures: number;
   }> => {
-    const response = await client.get('/api/health/scanner');
+    const response = await client.get('/health/scanner');
     return response.data;
   },
   models: async () => {
-    const response = await client.get('/api/health/models');
+    const response = await client.get('/health/models');
     return response.data as {
       status: 'fresh' | 'stale' | 'degraded';
       models: Record<string, {
@@ -393,7 +393,7 @@ export const healthAPI = {
 
 export const backtestResultsAPI = {
   listRuns: async (limit = 20) => {
-    const response = await client.get('/api/backtest/runs', { params: { limit } });
+    const response = await client.get('/backtest/runs', { params: { limit } });
     return response.data as {
       count: number;
       runs: Array<{
@@ -418,7 +418,7 @@ export const backtestResultsAPI = {
     };
   },
   latest: async () => {
-    const response = await client.get('/api/backtest/latest');
+    const response = await client.get('/backtest/latest');
     return response.data as {
       path: string;
       mtime: number;
@@ -426,7 +426,7 @@ export const backtestResultsAPI = {
     };
   },
   loadByName: async (name: string) => {
-    const response = await client.get('/api/backtest/run', { params: { name } });
+    const response = await client.get('/backtest/run', { params: { name } });
     return response.data as {
       path: string;
       mtime: number;
@@ -466,13 +466,14 @@ export const backtestResultsAPI = {
   chartUrl: (name: string) => {
     // Returns URL that React <img> can load directly (FastAPI serves PNG)
     const base = (client.defaults.baseURL ?? '').replace(/\/$/, '');
-    return `${base}/api/backtest/chart?name=${encodeURIComponent(name)}`;
+    // base already ends in /api (from API_BASE_URL), so only /backtest/chart
+    return `${base}/backtest/chart?name=${encodeURIComponent(name)}`;
   },
 };
 
 export const trainingHistoryAPI = {
   list: async (limit = 20, modelType?: string) => {
-    const response = await client.get('/api/training/history', {
+    const response = await client.get('/training/history', {
       params: { limit, ...(modelType ? { model_type: modelType } : {}) },
     });
     return response.data as {

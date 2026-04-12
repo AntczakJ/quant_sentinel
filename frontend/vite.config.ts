@@ -2,7 +2,8 @@ import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import viteCompression from 'vite-plugin-compression'
-import { VitePWA } from 'vite-plugin-pwa'
+// PWA disabled: vite-plugin-pwa 0.19.8 not Vite 8 compatible.
+// import { VitePWA } from 'vite-plugin-pwa'
 import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig(({ mode }) => ({
@@ -42,62 +43,12 @@ export default defineConfig(({ mode }) => ({
       brotliSize: true,
     }) as PluginOption] : []),
 
-    // ── PWA + Service Worker for offline caching ──
-    VitePWA({
-      registerType: 'autoUpdate',
-      injectRegister: 'auto',
-      workbox: {
-        runtimeCaching: [
-          {
-            urlPattern: /\.(?:js|css|woff2?)$/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'static-assets',
-              expiration: { maxEntries: 80, maxAgeSeconds: 30 * 24 * 3600 },
-            },
-          },
-          {
-            urlPattern: /\/api\/market\/(candles|ticker|indicators)/,
-            handler: 'StaleWhileRevalidate',
-            options: {
-              cacheName: 'market-data',
-              expiration: { maxEntries: 30, maxAgeSeconds: 120 },
-            },
-          },
-          {
-            urlPattern: /\/api\//,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-responses',
-              networkTimeoutSeconds: 5,
-              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
-            },
-          },
-          {
-            urlPattern: /\.(?:png|jpg|jpeg|svg|gif|ico|webp)$/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'images',
-              expiration: { maxEntries: 30, maxAgeSeconds: 30 * 24 * 3600 },
-            },
-          },
-        ],
-        globPatterns: ['**/*.{js,css,html,ico,svg,woff2}'],
-        globIgnores: ['**/*.map'],
-      },
-      manifest: {
-        name: 'Quant Sentinel — AI Trading',
-        short_name: 'Quant Sentinel',
-        description: 'Professional AI Trading Platform for XAU/USD',
-        theme_color: '#0b0e14',
-        background_color: '#0b0e14',
-        display: 'standalone',
-        start_url: '/',
-        icons: [
-          { src: '/qs-logo.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
-        ],
-      },
-    }),
+    // ── PWA DISABLED ──
+    // vite-plugin-pwa 0.19.8 doesn't support Vite 8 — silently fails to
+    // emit manifest.webmanifest + registerSW.js while still injecting
+    // <link>/<script> refs in index.html → 404s + JS syntax errors on load.
+    // No v1.x of vite-plugin-pwa supports Vite 8 yet. Re-enable when
+    // ecosystem catches up (restore from git history commit 403c922).
   ],
 
   server: {
