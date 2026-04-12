@@ -129,6 +129,8 @@ data/backtest.db
 data/backtest.db-journal
 data/backtest.db-wal
 data/backtest.db-shm
+# Backtest yfinance cache — regenerated, may be large (parquet files)
+data/_backtest_cache/
 
 # ── EKSPERYMENTALNE BACKUPY MODELI ────────────────────────────
 # Lokalne kopie zostawiane przy eksperymentach (np. retrain z innym setupem).
