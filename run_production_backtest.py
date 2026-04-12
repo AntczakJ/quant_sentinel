@@ -72,7 +72,7 @@ def _reset_backtest_db() -> None:
 
 
 def _summarize_trades() -> dict:
-    """Query backtest.db trades table for final stats."""
+    """Query backtest.db trades table for final stats + quant metrics."""
     assert_not_production_db()
     conn = sqlite3.connect(os.environ["DATABASE_URL"])
     cur = conn.cursor()
@@ -100,6 +100,42 @@ def _summarize_trades() -> dict:
         ).fetchone()
         cum_profit = cum_row[0] or 0.0
 
+        # ── Quant metrics: profit factor, max consecutive losses, max DD ──
+        closed_rows = cur.execute(
+            "SELECT status, profit FROM trades "
+            "WHERE status IN ('WIN','PROFIT','LOSS','LOSE') AND profit IS NOT NULL "
+            "ORDER BY id ASC"
+        ).fetchall()
+        gross_win = sum(float(p) for s, p in closed_rows if p and float(p) > 0)
+        gross_loss = abs(sum(float(p) for s, p in closed_rows if p and float(p) < 0))
+        profit_factor = (gross_win / gross_loss) if gross_loss > 0 else (float("inf") if gross_win > 0 else 0.0)
+
+        # Consecutive loss streak (longest)
+        max_streak = cur_streak = 0
+        for s, p in closed_rows:
+            if s in ("LOSS", "LOSE"):
+                cur_streak += 1
+                max_streak = max(max_streak, cur_streak)
+            else:
+                cur_streak = 0
+
+        # Equity curve from compounding profits (per-trade %return on rolling balance)
+        # Assume 1% risk per trade, SL = 1.5*ATR, so avg risk ~$150 on $10k.
+        # Simplification: use profit (absolute $) as pct of initial balance.
+        # Realistic assumption: 10000 initial, each trade ~1% risk.
+        equity = [10_000.0]
+        peak = 10_000.0
+        max_dd = 0.0
+        for s, p in closed_rows:
+            if p is None:
+                continue
+            # Scale profit to ~1% risk per trade (SL distance ~$50-70, so $50 profit ~= 0.5% move)
+            # Simpler: treat profit as direct balance change
+            equity.append(equity[-1] + float(p))
+            peak = max(peak, equity[-1])
+            dd = (equity[-1] - peak) / peak * 100
+            max_dd = min(max_dd, dd)
+
         return {
             "total_trades": total,
             "closed": closed,
@@ -109,7 +145,35 @@ def _summarize_trades() -> dict:
             "win_rate_pct": round(wr, 1),
             "avg_profit": round(avg_profit, 2) if avg_profit is not None else 0.0,
             "cumulative_profit": round(cum_profit, 2),
+            "profit_factor": round(profit_factor, 2) if profit_factor != float("inf") else "inf",
+            "max_consec_losses": max_streak,
+            "max_drawdown_pct": round(max_dd, 2),
+            "final_equity": round(equity[-1], 2),
+            "return_pct": round((equity[-1] / 10_000.0 - 1) * 100, 2),
         }
+    finally:
+        conn.close()
+
+
+def _export_trades_csv(path: str) -> int:
+    """Dump all backtest trades to CSV for external analysis. Returns row count."""
+    assert_not_production_db()
+    import csv
+    conn = sqlite3.connect(os.environ["DATABASE_URL"])
+    try:
+        rows = conn.execute(
+            "SELECT id, timestamp, direction, entry, sl, tp, status, profit, "
+            "lot, rsi, trend, structure, pattern, session "
+            "FROM trades ORDER BY id ASC"
+        ).fetchall()
+        from pathlib import Path
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "timestamp", "direction", "entry", "sl", "tp", "status",
+                        "profit", "lot", "rsi", "trend", "structure", "pattern", "session"])
+            w.writerows(rows)
+        return len(rows)
     finally:
         conn.close()
 
@@ -366,7 +430,17 @@ def main():
                     help="bypass yfinance disk cache")
     ap.add_argument("--output", default=None,
                     help="save final stats JSON to this path")
+    ap.add_argument("--export-csv", default=None,
+                    help="dump all trades to CSV for Excel/pandas analysis")
+    ap.add_argument("--strict", action="store_true",
+                    help="disable relaxed filters — run with PRODUCTION confluence "
+                         "threshold (3+) and Stable=blocked. Useful for apples-to-"
+                         "apples comparison vs live.")
     args = ap.parse_args()
+
+    if args.strict:
+        os.environ.pop("QUANT_BACKTEST_RELAX", None)
+        print("[backtest] --strict: production filters active (confluence>=3, Stable blocked)")
 
     if args.reset:
         _reset_backtest_db()
@@ -388,6 +462,10 @@ def main():
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         Path(args.output).write_text(json.dumps(stats, indent=2, default=str))
         print(f"[backtest] Stats saved to {args.output}")
+
+    if args.export_csv:
+        n = _export_trades_csv(args.export_csv)
+        print(f"[backtest] Exported {n} trades to {args.export_csv}")
 
 
 if __name__ == "__main__":
