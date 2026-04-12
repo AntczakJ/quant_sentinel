@@ -342,6 +342,11 @@ async def get_candles(
                 )
             except asyncio.TimeoutError:
                 logger.warning(f"⚠️ Provider timeout (8s) — using mock data for {symbol}")
+                try:
+                    from src.ops.metrics import data_fetch_failures
+                    data_fetch_failures.inc()
+                except Exception:
+                    pass
                 df = None
 
         # If provider returns None, use mock data
@@ -350,6 +355,11 @@ async def get_candles(
         # falsely marks the ticker as mock and confuses /market/status.
         if df is None or df.empty:
             logger.warning(f"⚠️ API rate limited or error - using mock data for {symbol}")
+            try:
+                from src.ops.metrics import data_fetch_failures
+                data_fetch_failures.inc()
+            except Exception:
+                pass
             df = get_mock_candles(symbol, interval, limit)
 
         if df is None or df.empty:

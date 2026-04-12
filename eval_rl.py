@@ -94,8 +94,13 @@ def _eval_env_with_stats(agent, env):
     }
 
 
-def eval_model(model_path, symbols, oos_fraction=0.3):
-    """Evaluate one model on out-of-sample slice of each symbol."""
+def eval_model(model_path, symbols, oos_fraction=0.3, vol_normalize=True):
+    """Evaluate one model on out-of-sample slice of each symbol.
+
+    vol_normalize=True makes forex P&L visible in $ terms (matches how the
+    model was trained post-2026-04-12). Set False only when comparing models
+    trained with legacy price-scaled sizing.
+    """
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model not found: {model_path}")
     if not os.path.exists(model_path + '.params'):
@@ -116,7 +121,8 @@ def eval_model(model_path, symbols, oos_fraction=0.3):
         if len(oos) < 50:
             print(f"  Skipped {sym}: OOS slice too short ({len(oos)})")
             continue
-        env = TradingEnv(oos, initial_balance=INITIAL_BALANCE, transaction_cost=0.001)
+        env = TradingEnv(oos, initial_balance=INITIAL_BALANCE,
+                         transaction_cost=0.001, vol_normalize=vol_normalize)
         results[sym] = _eval_env_with_stats(agent, env)
     return results
 
@@ -151,15 +157,18 @@ def main():
                     help='comma-separated symbols')
     ap.add_argument('--oos', type=float, default=0.3,
                     help='out-of-sample fraction (default 0.3)')
+    ap.add_argument('--no-vol-normalize', action='store_true',
+                    help='disable vol_normalize in eval env (only for legacy-trained models)')
     args = ap.parse_args()
+    vol_norm = not args.no_vol_normalize
 
     syms = [s.strip() for s in args.symbols.split(',') if s.strip()]
 
     if args.compare:
         a_path, b_path = args.compare
-        print(f"Fetching data for {len(syms)} symbols...")
-        r_a = eval_model(a_path, syms, args.oos)
-        r_b = eval_model(b_path, syms, args.oos)
+        print(f"Fetching data for {len(syms)} symbols (vol_normalize={vol_norm})...")
+        r_a = eval_model(a_path, syms, args.oos, vol_normalize=vol_norm)
+        r_b = eval_model(b_path, syms, args.oos, vol_normalize=vol_norm)
         print_report(f"A: {a_path}", r_a)
         print_report(f"B: {b_path}", r_b)
         # Delta summary
@@ -170,8 +179,8 @@ def main():
                 dwr = r_b[sym]['win_rate'] - r_a[sym]['win_rate']
                 print(f"  {sym:<12} Return: {da:>+7.2f}pp  WR: {dwr:>+5.0f}pp")
     else:
-        print(f"Fetching data for {len(syms)} symbols (OOS={args.oos:.0%})...")
-        r = eval_model(args.model, syms, args.oos)
+        print(f"Fetching data for {len(syms)} symbols (OOS={args.oos:.0%}, vol_normalize={vol_norm})...")
+        r = eval_model(args.model, syms, args.oos, vol_normalize=vol_norm)
         print_report(args.model, r)
 
 

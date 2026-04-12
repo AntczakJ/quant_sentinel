@@ -966,6 +966,44 @@ async def health_check_detailed():
         },
     }
 
+
+@app.get("/api/health/scanner", tags=["System"])
+async def health_scanner():
+    """Scanner health — timing, error rate, last run timestamp.
+
+    Status:
+      - "healthy": ran in last 20 min AND error_rate < 10%
+      - "stale": no run in last 20 min
+      - "degraded": error_rate >= 10%
+    """
+    from src.ops.metrics import scan_duration, scan_errors_total, scan_last_ts, data_fetch_failures
+    now_ts = _time.time()
+    last = scan_last_ts.value
+    seconds_since = (now_ts - last) if last > 0 else None
+    count = scan_duration.count
+    err_rate = (scan_errors_total.value / count) if count > 0 else 0.0
+
+    if count == 0:
+        status = "no_data"
+    elif seconds_since is not None and seconds_since > 20 * 60:
+        status = "stale"
+    elif err_rate >= 0.1:
+        status = "degraded"
+    else:
+        status = "healthy"
+
+    return {
+        "status": status,
+        "scans_total": count,
+        "errors_total": scan_errors_total.value,
+        "error_rate": round(err_rate, 3),
+        "avg_duration_ms": round(scan_duration.avg * 1000, 1),
+        "p95_duration_ms": round(scan_duration.p95 * 1000, 1),
+        "last_run_seconds_ago": round(seconds_since, 1) if seconds_since is not None else None,
+        "data_fetch_failures": data_fetch_failures.value,
+    }
+
+
 # ── Serve frontend static files (production: built SPA from frontend/dist) ──
 _frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
 if os.path.isdir(_frontend_dist):
