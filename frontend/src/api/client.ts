@@ -597,6 +597,33 @@ export const sweepAPI = {
           age_sec: number;
         };
   },
+
+  /** Top trials from the Optuna SQLite study. Slower-changing than
+   *  /sweep/active, so widgets should poll less often (~15s). */
+  leaderboard: async (studyName = 'rl_sweep_v1', top = 15, includePruned = false) => {
+    const response = await client.get('/sweep/leaderboard', {
+      params: { study_name: studyName, top, include_pruned: includePruned },
+    });
+    return response.data as {
+      status: 'ok' | 'no_study' | 'error';
+      study_name: string;
+      direction?: 'MAXIMIZE' | 'MINIMIZE';
+      error?: string;
+      n_trials: number;
+      n_completed?: number;
+      n_pruned?: number;
+      n_running?: number;
+      best_value?: number | null;
+      best_trial_number?: number | null;
+      trials: Array<{
+        number: number;
+        state: 'COMPLETE' | 'PRUNED' | 'RUNNING' | 'FAIL' | 'WAITING';
+        value: number | null;
+        params: Record<string, number | string | boolean>;
+        duration_sec: number | null;
+      }>;
+    };
+  },
 };
 
 // Analysis endpoints

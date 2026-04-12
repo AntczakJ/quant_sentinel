@@ -1282,6 +1282,87 @@ async def sweep_active():
     }
 
 
+@app.get("/api/sweep/leaderboard", tags=["System"])
+async def sweep_leaderboard(
+    study_name: str = "rl_sweep_v1",
+    top: int = 15,
+    include_pruned: bool = False,
+):
+    """Top trials from an Optuna sweep study.
+
+    Reads data/optuna_rl.db read-only via Optuna's own load_study so we
+    don't need to track its schema. Returns rows sorted by value descending
+    for direction=maximize (which the RL sweep uses). Pruned trials have
+    no final value and are only included when explicitly requested.
+
+    Intended use: the SweepLeaderboard widget on ModelsPage polls this to
+    show which region of hyperparameter space TPE is converging on,
+    without waiting for the whole sweep to finish.
+    """
+    import os as _os
+    db_path = "data/optuna_rl.db"
+    if not _os.path.exists(db_path):
+        return {"status": "no_study", "study_name": study_name,
+                "trials": [], "n_trials": 0}
+
+    try:
+        import optuna
+        study = optuna.load_study(
+            study_name=study_name,
+            storage=f"sqlite:///{db_path}",
+        )
+    except Exception as e:
+        # Most common cause: study name does not match the DB. Return the
+        # empty-but-valid shape rather than 500 — the widget handles it.
+        return {"status": "error", "study_name": study_name,
+                "error": str(e)[:200], "trials": [], "n_trials": 0}
+
+    trials = study.trials
+    completed = [t for t in trials
+                 if t.state == optuna.trial.TrialState.COMPLETE]
+    pruned = [t for t in trials
+              if t.state == optuna.trial.TrialState.PRUNED]
+    running = [t for t in trials
+               if t.state == optuna.trial.TrialState.RUNNING]
+
+    # Rank completed trials; append pruned at the end with value=None when
+    # requested. Maximize direction means higher value = better rank.
+    ranked = sorted(completed, key=lambda t: (t.value if t.value is not None else float("-inf")),
+                    reverse=(study.direction.name == "MAXIMIZE"))
+    if include_pruned:
+        ranked = ranked + pruned
+
+    def _payload(t):
+        duration = None
+        if t.datetime_start and t.datetime_complete:
+            duration = (t.datetime_complete - t.datetime_start).total_seconds()
+        elif t.datetime_start:
+            # Running / pruned-without-complete — compute against now.
+            import datetime as _dt
+            duration = (_dt.datetime.now(t.datetime_start.tzinfo or _dt.timezone.utc)
+                        - t.datetime_start).total_seconds()
+        return {
+            "number": t.number,
+            "state": t.state.name,
+            "value": round(t.value, 4) if t.value is not None else None,
+            "params": t.params,
+            "duration_sec": round(duration, 1) if duration is not None else None,
+        }
+
+    return {
+        "status": "ok",
+        "study_name": study_name,
+        "direction": study.direction.name,
+        "n_trials": len(trials),
+        "n_completed": len(completed),
+        "n_pruned": len(pruned),
+        "n_running": len(running),
+        "best_value": round(study.best_value, 4) if completed else None,
+        "best_trial_number": study.best_trial.number if completed else None,
+        "trials": [_payload(t) for t in ranked[:max(1, top)]],
+    }
+
+
 @app.get("/api/training/history", tags=["System"])
 async def training_history(limit: int = 20, model_type: Optional[str] = None):
     """Recent training runs from models/training_history.jsonl.
