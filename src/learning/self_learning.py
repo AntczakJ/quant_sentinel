@@ -110,9 +110,9 @@ def get_pattern_adjustment(analysis_data: dict) -> float:
             if ss[1] == current_session and ss[2] >= 5:
                 session_wr = ss[5]
                 # Jeśli pattern w tej sesji ma lepszy/gorszy WR niż globalny, skoryguj
-                if session_wr > stats['win_rate'] + 0.1:
+                if session_wr > tw_stats['win_rate'] + 0.1:
                     adj *= 1.15  # bonus za dobrą sesję
-                elif session_wr < stats['win_rate'] - 0.1:
+                elif session_wr < tw_stats['win_rate'] - 0.1:
                     adj *= 0.85  # kara za złą sesję
                 break
     except Exception:

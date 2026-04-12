@@ -99,6 +99,32 @@ class TestPortfolioHeat:
         assert heat >= 0
 
 
+class TestVolatilityTargeting:
+    """Test volatility-adjusted position sizing."""
+
+    def test_returns_1_for_invalid_atr(self):
+        from src.trading.risk_manager import get_risk_manager
+        rm = get_risk_manager()
+        assert rm.compute_volatility_multiplier(0) == 1.0
+        assert rm.compute_volatility_multiplier(-1) == 1.0
+        assert rm.compute_volatility_multiplier(None) == 1.0
+
+    def test_higher_vol_reduces_multiplier(self):
+        from src.trading.risk_manager import get_risk_manager
+        rm = get_risk_manager()
+        high_vol = rm.compute_volatility_multiplier(20.0)
+        low_vol = rm.compute_volatility_multiplier(2.0)
+        assert high_vol < low_vol
+
+    def test_multiplier_is_clamped(self):
+        from src.trading.risk_manager import get_risk_manager
+        rm = get_risk_manager()
+        extreme_high = rm.compute_volatility_multiplier(1000.0)
+        extreme_low = rm.compute_volatility_multiplier(0.01)
+        assert 0.4 <= extreme_high <= 1.8
+        assert 0.4 <= extreme_low <= 1.8
+
+
 class TestKillSwitch:
     """Test halt/resume mechanism."""
 
