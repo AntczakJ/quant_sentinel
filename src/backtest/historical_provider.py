@@ -127,17 +127,46 @@ class HistoricalProvider(DataProvider):
     @classmethod
     def from_yfinance(cls, symbol: str = "XAU/USD", period: str = "2y",
                       yf_symbol: str = "GC=F",
-                      intervals: tuple = ("5m", "15m", "1h", "4h")) -> "HistoricalProvider":
-        """Fetch all TFs from yfinance. 5m has 60-day max; we truncate."""
+                      intervals: tuple = ("5m", "15m", "1h", "4h"),
+                      use_cache: bool = True) -> "HistoricalProvider":
+        """Fetch all TFs from yfinance. 5m has 60-day max; we truncate.
+
+        Caches to data/_backtest_cache/{yf_symbol}_{tf}_{period}.parquet with
+        a 6-hour TTL. Set use_cache=False to force refresh.
+        """
         import contextlib
         import io
+        import time as _time
+        from pathlib import Path
         import yfinance as yf
+
+        cache_dir = Path("data/_backtest_cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        CACHE_TTL_SEC = 6 * 3600
 
         cache: dict[str, pd.DataFrame] = {}
         for tf in intervals:
             yf_int = _YF_INTERVAL_MAP.get(tf, tf)
             # yfinance 5m max 60d; use 60d for 5m, full period for others
             yf_period = "60d" if tf == "5m" else period
+
+            # ── Try disk cache first ──
+            safe_name = yf_symbol.replace("=", "_").replace("/", "_")
+            cache_file = cache_dir / f"{safe_name}_{tf}_{yf_period}.parquet"
+            if use_cache and cache_file.exists():
+                age = _time.time() - cache_file.stat().st_mtime
+                if age < CACHE_TTL_SEC:
+                    try:
+                        df = pd.read_parquet(cache_file)
+                        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+                        df = df.sort_values("timestamp").reset_index(drop=True)
+                        cache[tf] = df
+                        logger.info(f"HistoricalProvider: {tf} from disk cache "
+                                    f"({len(df)} bars, age {age/60:.0f}min)")
+                        continue
+                    except Exception as e:
+                        logger.debug(f"Cache read failed for {tf}: {e}")
+
             try:
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     raw = yf.Ticker(yf_symbol).history(period=yf_period, interval=yf_int)
@@ -166,8 +195,14 @@ class HistoricalProvider(DataProvider):
 
             df = df.sort_values("timestamp").reset_index(drop=True)
             cache[tf] = df
-            logger.info(f"HistoricalProvider: cached {tf} — {len(df)} bars "
+            logger.info(f"HistoricalProvider: fetched {tf} — {len(df)} bars "
                         f"({df['timestamp'].iloc[0]} → {df['timestamp'].iloc[-1]})")
+            # Persist to disk cache for next run
+            if use_cache:
+                try:
+                    df.to_parquet(cache_file, index=False)
+                except Exception as e:
+                    logger.debug(f"Cache write failed for {tf}: {e}")
 
         if not cache:
             raise RuntimeError(f"HistoricalProvider: no data fetched for {yf_symbol}")

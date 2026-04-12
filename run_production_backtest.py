@@ -189,6 +189,7 @@ async def _run_backtest(args) -> dict:
     provider = HistoricalProvider.from_yfinance(
         symbol=args.symbol, yf_symbol=args.yf, period=period_for_fetch,
         intervals=("5m", "15m", "1h", "4h"),
+        use_cache=not getattr(args, "no_cache", False),
     )
     install_historical_provider(provider)
 
@@ -215,14 +216,33 @@ async def _run_backtest(args) -> dict:
     grid_cache = provider._cache.get("15m")
     if grid_cache is None:
         raise RuntimeError("15m cache required for simulation grid")
-    end_ts = grid_cache["timestamp"].iloc[-1]
-    start_ts = end_ts - pd.Timedelta(days=args.days)
-    # Align to step (e.g. every 15 min)
+    data_start = grid_cache["timestamp"].iloc[0]
+    data_end = grid_cache["timestamp"].iloc[-1]
+
+    # Prefer --start/--end over --days when given
+    if getattr(args, "start", None):
+        start_ts = pd.Timestamp(args.start, tz="UTC")
+    else:
+        start_ts = data_end - pd.Timedelta(days=args.days)
+    if getattr(args, "end", None):
+        end_ts = pd.Timestamp(args.end, tz="UTC")
+    else:
+        end_ts = data_end
+
+    # Clamp to data range
+    start_ts = max(start_ts, data_start)
+    end_ts = min(end_ts, data_end)
+    if start_ts >= end_ts:
+        raise ValueError(f"Empty time range: start={start_ts} >= end={end_ts}")
+
     step = pd.Timedelta(minutes=args.step_minutes)
     timestamps = pd.date_range(start_ts, end_ts, freq=step, tz="UTC")
-    # Require at least 100 prior bars for warmup — drop earliest if not enough
-    min_start = provider.min_bar_time("15m") + pd.Timedelta(hours=50) if provider.min_bar_time("15m") else start_ts
+    # Require at least 50 prior bars for warmup — drop earliest if not enough
+    min_start = data_start + pd.Timedelta(hours=50)
     timestamps = timestamps[timestamps >= min_start]
+    if len(timestamps) == 0:
+        raise ValueError(f"No timestamps after warmup filter. Data starts {data_start}, "
+                         f"earliest usable {min_start}, requested end {end_ts}")
 
     print(f"[backtest] Simulating {len(timestamps)} scan cycles from "
           f"{timestamps[0]} to {timestamps[-1]} (step {args.step_minutes}m)", flush=True)
@@ -335,11 +355,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", default="XAU/USD", help="display symbol")
     ap.add_argument("--yf", default="GC=F", help="yfinance ticker to fetch")
-    ap.add_argument("--days", type=int, default=30, help="simulation window in days")
+    ap.add_argument("--days", type=int, default=30, help="simulation window in days (from end of data)")
+    ap.add_argument("--start", default=None, help="start date ISO (overrides --days), e.g. 2026-03-15")
+    ap.add_argument("--end", default=None, help="end date ISO (overrides --days)")
     ap.add_argument("--step-minutes", type=int, default=15,
                     help="scan cadence in minutes (production: 15)")
     ap.add_argument("--reset", action="store_true",
                     help="wipe data/backtest.db before running")
+    ap.add_argument("--no-cache", action="store_true",
+                    help="bypass yfinance disk cache")
+    ap.add_argument("--output", default=None,
+                    help="save final stats JSON to this path")
     args = ap.parse_args()
 
     if args.reset:
@@ -355,6 +381,13 @@ def main():
     print("=" * 62)
     print(f"[backtest] DB at: {os.environ['DATABASE_URL']}")
     print(f"[backtest] Production DB UNTOUCHED (data/sentinel.db)")
+
+    if args.output:
+        import json
+        from pathlib import Path
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output).write_text(json.dumps(stats, indent=2, default=str))
+        print(f"[backtest] Stats saved to {args.output}")
 
 
 if __name__ == "__main__":
