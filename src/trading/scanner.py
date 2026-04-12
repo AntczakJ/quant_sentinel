@@ -319,17 +319,30 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
             return None
 
     # --- 3b. CONFLUENCE THRESHOLD (tightened: 3→4 base, grab+2→grab+3, dbr+2→dbr+3) ---
-    # "Stable" structure = konsolidacja = 0% win rate historycznie — blokuj
+    # "Stable" structure = konsolidacja = 0% win rate historycznie — blokuj.
+    #
+    # BACKTEST RELAXATION: with yfinance-only data (no Twelve Data USD/JPY
+    # correlation, no Myfxbook macro, no news sentiment feedback) we can't
+    # reach confluence=3 in production setups. Lower to 2 and allow Stable.
+    # Directional alignment + RSI extreme stay strict — those are reality
+    # checks, not data-source-dependent.
+    import os as _os_bt
+    _relax = _os_bt.environ.get("QUANT_BACKTEST_RELAX") == "1"
+    _min_conf = 2 if _relax else 3
+
     structure = analysis.get('structure', 'Stable')
     is_stable = 'Stable' in str(structure)
 
     strong_setup = (
-        (has_grab_mss and confluence_count >= 3)   # premium: grab+mss + 3 confirmations
-        or (has_dbr_rbd and confluence_count >= 3)  # DBR/RBD + 3 confirmations
-        or confluence_count >= 3                     # standalone: 3+ signals required
+        (has_grab_mss and confluence_count >= _min_conf)   # premium: grab+mss + N confirmations
+        or (has_dbr_rbd and confluence_count >= _min_conf)  # DBR/RBD + N confirmations
+        or confluence_count >= _min_conf                     # standalone: N+ signals required
     )
-    if not strong_setup or is_stable:
-        reason = "structure=Stable (chop)" if is_stable else f"confluence={confluence_count}<3"
+    # In relaxed mode, Stable structure is NOT an automatic block
+    block_stable = is_stable and not _relax
+
+    if not strong_setup or block_stable:
+        reason = "structure=Stable (chop)" if block_stable else f"confluence={confluence_count}<{_min_conf}"
         logger.debug(f"[MTF] {tf}: brak silnego setupu ({reason}) -- pomijam")
         _log_rejection(db, tf, direction_str, current_price, reason, "confluence",
                        confluence_count=confluence_count, rsi=current_rsi,
