@@ -11,6 +11,11 @@ Ulepszenia:
 
 import sys
 import os
+
+# Suppress TF noise + enable optimizations BEFORE importing TF
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '1'
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -108,6 +113,7 @@ def main():
         total_reward = 0
         done = False
         step = 0
+        replay_count = 0
         while not done:
             action = agent.act(state)
             next_state, reward, done, info = env.step(action)
@@ -115,8 +121,10 @@ def main():
             state = next_state
             total_reward += reward
             step += 1
-            if step % 4 == 0:
-                agent.replay(batch_size=64)
+            # Replay every 8 steps, max 40 per episode, skip if memory too small
+            if step % 8 == 0 and replay_count < 40 and len(agent.memory) >= 256:
+                agent.replay(batch_size=32)
+                replay_count += 1
 
         scores.append(total_reward)
         avg = np.mean(scores[-min(20, len(scores)):])
@@ -128,8 +136,11 @@ def main():
             best_balance = balance
             best_win_rate = win_rate
 
+        # Update learning rate (cosine annealing)
+        agent.update_lr(episode, EPISODES)
+
         # Every episode: short progress line
-        print(f"  [{episode+1}/{EPISODES}] reward={total_reward:.2f} bal=${balance:.0f} ε={agent.epsilon:.3f}", flush=True)
+        print(f"  [{episode+1}/{EPISODES}] reward={total_reward:.2f} bal=${balance:.0f} ε={agent.epsilon:.3f} replays={replay_count}", flush=True)
 
         # Every 50 episodes: full status report
         if (episode + 1) % 50 == 0:
