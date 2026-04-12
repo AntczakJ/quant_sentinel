@@ -58,16 +58,16 @@ export function useSoundAlerts() {
       const next = !prev;
       localStorage.setItem(STORAGE_KEY, String(next));
       // Play a test tone when enabling
-      if (next) playTone(880, 0.15, 'sine', 0.1);
+      if (next) {playTone(880, 0.15, 'sine', 0.1);}
       return next;
     });
   }, []);
 
   /** Debounced play — prevents rapid-fire sounds */
   const play = useCallback((fn: () => void) => {
-    if (!enabled) return;
+    if (!enabled) {return;}
     const now = Date.now();
-    if (now - lastPlayRef.current < 2000) return; // Min 2s between sounds
+    if (now - lastPlayRef.current < 2000) {return;} // Min 2s between sounds
     lastPlayRef.current = now;
     fn();
   }, [enabled]);

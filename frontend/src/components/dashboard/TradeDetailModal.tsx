@@ -24,8 +24,8 @@ interface Trade {
 }
 
 function parsePrice(val: string | number | undefined): number {
-  if (!val) return 0;
-  if (typeof val === 'number') return val;
+  if (!val) {return 0;}
+  if (typeof val === 'number') {return val;}
   return parseFloat(val.replace('$', '')) || 0;
 }
 
@@ -49,7 +49,7 @@ function loadNote(tradeId: number): string {
 function saveNote(tradeId: number, note: string) {
   try {
     const all = JSON.parse(localStorage.getItem(NOTES_KEY) ?? '{}');
-    if (note.trim()) all[tradeId] = note; else delete all[tradeId];
+    if (note.trim()) {all[tradeId] = note;} else {delete all[tradeId];}
     localStorage.setItem(NOTES_KEY, JSON.stringify(all));
   } catch { /* quota */ }
 }
@@ -68,7 +68,7 @@ export const TradeDetailModal = memo(function TradeDetailModal({ trade, onClose 
       `📊 Trade #${trade.id} — ${trade.direction} ${trade.result}`,
       `Entry: ${formatPrice(trade.entry)} | SL: ${formatPrice(trade.sl)} | TP: ${formatPrice(trade.tp)}`,
       `R:R: ${(Math.abs(parsePrice(trade.tp) - parsePrice(trade.entry)) / (Math.abs(parsePrice(trade.entry) - parsePrice(trade.sl)) || 1)).toFixed(2)}`,
-      trade.profit != null ? `P&L: ${formatPrice(trade.profit)}` : '',
+      trade.profit !== null ? `P&L: ${formatPrice(trade.profit)}` : '',
       trade.pattern ? `Pattern: ${trade.pattern}` : '',
       trade.timeframe ? `TF: ${trade.timeframe}` : '',
       `Time: ${trade.timestamp}`,
@@ -218,7 +218,7 @@ export const TradeDetailModal = memo(function TradeDetailModal({ trade, onClose 
               {(() => {
                 let iso = trade.timestamp.trim();
                 iso = iso.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
-                if (!/[Zz+\-]/.test(iso.slice(-6))) iso += 'Z';
+                if (!/[Zz+-]/.test(iso.slice(-6))) {iso += 'Z';}
                 const d = new Date(iso);
                 return isNaN(d.getTime()) ? trade.timestamp : d.toLocaleString('pl-PL');
               })()}

@@ -38,7 +38,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
       const data = await portfolioAPI.getStatus();
       setPortfolioState(data);
       setPortfolio(data);
-    } catch (err) {
+    } catch {
       toast.error('Failed to load portfolio');
       setError('Failed to load portfolio');
     }
@@ -46,7 +46,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
 
   // Fallback: if store is empty after 2s, fetch directly (first load)
   useEffect(() => {
-    if (!apiConnected) return;
+    if (!apiConnected) {return;}
     if (storePortfolio) { setLoading(false); return; }
     const timer = setTimeout(() => {
       if (!storePortfolio) {void refreshPortfolio().finally(() => setLoading(false));}
@@ -57,7 +57,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
 
   // Win rate — stagger by 1.5s to avoid request burst on mount
   useEffect(() => {
-    if (!apiConnected) return;
+    if (!apiConnected) {return;}
     const fetchWinRate = async () => {
       try {
         const stats = await signalsAPI.getStats();
@@ -80,7 +80,7 @@ export const PortfolioStats = memo(function PortfolioStats() {
         setShowEditBalance(false);
         void refreshPortfolio();
       }
-    } catch (err) {
+    } catch {
       toast.error('Balance update failed');
     }
   };
@@ -219,8 +219,8 @@ export const PortfolioStats = memo(function PortfolioStats() {
         </div>
         <div className="stat-item">
           <div className="text-[10px] text-th-muted font-medium uppercase tracking-widest mb-1">Win Rate</div>
-          <div className={`text-base font-bold font-mono ${winRate != null ? (winRate >= 50 ? 'text-accent-green' : 'text-accent-red') : 'text-th-dim'}`}>
-            {winRate != null ? `${winRate.toFixed(1)}%` : '--'}
+          <div className={`text-base font-bold font-mono ${winRate !== null ? (winRate >= 50 ? 'text-accent-green' : 'text-accent-red') : 'text-th-dim'}`}>
+            {winRate !== null ? `${winRate.toFixed(1)}%` : '--'}
           </div>
         </div>
       </div>

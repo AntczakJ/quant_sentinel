@@ -127,7 +127,7 @@ function AppContent() {
   // Browser notifications — request permission on first API connection
   const { notifySignal, requestPermission } = useBrowserNotifications();
   useEffect(() => {
-    if (apiConnected) void requestPermission();
+    if (apiConnected) {void requestPermission();}
   }, [apiConnected, requestPermission]);
 
   // SSE signal feed — instant signal notifications + browser push

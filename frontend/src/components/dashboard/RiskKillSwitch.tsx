@@ -70,8 +70,8 @@ export const RiskKillSwitch = memo(function RiskKillSwitch() {
     }
   }, [toast, refetch]);
 
-  if (isLoading && !data) return null;
-  if (!data) return null;
+  if (isLoading && !data) {return null;}
+  if (!data) {return null;}
 
   const isHalted = data.halted;
   const hardLimit = data.daily_loss_hard_limit || 5;

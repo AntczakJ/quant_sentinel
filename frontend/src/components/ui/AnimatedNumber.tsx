@@ -33,7 +33,7 @@ export const AnimatedNumber = memo(function AnimatedNumber({
     const to = value;
     prevRef.current = value;
 
-    if (from === to) return;
+    if (from === to) {return;}
 
     const startTime = performance.now();
     const diff = to - from;

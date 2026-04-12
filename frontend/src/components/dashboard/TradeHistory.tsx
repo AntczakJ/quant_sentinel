@@ -43,18 +43,18 @@ type SortField = 'date' | 'pnl';
 type SortDir = 'asc' | 'desc';
 
 function safeParseDate(raw: string | null | undefined): Date | null {
-  if (!raw) return null;
+  if (!raw) {return null;}
   let iso = raw.trim();
   iso = iso.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
-  if (!/[Zz+\-]/.test(iso.slice(-6))) iso += 'Z';
+  if (!/[Zz+-]/.test(iso.slice(-6))) {iso += 'Z';}
   const d = new Date(iso);
   return isNaN(d.getTime()) ? null : d;
 }
 
 function formatPrice(value: string | number | undefined): string {
-  if (!value) return '$0.00';
+  if (!value) {return '$0.00';}
   if (typeof value === 'string') {
-    if (value.startsWith('$')) return value;
+    if (value.startsWith('$')) {return value;}
     const num = parseFloat(value);
     return !isNaN(num) ? `$${num.toFixed(2)}` : value;
   }
@@ -62,25 +62,25 @@ function formatPrice(value: string | number | undefined): string {
 }
 
 function parseNumericPrice(val: string | number | undefined): number {
-  if (!val) return 0;
-  if (typeof val === 'number') return val;
+  if (!val) {return 0;}
+  if (typeof val === 'number') {return val;}
   return parseFloat(val.replace('$', '')) || 0;
 }
 
 function parseProfit(val: string | number | undefined): number {
-  if (!val) return 0;
-  if (typeof val === 'number') return val;
+  if (!val) {return 0;}
+  if (typeof val === 'number') {return val;}
   return parseFloat(val.replace(/[$,]/g, '')) || 0;
 }
 
 /** Detect session from timestamp */
 function detectSession(ts: string | null | undefined): string {
   const d = safeParseDate(ts);
-  if (!d) return 'unknown';
+  if (!d) {return 'unknown';}
   const h = d.getUTCHours();
-  if (h >= 0 && h < 7) return 'asian';
-  if (h >= 7 && h < 13) return 'london';
-  if (h >= 13 && h < 22) return 'new_york';
+  if (h >= 0 && h < 7) {return 'asian';}
+  if (h >= 7 && h < 13) {return 'london';}
+  if (h >= 13 && h < 22) {return 'new_york';}
   return 'off_hours';
 }
 
@@ -105,7 +105,7 @@ const GRADE_COLORS: Record<string, string> = {
 function TradeMiniChart({ entry, sl, tp, direction, isWin }: {
   entry: number; sl: number; tp: number; direction: string; isWin: boolean | undefined;
 }) {
-  if (!entry || !sl || !tp || entry === 0) return null;
+  if (!entry || !sl || !tp || entry === 0) {return null;}
   const prices = [sl, entry, tp];
   const min = Math.min(...prices);
   const max = Math.max(...prices);
@@ -177,7 +177,7 @@ export const TradeHistory = memo(function TradeHistory() {
   const uniqueGrades = useMemo(() => {
     const grades = new Set<string>();
     for (const t of trades) {
-      if (t.grade) grades.add(t.grade);
+      if (t.grade) {grades.add(t.grade);}
     }
     return [...grades].sort();
   }, [trades]);
@@ -185,7 +185,7 @@ export const TradeHistory = memo(function TradeHistory() {
   const uniquePatterns = useMemo(() => {
     const patterns = new Set<string>();
     for (const t of trades) {
-      if (t.pattern) patterns.add(t.pattern);
+      if (t.pattern) {patterns.add(t.pattern);}
     }
     return [...patterns].sort();
   }, [trades]);
@@ -204,7 +204,7 @@ export const TradeHistory = memo(function TradeHistory() {
   const listParentRef = useRef<HTMLDivElement>(null);
 
   const toggleSort = useCallback((field: SortField) => {
-    if (sortField === field) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    if (sortField === field) {setSortDir(d => d === 'desc' ? 'asc' : 'desc');}
     else { setSortField(field); setSortDir('desc'); }
   }, [sortField]);
 
@@ -214,8 +214,8 @@ export const TradeHistory = memo(function TradeHistory() {
     // Result filter
     if (resultFilter !== 'ALL') {
       result = result.filter(t => {
-        if (resultFilter === 'WIN') return t.result?.includes('WIN');
-        if (resultFilter === 'LOSS') return t.result?.includes('LOSS');
+        if (resultFilter === 'WIN') {return t.result?.includes('WIN');}
+        if (resultFilter === 'LOSS') {return t.result?.includes('LOSS');}
         return t.result?.includes('PENDING');
       });
     }
@@ -514,7 +514,7 @@ export const TradeHistory = memo(function TradeHistory() {
                     <span className={`font-bold ${isWin ? 'text-accent-green' : isLoss ? 'text-accent-red' : 'text-accent-blue'}`}>
                       {trade.result}
                     </span>
-                    {trade.profit != null && (
+                    {trade.profit !== null && (
                       <div className={isWin ? 'text-accent-green' : 'text-accent-red'}>
                         {formatPrice(trade.profit)}
                       </div>
@@ -551,7 +551,7 @@ export const TradeHistory = memo(function TradeHistory() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (trade.timeframe) setSelectedInterval(trade.timeframe);
+                      if (trade.timeframe) {setSelectedInterval(trade.timeframe);}
                       navigate('/');
                     }}
                     className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] text-accent-blue hover:bg-accent-blue/10 transition-colors flex-shrink-0"

@@ -98,7 +98,7 @@ const METRIC_TOOLTIPS: Record<string, string> = {
 function MetricCell({ label, value, color, suffix }: {
   label: string; value: number | undefined; color?: string; suffix?: string;
 }) {
-  if (value === undefined) return <div className="text-center text-th-dim text-[10px]">—</div>;
+  if (value === undefined) {return <div className="text-center text-th-dim text-[10px]">—</div>;}
   const displayColor = color ?? (value >= 0 ? 'text-accent-green' : 'text-accent-red');
   const tip = METRIC_TOOLTIPS[label];
   const labelEl = <div className={`text-[9px] text-th-muted uppercase tracking-wider ${tip ? 'cursor-help' : ''}`}>{label}</div>;
@@ -250,14 +250,14 @@ export const BacktestPanel = memo(function BacktestPanel() {
   // Extract model results from result
   const modelResults = result
     ? (['xgb', 'lstm', 'dqn', 'ensemble'] as const)
-        .filter(m => result[m] && !result[m]!.error)
-        .map(m => ({ name: m, data: result[m]! as ModelResult }))
+        .filter(m => result[m] && !result[m].error)
+        .map(m => ({ name: m, data: result[m]! }))
     : [];
 
   const modelErrors = result
     ? (['xgb', 'lstm', 'dqn', 'ensemble'] as const)
         .filter(m => result[m]?.error)
-        .map(m => ({ name: m, data: result[m]! as ModelResult }))
+        .map(m => ({ name: m, data: result[m]! }))
     : [];
 
   return (

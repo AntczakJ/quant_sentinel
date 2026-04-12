@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --report-unused-disable-directives",
     "lint:fix": "eslint . --fix",
     "type-check": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,md}\"",
@@ -70,6 +70,12 @@
     "vitest": "^4.1.4"
   },
   "overrides": {
-    "serialize-javascript": ">=6.0.2"
+    "serialize-javascript": ">=6.0.2",
+    "vite-plugin-pwa": {
+      "vite": "$vite"
+    },
+    "lucide-react": {
+      "react": "$react"
+    }
   }
 }

@@ -39,7 +39,7 @@ export const SignalPanel = memo(function SignalPanel() {
         setSignal(data);
         setCurrentSignal(data);
         setLastUpdate(new Date());
-      } catch (err) {
+      } catch {
         toast.error('Failed to load signal');
         setError('Failed to load signal');
       } finally {

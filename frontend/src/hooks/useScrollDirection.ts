@@ -15,7 +15,7 @@ export function useScrollDirection(threshold = 10): Direction {
 
   useEffect(() => {
     const handleScroll = () => {
-      if (ticking.current) return;
+      if (ticking.current) {return;}
       ticking.current = true;
 
       requestAnimationFrame(() => {
@@ -28,7 +28,7 @@ export function useScrollDirection(threshold = 10): Direction {
         }
 
         // Always show header when at very top
-        if (y < 50) setDirection(null);
+        if (y < 50) {setDirection(null);}
 
         ticking.current = false;
       });

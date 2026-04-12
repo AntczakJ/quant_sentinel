@@ -54,14 +54,14 @@ export function Header() {
 
   // Track price history for sparkline
   useEffect(() => {
-    if (ticker?.price) addPriceHistory(new Date().toISOString(), ticker.price);
+    if (ticker?.price) {addPriceHistory(new Date().toISOString(), ticker.price);}
   }, [ticker?.price]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sparklineData = priceHistory.slice(-30).map(p => p.price);
 
   // Poll session info every 60s — only when API is up, staggered to avoid burst
   useEffect(() => {
-    if (!apiConnected) return;
+    if (!apiConnected) {return;}
     const fetchSession = () => {
       analysisAPI.getSession().then(setSessionInfo).catch(() => {});
     };

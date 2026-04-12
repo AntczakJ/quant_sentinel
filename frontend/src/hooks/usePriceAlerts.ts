@@ -43,16 +43,16 @@ export function usePriceAlerts(onTrigger?: (alert: PriceAlert) => void) {
 
   // Check price crossings
   useEffect(() => {
-    if (!ticker?.price) return;
+    if (!ticker?.price) {return;}
     const price = ticker.price;
     const prev = prevPrice.current;
     prevPrice.current = price;
-    if (prev === null) return;
+    if (prev === null) {return;}
 
     setAlerts(current => {
       let changed = false;
       const updated = current.map(a => {
-        if (a.triggered) return a;
+        if (a.triggered) {return a;}
         const crossed =
           (a.direction === 'above' && prev < a.price && price >= a.price) ||
           (a.direction === 'below' && prev > a.price && price <= a.price);

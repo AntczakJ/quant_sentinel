@@ -45,11 +45,11 @@ interface TradesData {
 
 function detectSession(ts: string): string {
   const d = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z');
-  if (isNaN(d.getTime())) return 'unknown';
+  if (isNaN(d.getTime())) {return 'unknown';}
   const h = d.getUTCHours();
-  if (h >= 0 && h < 7) return 'Asian';
-  if (h >= 7 && h < 13) return 'London';
-  if (h >= 13 && h < 22) return 'NY';
+  if (h >= 0 && h < 7) {return 'Asian';}
+  if (h >= 7 && h < 13) {return 'London';}
+  if (h >= 13 && h < 22) {return 'NY';}
   return 'Off';
 }
 
@@ -99,18 +99,18 @@ function Heatmap({ trades }: { trades: Trade[] }) {
       const mapped = SESSIONS.find(s => session.toLowerCase().includes(s.toLowerCase())) ?? 'Off';
       const dir = t.direction === 'LONG' ? 'LONG' : 'SHORT';
       const key = `${mapped}-${dir}`;
-      if (!cells[key]) cells[key] = { wins: 0, losses: 0, total: 0 };
+      if (!cells[key]) {cells[key] = { wins: 0, losses: 0, total: 0 };}
       cells[key].total++;
-      if (t.result?.includes('WIN')) cells[key].wins++;
-      if (t.result?.includes('LOSS')) cells[key].losses++;
+      if (t.result?.includes('WIN')) {cells[key].wins++;}
+      if (t.result?.includes('LOSS')) {cells[key].losses++;}
     }
     return cells;
   }, [trades]);
 
   const getColor = (wr: number) => {
-    if (wr >= 0.6) return 'bg-accent-green/25 text-accent-green';
-    if (wr >= 0.4) return 'bg-accent-orange/20 text-accent-orange';
-    if (wr > 0) return 'bg-accent-red/20 text-accent-red';
+    if (wr >= 0.6) {return 'bg-accent-green/25 text-accent-green';}
+    if (wr >= 0.4) {return 'bg-accent-orange/20 text-accent-orange';}
+    if (wr > 0) {return 'bg-accent-red/20 text-accent-red';}
     return 'bg-dark-secondary text-th-dim';
   };
 
@@ -166,11 +166,11 @@ export const PatternAnalytics = memo(function PatternAnalytics() {
   );
 
   const patterns = useMemo(() => {
-    if (!statsData?.patterns) return [];
+    if (!statsData?.patterns) {return [];}
     const sorted = [...statsData.patterns];
-    if (sortBy === 'win_rate') sorted.sort((a, b) => b.win_rate - a.win_rate);
-    else if (sortBy === 'count') sorted.sort((a, b) => b.count - a.count);
-    else sorted.sort((a, b) => a.pattern.localeCompare(b.pattern));
+    if (sortBy === 'win_rate') {sorted.sort((a, b) => b.win_rate - a.win_rate);}
+    else if (sortBy === 'count') {sorted.sort((a, b) => b.count - a.count);}
+    else {sorted.sort((a, b) => a.pattern.localeCompare(b.pattern));}
     return sorted;
   }, [statsData?.patterns, sortBy]);
 
@@ -183,8 +183,8 @@ export const PatternAnalytics = memo(function PatternAnalytics() {
     for (const t of trades) {
       const bucket = t.direction === 'LONG' ? long : short;
       bucket.total++;
-      if (t.result?.includes('WIN')) bucket.wins++;
-      if (t.result?.includes('LOSS')) bucket.losses++;
+      if (t.result?.includes('WIN')) {bucket.wins++;}
+      if (t.result?.includes('LOSS')) {bucket.losses++;}
     }
     return { long, short };
   }, [trades]);

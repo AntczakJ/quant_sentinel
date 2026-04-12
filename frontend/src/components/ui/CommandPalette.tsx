@@ -24,10 +24,10 @@ interface Command {
 function fuzzyMatch(query: string, text: string): boolean {
   const q = query.toLowerCase();
   const t = text.toLowerCase();
-  if (t.includes(q)) return true;
+  if (t.includes(q)) {return true;}
   let qi = 0;
   for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-    if (t[ti] === q[qi]) qi++;
+    if (t[ti] === q[qi]) {qi++;}
   }
   return qi === q.length;
 }
@@ -57,7 +57,7 @@ export const CommandPalette = memo(function CommandPalette() {
   ], [isDark, toggleTheme, navigate]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return commands;
+    if (!query.trim()) {return commands;}
     return commands.filter(c =>
       fuzzyMatch(query, c.label) ||
       fuzzyMatch(query, c.category) ||
@@ -111,7 +111,7 @@ export const CommandPalette = memo(function CommandPalette() {
     setSelectedIdx(i => Math.min(i, Math.max(filtered.length - 1, 0)));
   }, [filtered.length]);
 
-  if (!open) return null;
+  if (!open) {return null;}
 
   // Group by category
   const grouped = new Map<string, Command[]>();

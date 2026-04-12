@@ -21,7 +21,7 @@ interface ScannerSignal {
   result?: string;
 }
 
-const fmt = (v: number | undefined | null, d = 2) => (v != null ? v.toFixed(d) : '—');
+const fmt = (v: number | undefined | null, d = 2) => (v !== null && v !== undefined ? v.toFixed(d) : '—');
 
 export const SignalHistory = memo(function SignalHistory() {
   const toast = useToast();
@@ -32,7 +32,7 @@ export const SignalHistory = memo(function SignalHistory() {
   const apiConnected = useTradingStore((s) => s.apiConnected);
 
   useEffect(() => {
-    if (!apiConnected) return;
+    if (!apiConnected) {return;}
     const fetchData = async () => {
       try {
         setError(null);
@@ -42,7 +42,7 @@ export const SignalHistory = memo(function SignalHistory() {
         ]);
         setSignals(scannerData);
         setStats(statsData);
-      } catch (err) {
+      } catch {
         toast.error('Failed to load signal history');
         setError('Failed to load history');
       } finally {
@@ -185,7 +185,7 @@ export const SignalHistory = memo(function SignalHistory() {
                 </div>
 
                 {/* RSI badge */}
-                {sig.rsi != null && (
+                {sig.rsi !== null && (
                   <div className="mt-1.5 flex items-center gap-1 text-xs">
                     <span className="text-th-muted">RSI:</span>
                     <span className={`font-bold ${rsiColor}`}>{fmt(sig.rsi, 1)}</span>

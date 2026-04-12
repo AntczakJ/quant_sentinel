@@ -58,7 +58,7 @@ interface SessionBand {
 }
 
 function detectSessionBands(timestamps: number[]): SessionBand[] {
-  if (!timestamps.length) return [];
+  if (!timestamps.length) {return [];}
 
   const bands: SessionBand[] = [];
   const light = isLight();
@@ -155,8 +155,8 @@ class SessionPaneRenderer implements ISeriesPrimitivePaneRenderer {
   bands: BandDraw[] = [];
   height: number = 0;
 
-  draw(target: { useMediaCoordinateSpace: Function }) {
-    if (!this.bands.length) return;
+  draw(target: { useMediaCoordinateSpace: (cb: (scope: { context: CanvasRenderingContext2D; mediaSize: { height: number } }) => void) => void }) {
+    if (!this.bands.length) {return;}
 
     target.useMediaCoordinateSpace((scope: { context: CanvasRenderingContext2D; mediaSize: { height: number } }) => {
       const ctx = scope.context;
@@ -164,7 +164,7 @@ class SessionPaneRenderer implements ISeriesPrimitivePaneRenderer {
 
       for (const b of this.bands) {
         const w = b.x2 - b.x1;
-        if (w <= 0) continue;
+        if (w <= 0) {continue;}
 
         // Full-height background band
         ctx.fillStyle = b.color;
@@ -246,8 +246,8 @@ export class SessionOverlay implements ISeriesPrimitive<Time> {
       const x1 = ts.timeToCoordinate(b.startTime as unknown as Time);
       const x2 = ts.timeToCoordinate(b.endTime as unknown as Time);
 
-      if (x1 === null || x2 === null) continue;
-      if (x2 <= x1) continue;
+      if (x1 === null || x2 === null) {continue;}
+      if (x2 <= x1) {continue;}
 
       draws.push({
         x1: Math.max(0, x1),

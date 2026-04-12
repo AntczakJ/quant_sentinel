@@ -26,18 +26,18 @@ const ROWS = 7;
 const DAY_LABELS = ['', 'Pn', '', 'Sr', '', 'Pt', ''];
 
 function parseProfit(val: string | number | undefined): number {
-  if (!val) return 0;
-  if (typeof val === 'number') return val;
+  if (!val) {return 0;}
+  if (typeof val === 'number') {return val;}
   return parseFloat(val.replace(/[$,]/g, '')) || 0;
 }
 
 function getColor(pnl: number): string {
-  if (pnl > 50) return 'rgb(var(--c-green))';
-  if (pnl > 10) return 'rgba(var(--c-green), 0.6)';
-  if (pnl > 0) return 'rgba(var(--c-green), 0.3)';
-  if (pnl < -50) return 'rgb(var(--c-red))';
-  if (pnl < -10) return 'rgba(var(--c-red), 0.6)';
-  if (pnl < 0) return 'rgba(var(--c-red), 0.3)';
+  if (pnl > 50) {return 'rgb(var(--c-green))';}
+  if (pnl > 10) {return 'rgba(var(--c-green), 0.6)';}
+  if (pnl > 0) {return 'rgba(var(--c-green), 0.3)';}
+  if (pnl < -50) {return 'rgb(var(--c-red))';}
+  if (pnl < -10) {return 'rgba(var(--c-red), 0.6)';}
+  if (pnl < 0) {return 'rgba(var(--c-red), 0.3)';}
   return 'var(--color-secondary)';
 }
 
@@ -55,9 +55,9 @@ export const TradeHeatmap = memo(function TradeHeatmap() {
     // Aggregate P&L per day
     for (const t of (data?.trades ?? [])) {
       const ts = t.timestamp?.trim();
-      if (!ts) continue;
+      if (!ts) {continue;}
       const d = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z');
-      if (isNaN(d.getTime())) continue;
+      if (isNaN(d.getTime())) {continue;}
       const key = d.toISOString().slice(0, 10);
       dayMap.set(key, (dayMap.get(key) ?? 0) + parseProfit(t.profit));
     }
@@ -77,7 +77,7 @@ export const TradeHeatmap = memo(function TradeHeatmap() {
     for (let i = 0; i < cols * 7; i++) {
       const d = new Date(startDate);
       d.setDate(d.getDate() + i);
-      if (d > now) continue;
+      if (d > now) {continue;}
       const key = d.toISOString().slice(0, 10);
       const col = Math.floor(i / 7);
       const row = i % 7;

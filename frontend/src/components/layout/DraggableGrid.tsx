@@ -54,7 +54,7 @@ const LAYOUT_VERSION = 2;
 function loadLayout(pageKey: string): Layouts | null {
   try {
     const ver = localStorage.getItem(STORAGE_PREFIX + pageKey + ':version');
-    if (ver !== String(LAYOUT_VERSION)) return null; // stale layout, use defaults
+    if (ver !== String(LAYOUT_VERSION)) {return null;} // stale layout, use defaults
     const raw = localStorage.getItem(STORAGE_PREFIX + pageKey);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
@@ -132,7 +132,7 @@ export const DraggableGrid = memo(function DraggableGrid({
   const toggleWidgetVisibility = useCallback((id: string) => {
     setHiddenWidgets(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) {next.delete(id);} else {next.add(id);}
       localStorage.setItem(STORAGE_PREFIX + pageKey + ':hidden', JSON.stringify([...next]));
       return next;
     });
@@ -151,7 +151,7 @@ export const DraggableGrid = memo(function DraggableGrid({
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) {next.delete(id);} else {next.add(id);}
       localStorage.setItem(STORAGE_PREFIX + pageKey + ':collapsed', JSON.stringify([...next]));
       return next;
     });

@@ -45,7 +45,7 @@ export const ModelStats = memo(function ModelStats() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!apiConnected) return;
+    if (!apiConnected) {return;}
     const fetchStats = async () => {
       try {
         setLoading(true);
@@ -53,7 +53,7 @@ export const ModelStats = memo(function ModelStats() {
         const data = await modelsAPI.getStats();
         setStatsState(data);
         setModelsStats(data);
-      } catch (err) {
+      } catch {
         toast.error('Failed to load model stats');
         setError('Failed to load model stats');
       } finally {

@@ -32,7 +32,7 @@ export const OfflineBanner = memo(function OfflineBanner() {
     setRetrying(false);
   };
 
-  if (apiConnected) return null;
+  if (apiConnected) {return null;}
 
   return (
     <div className="bg-accent-red/10 border-b border-accent-red/25 px-4 py-2 flex items-center justify-center gap-3 text-xs">

@@ -20,14 +20,14 @@ export function useBrowserNotifications() {
   const supported = typeof Notification !== 'undefined';
 
   const requestPermission = useCallback(async () => {
-    if (!supported) return 'denied' as Permission;
+    if (!supported) {return 'denied' as Permission;}
     const result = await Notification.requestPermission();
     setPermission(result);
     return result;
   }, [supported]);
 
   const notify = useCallback((title: string, options?: NotificationOptions) => {
-    if (!supported || permission !== 'granted') return null;
+    if (!supported || permission !== 'granted') {return null;}
     try {
       const n = new Notification(title, {
         icon: '/qs-logo.svg',

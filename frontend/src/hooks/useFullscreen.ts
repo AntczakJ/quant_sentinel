@@ -8,13 +8,13 @@ export function useFullscreen(ref: RefObject<HTMLElement | null>) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    const handler = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', handler);
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
   const toggle = useCallback(() => {
-    if (!ref.current) return;
+    if (!ref.current) {return;}
     if (document.fullscreenElement) {
       void document.exitFullscreen();
     } else {

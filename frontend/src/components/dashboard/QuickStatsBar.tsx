@@ -14,7 +14,7 @@ export const QuickStatsBar = memo(function QuickStatsBar() {
   const ticker = useTradingStore(s => s.ticker);
   const wsConnected = useTradingStore(s => s.wsConnected);
 
-  if (!portfolio && !ticker) return null;
+  if (!portfolio && !ticker) {return null;}
 
   const pnl = portfolio?.pnl ?? 0;
   const pnlPositive = pnl >= 0;

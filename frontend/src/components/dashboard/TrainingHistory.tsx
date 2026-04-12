@@ -23,11 +23,11 @@ function formatAgo(iso: string): string {
   const now = Date.now();
   const then = new Date(iso).getTime();
   const diffMs = now - then;
-  if (isNaN(diffMs)) return '?';
+  if (isNaN(diffMs)) {return '?';}
   const mins = Math.floor(diffMs / 60_000);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) {return `${mins}m ago`;}
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) {return `${hours}h ago`;}
   return `${Math.floor(hours / 24)}d ago`;
 }
 
@@ -50,7 +50,7 @@ export const TrainingHistory = memo(function TrainingHistory() {
           setError(e instanceof Error ? e.message : 'load failed');
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {setLoading(false);}
       }
     };
     void fetch();

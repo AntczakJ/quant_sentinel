@@ -41,7 +41,7 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
     }
 
     // Skip when modifier keys are held (except for ?)
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) {return;}
 
     const key = e.key;
 

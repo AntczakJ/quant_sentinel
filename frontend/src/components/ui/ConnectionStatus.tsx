@@ -42,7 +42,7 @@ export const ConnectionStatus = memo(function ConnectionStatus() {
       let isMock = false;
       try {
         const marketStatus = await marketAPI.getStatus();
-        isMock = !!marketStatus?.is_mock;
+        isMock = Boolean(marketStatus?.is_mock);
       } catch { /* ignore */ }
       // Scanner health (best-effort — don't fail the whole status on this)
       let scanner: ScannerStatus | null = null;

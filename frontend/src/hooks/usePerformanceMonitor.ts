@@ -20,8 +20,8 @@ function rateMetric(name: string, value: number): PerfMetric['rating'] {
     TTFB: [800, 1800],
   };
   const [good, poor] = thresholds[name] ?? [Infinity, Infinity];
-  if (value <= good) return 'good';
-  if (value <= poor) return 'needs-improvement';
+  if (value <= good) {return 'good';}
+  if (value <= poor) {return 'needs-improvement';}
   return 'poor';
 }
 
@@ -36,7 +36,7 @@ function logMetric(_metric: PerfMetric) {
  * Call once on app mount to start collecting Web Vitals via PerformanceObserver.
  */
 export function initPerformanceMonitoring(): void {
-  if (typeof window === 'undefined' || !('PerformanceObserver' in window)) return;
+  if (typeof window === 'undefined' || !('PerformanceObserver' in window)) {return;}
 
   // First Contentful Paint
   try {
@@ -67,8 +67,9 @@ export function initPerformanceMonitoring(): void {
     let clsValue = 0;
     const cls = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
-        if (!(entry as any).hadRecentInput) {
-          clsValue += (entry as any).value ?? 0;
+        const e = entry as PerformanceEntry & { hadRecentInput?: boolean; value?: number };
+        if (!e.hadRecentInput) {
+          clsValue += e.value ?? 0;
         }
       }
       logMetric({ name: 'CLS', value: clsValue, rating: rateMetric('CLS', clsValue) });

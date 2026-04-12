@@ -48,15 +48,15 @@ const MODEL_COLORS: Record<string, string> = {
 function getModelColor(name: string): string {
   const lower = name.toLowerCase();
   for (const [key, color] of Object.entries(MODEL_COLORS)) {
-    if (lower.includes(key)) return color;
+    if (lower.includes(key)) {return color;}
   }
   return 'text-th-secondary';
 }
 
 /** Normalize accuracy from API — can be a flat number or AccuracyInfo object */
 function normalizeAccuracy(raw: number | AccuracyInfo | undefined): AccuracyInfo | undefined {
-  if (raw === undefined) return undefined;
-  if (typeof raw === 'number') return { rolling_accuracy: raw };
+  if (raw === undefined) {return undefined;}
+  if (typeof raw === 'number') {return { rolling_accuracy: raw };}
   return raw;
 }
 
@@ -131,7 +131,7 @@ export const ModelDriftAlert = memo(function ModelDriftAlert() {
     return null; // Don't show anything while loading — non-intrusive
   }
 
-  if (!data) return null;
+  if (!data) {return null;}
 
   const hasAlerts = data.alerts.length > 0;
   const modelNames = [...new Set([...Object.keys(data.drift), ...Object.keys(data.accuracy)])]

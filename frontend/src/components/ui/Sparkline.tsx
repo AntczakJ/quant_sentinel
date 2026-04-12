@@ -28,7 +28,7 @@ export const Sparkline = memo(function Sparkline({
 }: Props) {
   const pathData = useMemo(() => {
     const valid = data.filter(v => Number.isFinite(v));
-    if (valid.length < 2) return { d: '', fillD: '', autoColor: '#6b7280' };
+    if (valid.length < 2) {return { d: '', fillD: '', autoColor: '#6b7280' };}
 
     const min = Math.min(...valid);
     const max = Math.max(...valid);
@@ -49,7 +49,7 @@ export const Sparkline = memo(function Sparkline({
     return { d, fillD, autoColor };
   }, [data, width, height]);
 
-  if (data.length < 2) return null;
+  if (data.length < 2) {return null;}
 
   const lineColor = color ?? pathData.autoColor;
 

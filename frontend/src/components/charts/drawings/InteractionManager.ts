@@ -170,7 +170,7 @@ export class InteractionManager {
   /** Convert pointer event to time/price point with magnetic snap */
   private eventToPoint(e: PointerEvent | MouseEvent): DrawingPoint | null {
     // Use the chart's own element rect — accounts for container padding (toolbar offset)
-    const chartEl: HTMLElement | null = (this.chart as any).chartElement?.() ?? null;
+    const chartEl: HTMLElement | null = (this.chart as unknown as { chartElement?: () => HTMLElement | null }).chartElement?.() ?? null;
     const rect = chartEl ? chartEl.getBoundingClientRect() : this.container.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -334,7 +334,7 @@ export class InteractionManager {
 
     // ── Text tool: show inline input ──
     if (this.activeTool === 'text' && this.pendingPoints.length === 0) {
-      const chartEl: HTMLElement | null = (this.chart as any).chartElement?.() ?? null;
+      const chartEl: HTMLElement | null = (this.chart as unknown as { chartElement?: () => HTMLElement | null }).chartElement?.() ?? null;
       const rect = chartEl ? chartEl.getBoundingClientRect() : this.container.getBoundingClientRect();
       const containerRect = this.container.getBoundingClientRect();
       // Pixel position relative to container (for CSS absolute positioning of input)
