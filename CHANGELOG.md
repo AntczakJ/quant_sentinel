@@ -4,6 +4,49 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-13 — Autonomous overnight retrain session
+
+**Net production change**: LSTM voter resurrected. Other voters unchanged.
+
+#### Added
+- `tune_lstm.py` — Optuna sweep for LSTM with 14-dim search space including
+  target redesign axis (`target_type`, `target_horizon`, `target_atr_mult`).
+  Two-gate winner selection: `balanced_acc >= 0.52 AND live_stdev >= 0.03`.
+- `retrain_deeptrans_loop.py` — strict-gated retrain loop for the deep
+  transformer voter (3-class softmax, balanced_accuracy + live_stdev gates).
+- Backup safety net: `models/_backup_<TS>/` dir + git tag
+  `pre-autonomous-overnight-<TS>` snapshotting all artefacts + DB params
+  before any production-touching change.
+
+#### Changed
+- `models/lstm.{keras,onnx,scaler.pkl}` **promoted from sweep winner**
+  (trial #38: balanced_acc 0.547, live_stdev 0.0336 → 0.4593 post-retrain
+  on train+val merge). `ensemble_weight_lstm` restored 0.0 → 0.15
+  (conservative; previous self-learned 0.25 was on the flat-output era model).
+- `run_production_backtest.py::_reset_backtest_db` — now truncates
+  `trades / scanner_signals / ml_predictions` tables instead of unlinking
+  the SQLite file. The unlink path raised `WinError 32 'used by another
+  process'` while the module-level `src.core.database._conn` held the file
+  open, AND closing that conn broke any `NewsDB` instances that had
+  cached `self.conn`. Truncate is locally race-free.
+
+#### Tried but not promoted (see `logs/autonomous_morning_report.md`)
+- DQN sweep (8 of 60 trials, early-stopped). Trial 8 won val at +14.99%
+  but `--apply-winner`'s held-out test reproduced only +0.06%; eval_compare
+  vs production confirmed mode collapse (1 trade vs prod's 547).
+  Production DQN retained (live attribution showed it as 82%-accuracy
+  voter — still the best of the basket).
+- DeepTrans retrain (4 iterations). All flat on live (stdev 0.005-0.011),
+  best val_bal 0.391 < 0.42 floor. Voter stays disabled
+  (`QUANT_ENABLE_TRANSFORMER` unset).
+
+#### Known limitations (acknowledged, not fixed this session)
+- `ml_predictions.trade_id` remains historically NULL on most rows. The
+  scanner.py:921 UPDATE that links predictions to trades runs inside a
+  silent `try/except: pass` and has been failing silently long before
+  this session. Worked around by `/api/models/voter-attribution`'s
+  timestamp-join. Fix would touch hot live code path — deferred.
+
 ### Added — Backtest infrastructure (P0-P8)
 - **Production backtest harness** (`run_production_backtest.py`): walk-forward
   through historical data using the REAL scanner pipeline (SMC + ML ensemble +

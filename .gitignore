@@ -132,14 +132,31 @@ data/backtest.db-shm
 # Backtest yfinance cache — regenerated, may be large (parquet files)
 data/_backtest_cache/
 
-# Optuna RL sweep — SQLite study + data cache + live heartbeat.
+# Optuna sweeps — SQLite studies + data caches + live heartbeats.
 # All regenerable; do not commit.
-data/optuna_rl.db
-data/optuna_rl.db-journal
-data/optuna_rl.db-wal
-data/optuna_rl.db-shm
+data/optuna_rl.db*
+data/optuna_lstm.db*
 data/_sweep_cache/
+data/_lstm_sweep_cache/
 data/sweep_heartbeat.json
+data/lstm_sweep_heartbeat.json
+
+# Ephemeral sweep winner + pre-promote backup model files.
+# The ones we care about ARE the production models/*.keras; these are
+# scratch artefacts for rollback/inspection only.
+models/*_sweep_winner.keras
+models/*_sweep_winner.onnx
+models/*_sweep_winner*.pkl
+models/*_sweep_winner.keras.params
+models/*.pre_*_promote.keras
+models/*.pre_*_promote.onnx
+models/*.pre_*_promote.keras.params
+models/*_scaler.pre_*_promote.pkl
+
+# Autonomous overnight session artefacts.
+logs/autonomous_*.log
+logs/autonomous_*.md
+logs/autonomous_*.txt
 
 # Walk-forward grid backtest reports (per-cell JSONs can be large).
 reports/wf_grid_*/

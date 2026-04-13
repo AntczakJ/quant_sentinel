@@ -140,12 +140,41 @@ class _UnlimitedRateLimiter:
 
 
 def _reset_backtest_db() -> None:
-    """Wipe data/backtest.db for a clean run."""
+    """Wipe data/backtest.db trades/state for a clean run.
+
+    Originally Path.unlink()'d the file, but that fails on Windows while
+    the module-level src.core.database._conn holds it open, AND closing
+    the conn breaks any NewsDB instances that already cached self.conn.
+    Cleanest path: keep the connection alive, just truncate the tables
+    that accumulate per-run state (trades, scanner_signals, ml_predictions).
+    dynamic_params is NOT cleared — the grid writes its hyperparameters
+    there and re-reads them inside the scanner.
+    """
     assert_not_production_db()
     path = Path(os.environ["DATABASE_URL"])
-    if path.exists():
-        path.unlink()
-        print(f"[backtest] Reset: removed {path}")
+    if not path.exists():
+        # Nothing to truncate; first call in a fresh worktree will land here.
+        return
+    try:
+        conn = sqlite3.connect(str(path))
+        cur = conn.cursor()
+        for tbl in ("trades", "scanner_signals", "ml_predictions",
+                    "trailing_stop_log", "loss_patterns"):
+            try:
+                cur.execute(f"DELETE FROM {tbl}")
+            except sqlite3.OperationalError:
+                # Table may not exist yet on a freshly-migrated DB; skip.
+                pass
+        conn.commit()
+        conn.close()
+        print(f"[backtest] Reset: truncated trades/signals/predictions in {path}")
+    except Exception as e:
+        print(f"[backtest] reset: truncate failed ({e}) — falling back to file replace")
+        # Fallback: try to unlink (will raise on Windows lock; user will see)
+        try:
+            path.unlink()
+        except Exception as e2:
+            print(f"[backtest] reset: file unlink also failed ({e2})")
 
 
 def _summarize_trades() -> dict:
