@@ -974,9 +974,19 @@ export function CandlestickChart() {
 
       if (!rawCandles?.length) {throw new Error('No candle data');}
 
-      // Sort ascending by time & deduplicate (lightweight-charts requires strictly ascending times)
+      // Sort ascending by time & deduplicate (lightweight-charts requires strictly ascending times).
+      // Shift UTC seconds into the user's local wall-clock so axis labels and
+      // crosshair display in their TZ. lightweight-charts renders UTCTimestamp
+      // values literally as UTC, which makes Polish (CEST = UTC+2) users see
+      // every candle 2h "behind" their actual time. getTimezoneOffset() returns
+      // minutes WEST of UTC (negative for east of UTC), so subtracting it adds
+      // the local offset.
+      const localOffsetSec = new Date().getTimezoneOffset() * 60;
       const candleData = rawCandles
-        .map((c) => ({ ...c, _ts: Math.floor(new Date(c.timestamp).getTime() / 1000) }))
+        .map((c) => ({
+          ...c,
+          _ts: Math.floor(new Date(c.timestamp).getTime() / 1000) - localOffsetSec,
+        }))
         .sort((a, b) => a._ts - b._ts)
         .filter((c, i, arr) => i === 0 || c._ts > arr[i - 1]._ts);
 
@@ -1239,7 +1249,10 @@ export function CandlestickChart() {
               let ts = t.timestamp.trim();
               ts = ts.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
               if (!/[Zz+-]/.test(ts.slice(-6))) {ts += 'Z';}
-              const rawTime = Math.floor(new Date(ts).getTime() / 1000);
+              // Apply same local-TZ shift as candleData so trade markers
+              // align with the candle they actually belong to (otherwise a
+              // CEST trade at 14:00 lands on the 12:00 UTC candle).
+              const rawTime = Math.floor(new Date(ts).getTime() / 1000) - localOffsetSec;
               const time = snapToCandle(rawTime) as UTCTimestamp;
               const isWin = t.result?.includes('WIN');
               const isLong = t.direction === 'LONG';
