@@ -92,10 +92,16 @@ class CellParams:
         return d
 
 
-def build_grid(smoke: bool = False) -> List[CellParams]:
-    """Construct the parameter grid. Tune here to add / remove dimensions."""
+def build_grid(smoke: bool = False, reduced: bool = False) -> List[CellParams]:
+    """Construct the parameter grid. Tune here to add / remove dimensions.
+
+    smoke=True  -> 3 cells, ~10 min total (sanity).
+    reduced=True -> 24 cells (4 mc x 2 sl x 3 rr), partial_close=False
+                    and risk_percent=1.0 fixed at production defaults.
+                    ~7h on CPU. Best fit for one-night autonomous runs.
+    Default     -> 96 full cells, ~28h+ on CPU.
+    """
     if smoke:
-        # 3 cells, fast enough that it won't stress CPU much.
         return [
             CellParams(0.50, 1.5, 2.5, False, 1.0),
             CellParams(0.55, 2.0, 2.5, True, 1.0),
@@ -104,6 +110,14 @@ def build_grid(smoke: bool = False) -> List[CellParams]:
     mc_vals = (0.40, 0.50, 0.55, 0.60)
     sl_vals = (1.5, 2.0)
     rr_vals = (2.0, 2.5, 3.0)
+    if reduced:
+        # Hold partial_close and risk_percent at current production defaults
+        # so the search dimension is the three knobs that empirically
+        # matter most (entry threshold, stop distance, risk:reward).
+        return [
+            CellParams(mc, sl, rr, False, 1.0)
+            for mc, sl, rr in itertools.product(mc_vals, sl_vals, rr_vals)
+        ]
     partial = (False, True)
     risk = (1.0, 2.0)
     return [
@@ -519,6 +533,9 @@ def main() -> int:
                     help="explicit Stage A report path for --stage b")
     ap.add_argument("--smoke", action="store_true",
                     help="3-cell mini grid with no WF / no MC (~2-3 min)")
+    ap.add_argument("--reduced", action="store_true",
+                    help="24-cell grid (mc x sl x rr only, ~7h on CPU). "
+                         "Best for one-night autonomous runs.")
     ap.add_argument("--report", action="store_true",
                     help="print leaderboard for existing grid and exit")
     ap.add_argument("--no-resume", action="store_true",
@@ -548,8 +565,8 @@ def main() -> int:
         print_leaderboard(results)
         return 0
 
-    full_grid = build_grid(smoke=False)
-    print(f"[grid] full grid: {len(full_grid)} cells")
+    full_grid = build_grid(smoke=False, reduced=args.reduced)
+    print(f"[grid] {'reduced' if args.reduced else 'full'} grid: {len(full_grid)} cells")
 
     # ---- Stage A ---------------------------------------------------------
     if args.stage in ("a", "both"):
