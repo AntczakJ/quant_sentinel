@@ -164,6 +164,7 @@ reports/wf_grid_*/
 # Archived / orphaned model artifacts — experiments kept locally for
 # rollback but not needed in git.
 models/_archive/
+models/_backup_*/
 
 # ── EKSPERYMENTALNE BACKUPY MODELI ────────────────────────────
 # Lokalne kopie zostawiane przy eksperymentach (np. retrain z innym setupem).
