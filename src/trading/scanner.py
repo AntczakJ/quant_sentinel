@@ -682,16 +682,26 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
 
 def _get_adaptive_cooldown_hours(db) -> float:
     """
-    Compute adaptive cooldown based on session + consecutive losses.
+    Compute adaptive cooldown based on session + RECENT consecutive losses.
+
+    2026-04-14: Halved base values across all sessions (scalp-friendly).
+    The old 2.0h off_hours cooldown blocked legitimate post-NY-close
+    setups on 5m. New base keeps meaningful rate-limiting but lets the
+    scanner react to intraday setups without burning 2-3 hours between
+    each one.
 
     Base cooldown per session:
-      Asian:    1.5h  (low vol, avoid noise)
-      London:   0.5h  (high vol, fast moves)
-      Overlap:  0.5h  (max liquidity)
-      NY:       0.75h (high vol)
-      Off-hours: 2.0h (thin liquidity)
+      Asian:    0.75h  (was 1.5)
+      London:   0.25h  (was 0.5 — high vol, fast moves)
+      Overlap:  0.25h  (was 0.5 — max liquidity)
+      NY:       0.5h   (was 0.75)
+      Off-hours: 1.0h  (was 2.0 — thin liquidity but still tradeable)
+      Weekend:  24.0h  (unchanged — no tradeable setups)
 
-    Consecutive loss scaling: +0.5h per loss (up to +2h).
+    Consecutive loss scaling: +0.3h per loss (up to +1h, was 2h).
+    IMPORTANT: only losses within the last 24h count. Stale losses from
+    earlier sessions (e.g. a 6-day-old loss streak) no longer keep the
+    cooldown inflated forever.
     """
     # Session-dependent base cooldown
     try:
@@ -702,18 +712,21 @@ def _get_adaptive_cooldown_hours(db) -> float:
         session = 'off_hours'
 
     base_hours = {
-        'asian': 1.5,
-        'london': 0.5,
-        'overlap': 0.5,
-        'new_york': 0.75,
-        'off_hours': 2.0,
+        'asian': 0.75,
+        'london': 0.25,
+        'overlap': 0.25,
+        'new_york': 0.5,
+        'off_hours': 1.0,
         'weekend': 24.0,
-    }.get(session, 1.0)
+    }.get(session, 0.5)
 
-    # Add penalty for consecutive losses
+    # Add penalty for consecutive RECENT losses (last 24h only).
     try:
         recent = db._query(
-            "SELECT status FROM trades WHERE status IN ('WIN', 'LOSS') ORDER BY id DESC LIMIT 5"
+            "SELECT status FROM trades "
+            "WHERE status IN ('WIN', 'LOSS') "
+            "  AND timestamp >= datetime('now', '-24 hours') "
+            "ORDER BY id DESC LIMIT 5"
         )
         consec_losses = 0
         for r in (recent or []):
@@ -721,7 +734,7 @@ def _get_adaptive_cooldown_hours(db) -> float:
                 consec_losses += 1
             else:
                 break
-        base_hours += min(consec_losses * 0.5, 2.0)
+        base_hours += min(consec_losses * 0.3, 1.0)
     except (AttributeError, TypeError, IndexError):
         pass
 
