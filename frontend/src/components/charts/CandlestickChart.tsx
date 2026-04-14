@@ -921,9 +921,6 @@ export function CandlestickChart() {
 
   /* ── Data fetching ─────────────────────────────────────────────────────── */
   const fetchData = useCallback(async (signal?: AbortSignal) => {
-    // Marker to prove which build is running. If you don't see this in the
-    // console on each TF switch, the browser is serving a cached module.
-    console.log('[chart] fetchData start', selectedInterval, 'v2');
     // Clear error unconditionally on entry — never leave a stale banner up.
     setError(null);
     try {

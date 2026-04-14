@@ -15,6 +15,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 
 export type SSEStatus = 'connecting' | 'connected' | 'disconnected';
 
+// EventSource claims to auto-reconnect but can silently get stuck in a
+// "CLOSED" state where onerror fired yet no further events arrive.
+// A watchdog that forces a fresh EventSource after this many seconds
+// without a message keeps the signal feed live.
+const STALE_WATCHDOG_MS = 30_000;
+
 /**
  * Resolve SSE base URL — same origin as API.
  */
@@ -40,6 +46,8 @@ export function useSSE<T = unknown>(
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
   const esRef = useRef<EventSource | null>(null);
+  const lastEventAtRef = useRef<number>(Date.now());
+  const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const connect = useCallback(() => {
     if (!enabled) {return;}
@@ -47,13 +55,16 @@ export function useSSE<T = unknown>(
     const url = `${SSE_BASE}${path}`;
     const es = new EventSource(url);
     esRef.current = es;
+    lastEventAtRef.current = Date.now();
     setStatus('connecting');
 
     es.onopen = () => {
       setStatus('connected');
+      lastEventAtRef.current = Date.now();
     };
 
     es.onmessage = (event) => {
+      lastEventAtRef.current = Date.now();
       try {
         const data = JSON.parse(event.data) as T;
         onMessageRef.current(data);
@@ -64,7 +75,8 @@ export function useSSE<T = unknown>(
 
     es.onerror = () => {
       setStatus('disconnected');
-      // EventSource auto-reconnects — no manual logic needed
+      // EventSource's own auto-reconnect handles most cases; the watchdog
+      // below catches the pathological "CLOSED but silent" state.
     };
   }, [path, enabled]);
 
@@ -75,15 +87,36 @@ export function useSSE<T = unknown>(
         esRef.current = null;
         setStatus('disconnected');
       }
+      if (watchdogRef.current) {
+        clearInterval(watchdogRef.current);
+        watchdogRef.current = null;
+      }
       return;
     }
 
     connect();
 
+    // Watchdog — if no message/event for STALE_WATCHDOG_MS, assume the
+    // EventSource is dead and force-reconnect. Typical SSE heartbeats
+    // arrive every 15s so 30s of silence is a real problem.
+    watchdogRef.current = setInterval(() => {
+      if (Date.now() - lastEventAtRef.current > STALE_WATCHDOG_MS) {
+        if (esRef.current) {
+          esRef.current.close();
+          esRef.current = null;
+        }
+        connect();
+      }
+    }, 5_000);
+
     return () => {
       if (esRef.current) {
         esRef.current.close();
         esRef.current = null;
+      }
+      if (watchdogRef.current) {
+        clearInterval(watchdogRef.current);
+        watchdogRef.current = null;
       }
     };
   }, [connect, enabled]);

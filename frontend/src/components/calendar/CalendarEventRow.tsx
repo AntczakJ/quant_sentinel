@@ -167,8 +167,8 @@ export const CalendarEventRow = memo(function CalendarEventRow({ event, upcoming
                   delta !== null && delta > 0 ? 'text-accent-green' :
                   delta !== null && delta < 0 ? 'text-accent-red' : ''
                 }
-                hint={deltaPct !== null
-                  ? `${delta! > 0 ? '+' : ''}${delta!.toFixed(2)} (${deltaPct.toFixed(1)}%) vs ${forecastN !== null ? 'forecast' : 'previous'}`
+                hint={(deltaPct !== null && delta !== null)
+                  ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)} (${deltaPct.toFixed(1)}%) vs ${forecastN !== null ? 'forecast' : 'previous'}`
                   : undefined}
               />
             </div>

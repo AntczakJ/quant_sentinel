@@ -6,7 +6,7 @@
  * Adds temporary 'transitioning' class for smooth color transitions.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 type ThemePref = 'dark' | 'light' | 'system';
 type ResolvedTheme = 'dark' | 'light';
@@ -54,16 +54,34 @@ export function useTheme() {
     localStorage.setItem(STORAGE_KEY, pref);
   }, [pref]);
 
+  // Hold the pending "remove transitioning" timer so rapid toggles cancel
+  // the previous one instead of piling up setTimeouts that compete over
+  // the final class state.
+  const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const toggle = useCallback(() => {
     const root = document.documentElement;
     root.classList.add('transitioning');
+    if (transitionTimerRef.current) {
+      clearTimeout(transitionTimerRef.current);
+    }
     // Cycle: dark → light → system → dark
     setPref(prev => {
       if (prev === 'dark') {return 'light';}
       if (prev === 'light') {return 'system';}
       return 'dark';
     });
-    setTimeout(() => root.classList.remove('transitioning'), 300);
+    transitionTimerRef.current = setTimeout(() => {
+      root.classList.remove('transitioning');
+      transitionTimerRef.current = null;
+    }, 300);
+  }, []);
+
+  // Cleanup on unmount — prevents orphan timer firing after component dies
+  useEffect(() => () => {
+    if (transitionTimerRef.current) {
+      clearTimeout(transitionTimerRef.current);
+    }
   }, []);
 
   return { theme: resolved, pref, toggle, isDark: resolved === 'dark' };

@@ -398,6 +398,10 @@ export const BacktestResults = memo(function BacktestResults() {
               src={backtestResultsAPI.chartUrl(selectedRun.name)}
               alt={`Equity curve for ${selectedRun.name}`}
               className="w-full rounded border border-dark-secondary bg-white"
+              loading="lazy"
+              decoding="async"
+              width={1200}
+              height={600}
               onError={(e) => {
                 (e.currentTarget as HTMLImageElement).style.display = 'none';
                 const sib = (e.currentTarget as HTMLImageElement).nextElementSibling as HTMLElement | null;
