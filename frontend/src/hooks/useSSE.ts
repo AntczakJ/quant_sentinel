@@ -75,8 +75,17 @@ export function useSSE<T = unknown>(
 
     es.onerror = () => {
       setStatus('disconnected');
-      // EventSource's own auto-reconnect handles most cases; the watchdog
-      // below catches the pathological "CLOSED but silent" state.
+      // Initial-connection-failed path: readyState CLOSED immediately after
+      // construction means the browser gave up. Trigger a manual reconnect
+      // after 2s instead of spinning on 'connecting' forever.
+      if (es.readyState === EventSource.CLOSED) {
+        setTimeout(() => {
+          if (esRef.current === es && enabled) {
+            es.close();
+            connect();
+          }
+        }, 2000);
+      }
     };
   }, [path, enabled]);
 

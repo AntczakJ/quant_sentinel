@@ -149,6 +149,16 @@ export const AgentChat = memo(function AgentChat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Cleanup on unmount — the in-flight sendMessage keeps a setInterval
+  // that increments loadingTime; if user navigates away mid-request the
+  // timer would tick on an unmounted component (React warns, memory leak).
+  useEffect(() => () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
   const sendMessage = async (text: string) => {
     if (!text.trim() || loading) {return;}
 

@@ -56,10 +56,18 @@ export const RiskCalculator = memo(function RiskCalculator({ onClose, initialPri
   }, [entry, direction]);
 
   const calc = useMemo(() => {
-    const e = parseFloat(entry) || 0;
-    const s = parseFloat(sl) || 0;
-    const t = parseFloat(tp) || 0;
-    const rPct = parseFloat(riskPct) || 1;
+    // parseFloat returns NaN on "abc"; NaN || 0 -> 0 looked safe but silently
+    // turns bogus input into zeros and produces meaningless results (e.g. lot
+    // size = Infinity when risk_per_oz = 0). Reject NaN explicitly and refuse
+    // to compute when any numeric input is non-finite.
+    const eRaw = parseFloat(entry);
+    const sRaw = parseFloat(sl);
+    const tRaw = parseFloat(tp);
+    const rRaw = parseFloat(riskPct);
+    const e = Number.isFinite(eRaw) && eRaw > 0 ? eRaw : 0;
+    const s = Number.isFinite(sRaw) && sRaw > 0 ? sRaw : 0;
+    const t = Number.isFinite(tRaw) && tRaw > 0 ? tRaw : 0;
+    const rPct = Number.isFinite(rRaw) && rRaw > 0 ? rRaw : 1;
 
     if (!e || !s) {return null;}
 
