@@ -251,14 +251,20 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                        rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
 
-    # --- 2. FILTR WAGI WZORCA (tightened: 0.5 → 0.6) ---
+    # --- 2. FILTR WAGI WZORCA (relaxed back: 0.6 → 0.5 on 2026-04-14) ---
+    # User reported manually catching $20-30 SHORT moves on gold today that
+    # the scanner rejected 8× with "SHORT_Stable_bearish weight=0.50 < 0.6".
+    # The 0.6 threshold was a prior tightening from 0.5; revert it so
+    # moderately-weighted patterns can trade and self-learning accumulates
+    # data. If a pattern truly stops working, update_pattern_weight() will
+    # drag it below 0.5 and auto-block naturally.
     direction_str = "LONG" if current_trend == "bull" else "SHORT"
     pattern = f"{direction_str}_{current_structure}_{current_fvg_type}"
     weight = get_pattern_adjustment({"pattern": pattern})
-    if weight < 0.6:
-        logger.info(f"[MTF] {tf}: waga wzorca {pattern} = {weight:.2f} za niska (min 0.6) — pomijam")
+    if weight < 0.5:
+        logger.info(f"[MTF] {tf}: waga wzorca {pattern} = {weight:.2f} za niska (min 0.5) — pomijam")
         _log_rejection(db, tf, direction_str, current_price,
-                       f"pattern_weight={weight:.2f}<0.6", "pattern_weight",
+                       f"pattern_weight={weight:.2f}<0.5", "pattern_weight",
                        rsi=current_rsi, trend=current_trend, pattern=pattern, atr=current_atr)
         return None
 
@@ -348,13 +354,30 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     structure = analysis.get('structure', 'Stable')
     is_stable = 'Stable' in str(structure)
 
+    # --- 5m special case (2026-04-14) ---
+    # User empirically catches $10-20 moves on 5m during intraday. Higher
+    # TFs correctly wait for full swing setups (confluence=3 + non-Stable)
+    # but 5m's granularity means Stable often IS the relevant context
+    # (short holding time, small SL). Lower bar for 5m specifically:
+    #   - min_conf 2 instead of 3
+    #   - don't block on structure=Stable
+    # Other filters (RSI extreme, directional alignment, ML ensemble
+    # validation at line 421, pattern_weight, event guard, etc.) still
+    # apply — so we're not opening the flood gates, just letting a scalp
+    # setup through when one of the slower TFs isn't giving us anything.
+    if str(tf) == "5m" and not _relax:
+        _min_conf = 2
+        _allow_stable_5m = True
+    else:
+        _allow_stable_5m = False
+
     strong_setup = (
         (has_grab_mss and confluence_count >= _min_conf)   # premium: grab+mss + N confirmations
         or (has_dbr_rbd and confluence_count >= _min_conf)  # DBR/RBD + N confirmations
         or confluence_count >= _min_conf                     # standalone: N+ signals required
     )
-    # In relaxed mode, Stable structure is NOT an automatic block
-    block_stable = is_stable and not _relax
+    # In relaxed mode OR on 5m scalp setups, Stable structure is NOT an automatic block
+    block_stable = is_stable and not _relax and not _allow_stable_5m
 
     if not strong_setup or block_stable:
         reason = "structure=Stable (chop)" if block_stable else f"confluence={confluence_count}<{_min_conf}"
