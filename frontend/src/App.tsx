@@ -124,10 +124,22 @@ function AppContent() {
     }
   }, apiConnected);
 
-  // Browser notifications — request permission on first API connection
+  // Browser notifications — request permission on first API connection.
+  // Only call requestPermission() if permission is still 'default' (never
+  // answered). Chrome blocks repeated requests after user ignores a prompt,
+  // surfacing a console warning that can cascade into app load failures
+  // when mixed with strict React error boundaries. Skipping a redundant
+  // request is always safe.
   const { notifySignal, requestPermission } = useBrowserNotifications();
   useEffect(() => {
-    if (apiConnected) {void requestPermission();}
+    if (!apiConnected) {return;}
+    if (typeof Notification === 'undefined') {return;}
+    if (Notification.permission !== 'default') {return;}
+    try {
+      void requestPermission();
+    } catch {
+      // Chrome may throw on blocked-by-policy / already-denied states.
+    }
   }, [apiConnected, requestPermission]);
 
   // SSE signal feed — instant signal notifications + browser push
