@@ -45,38 +45,57 @@ def _detect_impact(title: str) -> str:
     return "low"
 
 
+def _fetch_rss(source_name: str, url: str, headers: Dict) -> List[Dict]:
+    """Fetch and parse one RSS source. Returns list of structured news dicts.
+    Never raises — errors are logged and yield an empty list so one bad
+    feed can't poison the aggregate."""
+    out: List[Dict] = []
+    try:
+        response = requests.get(url, headers=headers, timeout=8)
+        feed = feedparser.parse(response.content)
+        for entry in feed.entries[:8]:
+            title_lower = entry.title.lower()
+            if any(word in title_lower for word in KEYWORDS):
+                clean_title = re.sub('<[^<]+?>', '', entry.title).strip()
+                published = entry.get('published', entry.get('updated', ''))
+                out.append({
+                    "title": clean_title,
+                    "source": source_name,
+                    "published": published,
+                    "sentiment": _detect_sentiment(clean_title),
+                    "impact": _detect_impact(clean_title),
+                    "url": entry.get('link', ''),
+                })
+    except Exception as e:
+        logger.warning(f"News source {source_name} error: {e}")
+    return out
+
+
 @cached('news_structured', ttl=180)
 def get_latest_news() -> List[Dict]:
     """
     Aggregates news from RSS sources and returns structured objects.
     Each item: {title, source, published, sentiment, impact, url}
+
+    Fetches feeds in parallel via ThreadPoolExecutor — previously serial
+    fetch took ~3*8s worst case (total timeout budget) and blocked the
+    endpoint while any one source was slow. Parallel fetch bounds latency
+    at the slowest single source (~8s), which is the common case anyway.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     headers = {'User-Agent': 'Mozilla/5.0'}
     combined: List[Dict] = []
 
-    for source_name, url in RSS_SOURCES.items():
-        try:
-            response = requests.get(url, headers=headers, timeout=8)
-            feed = feedparser.parse(response.content)
-
-            for entry in feed.entries[:8]:
-                title_lower = entry.title.lower()
-
-                if any(word in title_lower for word in KEYWORDS):
-                    clean_title = re.sub('<[^<]+?>', '', entry.title).strip()
-                    published = entry.get('published', entry.get('updated', ''))
-
-                    combined.append({
-                        "title": clean_title,
-                        "source": source_name,
-                        "published": published,
-                        "sentiment": _detect_sentiment(clean_title),
-                        "impact": _detect_impact(clean_title),
-                        "url": entry.get('link', ''),
-                    })
-
-        except Exception as e:
-            logger.warning(f"News source {source_name} error: {e}")
+    with ThreadPoolExecutor(max_workers=len(RSS_SOURCES)) as pool:
+        futures = {
+            pool.submit(_fetch_rss, name, url, headers): name
+            for name, url in RSS_SOURCES.items()
+        }
+        for fut in as_completed(futures):
+            try:
+                combined.extend(fut.result(timeout=10))
+            except Exception as e:
+                logger.warning(f"News fetch future failed ({futures[fut]}): {e}")
 
     # Deduplicate by title similarity and limit
     seen = set()
@@ -256,8 +275,21 @@ def get_imminent_high_impact_events(minutes_window: int = 15,
     try:
         events = get_economic_calendar() or []
     except Exception as e:
-        logger.debug(f"Event guard: calendar fetch failed ({e}) — assuming clear")
-        return []
+        # FAIL-CLOSED (changed 2026-04-14): previously returned [] meaning
+        # "no events, safe to trade" which lets trades through during NFP/
+        # CPI/FOMC if the calendar API is down. Those events move gold 2-3%
+        # in seconds and hit SL instantly. Returning a synthetic sentinel
+        # event causes requires_clear_calendar to BLOCK the trade — the
+        # safer default when we can't see the calendar.
+        logger.warning(f"Event guard: calendar fetch failed ({e}) — "
+                       f"FAIL-CLOSED, blocking new trades this cycle")
+        now = datetime.now(timezone.utc)
+        return [{
+            "event": "CALENDAR_FETCH_FAILED",
+            "impact": "high",
+            "date": now.isoformat(),
+            "_synthetic": True,
+        }]
 
     now = datetime.now(timezone.utc)
     window_end = now + timedelta(minutes=minutes_window)

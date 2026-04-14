@@ -422,6 +422,24 @@ async def _auto_resolve_trades():
         try:
             from src.core.database import NewsDB
 
+            # Weekend guard — XAU/USD is closed Fri 22:00 UTC through
+            # Sun 22:00 UTC. Skip entire resolution cycle during that
+            # window to save data-provider credits. Open trades just
+            # wait; Monday open will resolve them on the first tick.
+            import datetime as _dt
+            now_utc = _dt.datetime.now(_dt.timezone.utc)
+            wday = now_utc.weekday()  # Mon=0 .. Sun=6
+            hour = now_utc.hour
+            is_weekend = (
+                (wday == 4 and hour >= 22) or      # Fri >= 22:00 UTC
+                (wday == 5) or                     # all Sat
+                (wday == 6 and hour < 22)          # Sun < 22:00 UTC
+            )
+            if is_weekend:
+                logger.debug("[Resolver] weekend — skipping cycle")
+                await asyncio.sleep(1800)  # 30 min sleep during weekend
+                continue
+
             # Try cached price first (0 credits)
             current_price = 0.0
             try:

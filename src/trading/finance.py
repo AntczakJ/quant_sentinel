@@ -12,6 +12,18 @@ Zmiany:
 from src.core.logger import logger
 
 
+def _bump_metric(name: str) -> None:
+    """Safely increment a metrics counter. Failures are swallowed — metrics
+    must never break the trading path. `name` is the attribute on src.ops.metrics."""
+    try:
+        from src.ops import metrics as _m
+        counter = getattr(_m, name, None)
+        if counter is not None:
+            counter.inc()
+    except Exception:
+        pass
+
+
 def get_fx_rate(base: str = "USD", target: str = "PLN") -> float:
     """Pobiera kurs walutowy (fallback 4.0)."""
     try:
@@ -69,6 +81,7 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
 
     # --- FILTR SESJI: skip Asian session (zbyt niska zmienność → noise stops) ---
     if session == 'asian':
+        _bump_metric("trades_rejected")
         return {"direction": "CZEKAJ", "reason": "Sesja azjatycka — zbyt niska zmienność na XAU/USD"}
 
     # Pobranie dynamicznych parametrów (zamiast hardcoded)
@@ -82,6 +95,7 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     # Check circuit breakers before anything else
     can_trade, reason = rm.check_circuit_breakers(balance)
     if not can_trade:
+        _bump_metric("trades_blocked_by_risk")
         return {"direction": "CZEKAJ", "reason": f"Risk manager: {reason}"}
 
     # Use Kelly-optimal risk instead of fixed 1%
@@ -191,6 +205,7 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
 
             # BLOKADA: Jeśli ML ma wysoką pewność i mówi inaczej niż SMC — nie otwieraj trade'a
             if ensemble_result.get('confidence', 0) > 0.55:
+                _bump_metric("trades_rejected")
                 return {
                     "direction": "CZEKAJ",
                     "reason": f"ML ({ml_signal}, {ensemble_result.get('confidence', 0):.0%}) konflikt z SMC ({direction}) — czekamy",
@@ -199,12 +214,15 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
 
     # Filtrowanie makro
     if macro_regime == "czerwony" and direction == "LONG":
+        _bump_metric("trades_rejected")
         return {"direction": "CZEKAJ", "reason": "Makro czerwony – przeciwwskazanie do LONG"}
     if macro_regime == "zielony" and direction == "SHORT":
+        _bump_metric("trades_rejected")
         return {"direction": "CZEKAJ", "reason": "Makro zielony – przeciwwskazanie do SHORT"}
 
     # ========== FILTR PEWNOŚCI ENSEMBLE ==========
     if ensemble_result and ensemble_result.get('confidence', 0) < 0.4 and ml_signal == "CZEKAJ":
+        _bump_metric("trades_rejected")
         return {
             "direction": "CZEKAJ",
             "reason": f"Niska pewność ensemble ({ensemble_result.get('confidence', 0):.1%}) - czekamy na wyraźniejszy sygnał",
@@ -387,6 +405,7 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     # --- 6. Portfolio heat check (max aggregate risk) ---
     can_open, heat_pct = rm.check_portfolio_heat(balance_in_usd, risk_usd)
     if not can_open:
+        _bump_metric("trades_blocked_by_risk")
         return {"direction": "CZEKAJ",
                 "reason": f"Portfolio heat {heat_pct:.1f}% exceeds {MAX_PORTFOLIO_HEAT_PCT}% limit"}
 
@@ -396,6 +415,7 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     min_distance = max(dynamic_min_distance, MIN_TP_DISTANCE)
 
     if abs(entry - tp) < min_distance:
+        _bump_metric("trades_rejected")
         return {"direction": "CZEKAJ",
                 "reason": f"Zbyt mały dystans TP ({abs(entry - tp):.2f}$) – minimalny {min_distance:.2f}$."}
 

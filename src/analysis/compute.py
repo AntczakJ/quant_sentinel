@@ -179,7 +179,7 @@ def get_tf_batch_size(default_cpu: int = 32, default_gpu: int = 128) -> int:
 # ONNX RUNTIME GPU INFERENCE (DirectML — AMD/Intel/NVIDIA on Windows)
 # ============================================================================
 
-_onnx_sessions: dict = {}  # cache: model_path -> ort.InferenceSession
+_onnx_sessions: dict = {}  # cache: model_path -> (ort.InferenceSession, mtime)
 
 
 def get_onnx_providers() -> list:
@@ -242,16 +242,30 @@ def convert_keras_to_onnx(keras_model_path: str, onnx_path: Optional[str] = None
 
 def get_onnx_session(model_path: str):
     """Get or create an ONNX Runtime inference session with GPU (DirectML/CUDA).
-    Caches sessions for reuse."""
-    if model_path in _onnx_sessions:
-        return _onnx_sessions[model_path]
+
+    Caches sessions keyed by (path, mtime) so that an on-disk model swap
+    (e.g. auto-retrain writing a fresh .onnx) invalidates the cached session
+    on the next call. Without this, long-running API processes would keep
+    serving predictions from the stale pre-retrain weights until restart.
+    """
+    try:
+        current_mtime = os.path.getmtime(model_path)
+    except OSError:
+        current_mtime = 0.0
+
+    cached = _onnx_sessions.get(model_path)
+    if cached is not None:
+        sess, cached_mtime = cached
+        if cached_mtime == current_mtime:
+            return sess
+        logger.info(f"ONNX model changed on disk ({model_path}) — rebuilding session")
 
     try:
         import onnxruntime as ort
         providers = get_onnx_providers()
         session = ort.InferenceSession(model_path, providers=providers)
         actual = session.get_providers()
-        _onnx_sessions[model_path] = session
+        _onnx_sessions[model_path] = (session, current_mtime)
         logger.info(f"ONNX session created: {model_path} (providers: {actual})")
         return session
     except Exception as e:
@@ -591,20 +605,37 @@ FEATURE_COLS = [
     'adx', 'trend_strength',
 ]
 
-# Feature cache (keyed by (id(df), len(df)))
+# Feature cache — keyed by content fingerprint, NOT id(df). Python recycles
+# object IDs after GC, so two different DataFrames of the same length could
+# collide and return stale features. Fingerprint uses first/last timestamp
+# + first/last close + length, which is ~free to compute and uniquely
+# identifies an OHLC window for our purposes.
 _feature_cache = {"key": None, "result": None}
+
+
+def _feature_cache_key(df: pd.DataFrame):
+    if df is None or len(df) == 0:
+        return None
+    try:
+        first_idx = df.index[0]
+        last_idx = df.index[-1]
+        first_close = float(df['close'].iloc[0])
+        last_close = float(df['close'].iloc[-1])
+        return (len(df), str(first_idx), str(last_idx), first_close, last_close)
+    except (KeyError, ValueError, TypeError):
+        return None
 
 
 def compute_features(df: pd.DataFrame, use_cache: bool = True) -> pd.DataFrame:
     """Compute all ML features from OHLCV data. Single source of truth.
 
     Used by: ml_models.py (train/predict), ensemble_models.py (predict).
-    Cached by (id(df), len(df)) to avoid recomputation.
+    Cached by content fingerprint to avoid recomputation.
     """
     import pandas_ta as ta
 
-    cache_key = (id(df), len(df))
-    if use_cache and _feature_cache["key"] == cache_key and _feature_cache["result"] is not None:
+    cache_key = _feature_cache_key(df) if use_cache else None
+    if use_cache and cache_key is not None and _feature_cache["key"] == cache_key and _feature_cache["result"] is not None:
         return _feature_cache["result"].copy()
 
     xp = get_array_module()

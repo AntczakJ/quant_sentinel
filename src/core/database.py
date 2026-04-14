@@ -31,7 +31,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "data/sentinel.db")
 TURSO_URL = os.getenv("TURSO_URL", "")
 TURSO_TOKEN = os.getenv("TURSO_TOKEN", "")
 
-_db_lock = threading.Lock()
+# RLock (re-entrant) instead of plain Lock — same thread can legitimately
+# re-enter the critical section when a locked helper calls another locked
+# helper (e.g. _execute → set_param inside a triggered migration path).
+# Plain Lock would deadlock on re-entry; RLock tracks owner and increments
+# a counter on nested acquires.
+_db_lock = threading.RLock()
 _DB_LOCK_TIMEOUT = 5.0  # seconds — prevent indefinite hangs
 
 # Tables that sync to Turso (production-critical data)

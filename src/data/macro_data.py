@@ -25,7 +25,7 @@ All data cached to minimize API calls. FRED data updates daily, sentiment hourly
 import os
 import time
 import datetime
-import pickle
+import json
 from typing import Optional, Dict
 from dotenv import load_dotenv
 from src.core.logger import logger
@@ -33,8 +33,12 @@ from src.core.logger import logger
 load_dotenv()
 
 _CACHE_DIR = "data"
-_FRED_CACHE_FILE = os.path.join(_CACHE_DIR, "fred_cache.pkl")
-_SENTIMENT_CACHE_FILE = os.path.join(_CACHE_DIR, "sentiment_cache.pkl")
+# JSON cache files (migrated from pickle 2026-04-12: pickle.load on disk-
+# backed cache is an arbitrary-code-execution risk if the file gets tampered
+# with. Macro cache payloads are plain dicts of floats/strings so JSON is
+# a drop-in replacement with no loss of fidelity.)
+_FRED_CACHE_FILE = os.path.join(_CACHE_DIR, "fred_cache.json")
+_SENTIMENT_CACHE_FILE = os.path.join(_CACHE_DIR, "sentiment_cache.json")
 _FRED_CACHE_TTL = 14400   # 4 hours (FRED data is daily)
 _SENTIMENT_CACHE_TTL = 3600  # 1 hour
 
@@ -46,11 +50,11 @@ _SENTIMENT_CACHE_TTL = 3600  # 1 hour
 def _load_cache(path: str, ttl: int) -> Optional[Dict]:
     try:
         if os.path.exists(path):
-            with open(path, 'rb') as f:
-                cached = pickle.load(f)
+            with open(path, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
             if time.time() - cached.get('ts', 0) < ttl:
                 return cached.get('data')
-    except (FileNotFoundError, pickle.UnpicklingError, EOFError, KeyError):
+    except (FileNotFoundError, json.JSONDecodeError, EOFError, KeyError, UnicodeDecodeError):
         pass
     return None
 
@@ -58,9 +62,9 @@ def _load_cache(path: str, ttl: int) -> Optional[Dict]:
 def _save_cache(path: str, data: Dict):
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, 'wb') as f:
-            pickle.dump({'data': data, 'ts': time.time()}, f)
-    except (OSError, pickle.PicklingError):
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({'data': data, 'ts': time.time()}, f, default=str)
+    except (OSError, TypeError, ValueError):
         pass
 
 

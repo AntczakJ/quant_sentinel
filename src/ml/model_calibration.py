@@ -196,12 +196,20 @@ class ModelCalibrator:
     def calibrate(self, model_name: str, raw_prediction: float) -> float:
         """
         Calibrate a raw prediction using Platt scaling.
-        Returns raw prediction unchanged if no calibration is available.
+
+        If the model HAS a fitted scaler → apply it (well-behaved path).
+        If the model has NO fitted scaler → apply mild shrinkage toward 0.5
+        (the "uncalibrated penalty"). Uncalibrated raw scores are often
+        overconfident (LSTM in particular — routinely outputs 0.97+ when
+        its historical accuracy on those predictions is closer to 0.55).
+        Shrinking 20% toward neutral damps their voting power in the
+        ensemble until they earn calibration with enough history.
         """
-        if model_name in self._scalers:
-            calibrated = self._scalers[model_name].transform(raw_prediction)
-            return calibrated
-        return raw_prediction
+        if model_name in self._scalers and self._scalers[model_name].fitted:
+            return self._scalers[model_name].transform(raw_prediction)
+        # Uncalibrated penalty: shrink toward 0.5
+        shrunk = 0.5 + (raw_prediction - 0.5) * 0.8
+        return float(shrunk)
 
     def is_calibrated(self, model_name: str) -> bool:
         return model_name in self._scalers and self._scalers[model_name].fitted

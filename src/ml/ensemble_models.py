@@ -441,10 +441,40 @@ def _load_dynamic_weights() -> Dict[str, float]:
         return default_weights
 
 
+_WEIGHT_MIN = 0.05
+_WEIGHT_MAX = 0.60
+_MAX_STEP = 0.05  # hard per-update cap — belt-and-braces against a single bad batch
+_TARGET_HIGH = 0.60  # asymptote for consistently-correct models
+_TARGET_LOW = 0.05   # asymptote for consistently-wrong models
+
+
+def _ema_update(current: float, target: float, alpha: float) -> float:
+    """EMA-smoothed weight update toward target.
+
+    new = current*(1-alpha) + target*alpha
+
+    Converges toward target geometrically rather than linearly (old code was
+    additive + clamp, which let a model race from 0.05 → 0.60 in 28 wins and
+    back down in 28 losses — too reactive for the live-trade resolution rate).
+    Per-update delta is also capped at _MAX_STEP as a defensive ceiling.
+    """
+    raw = current * (1.0 - alpha) + target * alpha
+    delta = raw - current
+    if delta > _MAX_STEP:
+        raw = current + _MAX_STEP
+    elif delta < -_MAX_STEP:
+        raw = current - _MAX_STEP
+    return max(_WEIGHT_MIN, min(_WEIGHT_MAX, raw))
+
+
 def update_ensemble_weights(correct_models: list, incorrect_models: list, learning_rate: float = 0.02):
     """
     Aktualizuj wagi ensemble na podstawie które modele miały rację.
     Wywoływane po rozwiązaniu trade'u (resolve_trades_task).
+
+    Używa EMA smoothing (alpha=learning_rate) zamiast liniowego add/sub —
+    stabilniej i asymptotycznie zbieżne do _TARGET_HIGH/LOW. Clamp do
+    [_WEIGHT_MIN, _WEIGHT_MAX] + hard cap _MAX_STEP na pojedynczy update.
 
     Aktualizuje też liczniki per-model (correct/incorrect) w dynamic_params
     do auditu historycznej skuteczności każdego modelu.
@@ -456,8 +486,8 @@ def update_ensemble_weights(correct_models: list, incorrect_models: list, learni
 
         for model in correct_models:
             if model in current:
-                new_w = current[model] + learning_rate
-                db.set_param(f"ensemble_weight_{model}", min(new_w, 0.6))
+                new_w = _ema_update(current[model], _TARGET_HIGH, learning_rate)
+                db.set_param(f"ensemble_weight_{model}", new_w)
             prev = db.get_param(f"model_{model}_correct", 0) or 0
             try:
                 prev = int(float(prev))
@@ -467,8 +497,8 @@ def update_ensemble_weights(correct_models: list, incorrect_models: list, learni
 
         for model in incorrect_models:
             if model in current:
-                new_w = current[model] - learning_rate
-                db.set_param(f"ensemble_weight_{model}", max(new_w, 0.05))
+                new_w = _ema_update(current[model], _TARGET_LOW, learning_rate)
+                db.set_param(f"ensemble_weight_{model}", new_w)
             prev = db.get_param(f"model_{model}_incorrect", 0) or 0
             try:
                 prev = int(float(prev))

@@ -603,46 +603,66 @@ def detect_dbr_rbd(df: pd.DataFrame, window: int = 5) -> dict:
     Zwraca słownik z typem i strefą bazy.
     """
     result = {"type": None, "base_low": None, "base_high": None}
+    # Audit 2026-04-14: require strictly 15+ candles before any positional
+    # access on recent.iloc[...:...]. Previously the function used
+    # iloc[5], iloc[6:11], iloc[11] without post-tail bounds checking —
+    # if df happens to have exactly 15 rows with NaN-filled tail or
+    # misaligned index, iloc[11] access could raise IndexError mid-scan
+    # and kill the background scanner task.
     if len(df) < 20:
         return result
 
-    # Sprawdzamy ostatnie 15 świec
-    recent = df.tail(15)
-    # Drop (spadek)
-    drop_start = recent['close'].iloc[0]
-    drop_end = recent['close'].iloc[5]
-    drop_pct = (drop_end - drop_start) / drop_start
-    if drop_pct < -0.01:  # spadek > 1%
-        # Sprawdzamy konsolidację (zakres ostatnich 5 świec)
-        base_low = recent['low'].iloc[6:11].min()
-        base_high = recent['high'].iloc[6:11].max()
-        base_range = (base_high - base_low) / base_low
-        if base_range < 0.005:  # zakres < 0.5%
-            # Rally
-            rally_start = recent['close'].iloc[11]
-            rally_end = recent['close'].iloc[-1]
-            rally_pct = (rally_end - rally_start) / rally_start
-            if rally_pct > 0.01:
-                result["type"] = "DBR"
-                result["base_low"] = round(base_low, 2)
-                result["base_high"] = round(base_high, 2)
-    # Podobnie dla RBD (wzrost -> konsolidacja -> spadek)
-    # Sprawdzamy wzrost
-    rise_start = recent['close'].iloc[0]
-    rise_end = recent['close'].iloc[5]
-    rise_pct = (rise_end - rise_start) / rise_start
-    if rise_pct > 0.01:
-        base_low = recent['low'].iloc[6:11].min()
-        base_high = recent['high'].iloc[6:11].max()
-        base_range = (base_high - base_low) / base_low
-        if base_range < 0.005:
-            drop_start2 = recent['close'].iloc[11]
-            drop_end2 = recent['close'].iloc[-1]
-            drop_pct2 = (drop_end2 - drop_start2) / drop_start2
-            if drop_pct2 < -0.01:
-                result["type"] = "RBD"
-                result["base_low"] = round(base_low, 2)
-                result["base_high"] = round(base_high, 2)
+    recent = df.tail(15).reset_index(drop=True)
+    if len(recent) < 15:
+        return result  # defensive — tail may return less if NaN-filled
+
+    try:
+        # ── DBR (Drop → Base → Rally) ──
+        drop_start = float(recent['close'].iloc[0])
+        drop_end = float(recent['close'].iloc[5])
+        if drop_start <= 0:
+            return result
+        drop_pct = (drop_end - drop_start) / drop_start
+        if drop_pct < -0.01:
+            base_low = float(recent['low'].iloc[6:11].min())
+            base_high = float(recent['high'].iloc[6:11].max())
+            if base_low > 0:
+                base_range = (base_high - base_low) / base_low
+                if base_range < 0.005:
+                    rally_start = float(recent['close'].iloc[11])
+                    rally_end = float(recent['close'].iloc[-1])
+                    if rally_start > 0:
+                        rally_pct = (rally_end - rally_start) / rally_start
+                        if rally_pct > 0.01:
+                            result["type"] = "DBR"
+                            result["base_low"] = round(base_low, 2)
+                            result["base_high"] = round(base_high, 2)
+
+        # ── RBD (Rally → Base → Drop) ──
+        rise_start = float(recent['close'].iloc[0])
+        rise_end = float(recent['close'].iloc[5])
+        if rise_start <= 0:
+            return result
+        rise_pct = (rise_end - rise_start) / rise_start
+        if rise_pct > 0.01:
+            base_low = float(recent['low'].iloc[6:11].min())
+            base_high = float(recent['high'].iloc[6:11].max())
+            if base_low > 0:
+                base_range = (base_high - base_low) / base_low
+                if base_range < 0.005:
+                    drop_start2 = float(recent['close'].iloc[11])
+                    drop_end2 = float(recent['close'].iloc[-1])
+                    if drop_start2 > 0:
+                        drop_pct2 = (drop_end2 - drop_start2) / drop_start2
+                        if drop_pct2 < -0.01:
+                            result["type"] = "RBD"
+                            result["base_low"] = round(base_low, 2)
+                            result["base_high"] = round(base_high, 2)
+    except (IndexError, KeyError, ValueError, ZeroDivisionError) as e:
+        import logging
+        logging.getLogger("quant_sentinel").warning(
+            f"detect_dbr_rbd failed on df len={len(df)}: {e}")
+        return {"type": None, "base_low": None, "base_high": None}
 
     return result
 
