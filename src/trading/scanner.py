@@ -496,13 +496,16 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         return None
 
     # --- 6d. PREMIUM/DISCOUNT FILTER — nie kupuj na premium, nie shortuj na discount ---
-    # 5m scalp override (2026-04-14): on 5m we allow LONG-in-premium /
-    # SHORT-in-discount IFF confluence_count >= 3 (raised bar to compensate
-    # for worse R:R positioning). Non-5m TFs keep the hard block — premium
-    # positioning matters much more for swing trades.
+    # 5m scalp override (2026-04-14, v2): allow LONG-in-premium /
+    # SHORT-in-discount on 5m when confluence_count >= 2 (matches the 5m
+    # min_conf gate already enforced earlier in the function). Initial
+    # override at >=3 never triggered — live setups on 5m cluster at
+    # confluence=2. Lowering the bar to 2 effectively disables premium
+    # filter on 5m but keeps it strict on 15m/1h/4h where premium
+    # positioning genuinely kills R:R for longer holds.
     is_premium = analysis.get('is_premium', False)
     is_discount = analysis.get('is_discount', False)
-    _premium_override_5m = (str(tf) == "5m" and confluence_count >= 3)
+    _premium_override_5m = (str(tf) == "5m" and confluence_count >= 2)
     if direction_str == "LONG" and is_premium and not _premium_override_5m:
         logger.info(f"🔍 [MTF] {tf}: LONG w strefie PREMIUM — złe R:R, pomijam")
         return None
