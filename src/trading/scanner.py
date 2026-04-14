@@ -402,6 +402,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # ML validation is done separately in step 5 with the correct TF candles.
     try:
         import pandas as _pd
+        analysis['tf'] = tf  # pass TF so finance.py can apply scalp-mode on 5m
         pos = calculate_position(analysis, balance, currency, "", df=_pd.DataFrame())
     except Exception as e:
         logger.warning(f"🔍 [MTF] {tf}: błąd calculate_position: {e}")

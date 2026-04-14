@@ -113,6 +113,23 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     sl_min_distance = db.get_param("sl_min_distance", 4.0)
     tp_to_sl_ratio = db.get_param("tp_to_sl_ratio", 2.5)
 
+    # Scalp mode: 5m TFs get tighter floors so $10-30 moves can clear filters.
+    # On H1+ we keep the original conservative floors (4.0 SL, 2.5 RR).
+    # Rationale: XAU/USD on 5m has ATR ~$2-4, so forcing $4 SL + 2.5 RR means
+    # $10 min TP and swing-based targets usually blow up to $30-80. Scalp mode
+    # relaxes to $2 SL floor + 1.5 RR + TP capped at 3R (kills lottery ticket
+    # swing-based TPs while keeping the realistic scalp range on the table).
+    tf_signal = (analysis_data.get('tf') or '').lower()
+    is_scalp = tf_signal in ('5m', '5min', 'm5')
+    if is_scalp:
+        sl_floor = 2.0
+        rr_floor = 1.5
+        target_rr_cap = 3.0  # max TP distance as multiple of SL distance
+    else:
+        sl_floor = sl_min_distance
+        rr_floor = 2.0
+        target_rr_cap = None  # no cap — honor structural swing/FVG targets
+
     # ========== 🤖 ENSEMBLE ML INTEGRATION ==========
     ensemble_result = None
     ml_signal = None
@@ -281,14 +298,11 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
         pass
 
     # --- 2. SL i TP (STRUCTURAL PLACEMENT) ---
-    # Zasada: SL oparte na strukturze rynku (swing levels), nie na ATR od entry.
-    # Minimalne R:R = 2.0:1 — nie otwieraj trade jesli R:R za niskie.
-    # ATR sluzy jako bufor/walidacja, NIE jako baza SL.
-    # SL_min: respect user-configured sl_min_distance (default 4.0 from DB)
-    # but don't force it above 3.0 if user wants tighter. Hardcoded 5.0 floor
-    # was forcing oversized stops on low-ATR 5m setups.
-    sl_min = max(sl_min_distance, 3.0)
-    sl_max = max(atr * 4.0, 30.0)      # absolutne maximum $30 (lub 4x ATR)
+    # SL based on market structure (swing levels), not ATR from entry.
+    # Scalp mode (5m): sl_floor = 2.0, rr_floor = 1.5, TP capped at 3R.
+    # Swing mode (H1+): sl_floor = DB config (default 4.0), rr_floor = 2.0, no cap.
+    sl_min = sl_floor
+    sl_max = max(atr * 4.0, 30.0)      # absolute max $30 (or 4x ATR)
 
     if direction == "LONG":
         # SL: ponizej swing low (strukturalny poziom) + bufor ATR
@@ -309,20 +323,23 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
             sl_dist = sl_max
 
         # TP: strukturalny target z wymuszonym minimum R:R
-        min_rr = max(tp_to_sl_ratio, 2.0)
+        min_rr = max(tp_to_sl_ratio, rr_floor)
         tp_min_target = entry + sl_dist * min_rr
+        # Scalp mode: cap TP at target_rr_cap × SL distance so swing/FVG
+        # targets don't push us into "wait for $80 move" territory.
+        tp_cap = entry + sl_dist * target_rr_cap if target_rr_cap else None
 
         if swing_high and swing_high > tp_min_target:
-            tp = round(swing_high, 2)
+            tp = round(min(swing_high, tp_cap) if tp_cap else swing_high, 2)
         elif fvg_type == "bullish" and fvg_upper and fvg_upper > tp_min_target:
-            tp = round(fvg_upper, 2)
+            tp = round(min(fvg_upper, tp_cap) if tp_cap else fvg_upper, 2)
         else:
             tp = round(tp_min_target, 2)
 
-        # Validate R:R >= 2.0
+        # Validate R:R >= rr_floor
         actual_rr = (tp - entry) / (entry - sl) if (entry - sl) > 0 else 0
-        if actual_rr < 2.0:
-            tp = round(entry + sl_dist * 2.0, 2)
+        if actual_rr < rr_floor:
+            tp = round(entry + sl_dist * rr_floor, 2)
 
     else:  # SHORT
         # SL: powyzej swing high (strukturalny poziom) + bufor ATR
@@ -343,20 +360,22 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
             sl_dist = sl_max
 
         # TP: strukturalny target z minimum R:R
-        min_rr = max(tp_to_sl_ratio, 2.0)
+        min_rr = max(tp_to_sl_ratio, rr_floor)
         tp_min_target = entry - sl_dist * min_rr
+        # Scalp mode: cap TP distance at target_rr_cap × SL distance.
+        tp_cap = entry - sl_dist * target_rr_cap if target_rr_cap else None
 
         if swing_low and swing_low < tp_min_target:
-            tp = round(swing_low, 2)
+            tp = round(max(swing_low, tp_cap) if tp_cap else swing_low, 2)
         elif fvg_type == "bearish" and fvg_lower and fvg_lower < tp_min_target:
-            tp = round(fvg_lower, 2)
+            tp = round(max(fvg_lower, tp_cap) if tp_cap else fvg_lower, 2)
         else:
             tp = round(tp_min_target, 2)
 
-        # Validate R:R >= 2.0
+        # Validate R:R >= rr_floor
         actual_rr = (entry - tp) / (sl - entry) if (sl - entry) > 0 else 0
-        if actual_rr < 2.0:
-            tp = round(entry - sl_dist * 2.0, 2)
+        if actual_rr < rr_floor:
+            tp = round(entry - sl_dist * rr_floor, 2)
 
     # --- 3. Waluta i kapitał ---
     balance_in_usd = balance
@@ -410,7 +429,9 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
                 "reason": f"Portfolio heat {heat_pct:.1f}% exceeds {MAX_PORTFOLIO_HEAT_PCT}% limit"}
 
     # --- 7. FILTR: minimalny dystans TP ---
-    MIN_TP_DISTANCE = 5.0
+    # Scalp mode: $3 floor so 5m setups with SL=$2 + RR=1.5 ($3 TP) aren't
+    # rejected. Swing mode: $5 floor as before.
+    MIN_TP_DISTANCE = 3.0 if is_scalp else 5.0
     dynamic_min_distance = atr * min_tp_distance_mult
     min_distance = max(dynamic_min_distance, MIN_TP_DISTANCE)
 
