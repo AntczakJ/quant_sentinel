@@ -973,8 +973,10 @@ async def scan_market_task(context):
                                 (trade_id,))
                         else:
                             db.update_trade_confirmation(trade_id, None, 0, "unknown")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(
+                        f"[SCANNER] Trade {direction}@${entry:.2f} logged but "
+                        f"setup_grade/confirmation update failed: {e}")
 
                 logger.info(
                     f"💾 [SCANNER] Trade zapisany: {direction} @ {entry:.2f} "
@@ -1356,16 +1358,25 @@ async def resolve_trades_task(context):
                     trail_event = "LOCK_1.5R"
 
                 elif r_multiple >= 1.0:
-                    # Breakeven — SL at entry + spread buffer
+                    # Breakeven — SL at entry ± spread buffer depending on side.
+                    # BUG FIX 2026-04-14: SHORT branch was also using `+ spread_buf`,
+                    # which moved the stop UP on a SHORT (i.e. AWAY from the
+                    # already-in-profit price), defeating breakeven entirely.
                     if "LONG" in dir_clean:
                         candidate_sl = round(entry_f + spread_buf, 2)
                     else:
-                        candidate_sl = round(entry_f + spread_buf, 2)
+                        candidate_sl = round(entry_f - spread_buf, 2)
                     trail_event = "BREAKEVEN_1R"
 
                 elif r_multiple >= 0.5:
-                    # Partial risk reduction — cut initial risk by 30%
-                    candidate_sl = _trail_sl(-0.7)  # SL at entry - 0.7R (was -1.0R)
+                    # Partial risk reduction — cut initial risk by 30%.
+                    # _trail_sl(r) returns entry_f + sl_dist * r where sl_dist is
+                    # POSITIVE for LONG and NEGATIVE for SHORT. Passing -0.7
+                    # correctly produces entry - 0.7R on LONG and entry + 0.7R
+                    # on SHORT (both "pulling the SL closer to entry"), so this
+                    # is actually direction-aware already. Left as-is after
+                    # audit verification.
+                    candidate_sl = _trail_sl(-0.7)
                     trail_event = "REDUCE_0.5R"
 
                 # Apply trailing stop update (only if improvement)

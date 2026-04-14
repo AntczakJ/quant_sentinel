@@ -131,9 +131,15 @@ class RiskManager:
             kelly_f = (p * b - q) / b
 
             if kelly_f <= 0:
-                # Negative Kelly = system is unprofitable, use minimum risk
-                logger.warning(f"Kelly f* negative ({kelly_f:.3f}): WR={p:.1%}, payoff={b:.2f} — using minimum 0.25%")
-                return 0.25
+                # Negative Kelly = system is unprofitable on recent history.
+                # Previously returned 0.25% ("use minimum risk") which is a
+                # sunk-cost trap: if the system is in a drawdown spiral the
+                # math says STOP, not "keep trading at floor risk". Return
+                # 0.0 so the caller halts (caller multiplies balance by
+                # risk_percent/100, so 0 → zero position size → no trade).
+                logger.error(f"Kelly f* <= 0 ({kelly_f:.3f}): WR={p:.1%} payoff={b:.2f} — "
+                             f"system unprofitable on recent trades, HALTING new entries")
+                return 0.0
 
             # Apply fraction for safety
             optimal_risk = KELLY_FRACTION * kelly_f * 100  # Convert to percent
@@ -257,10 +263,12 @@ class RiskManager:
         return 1.0
 
     def _get_daily_loss_pct(self, balance: float) -> float:
-        """Get today's total realized loss as percentage of balance."""
+        """Get today's total realized loss as percentage of balance.
+        Uses UTC day boundary so PL/NY timezone differences don't cause
+        the counter to reset at a weird hour relative to 24/5 market."""
         from src.core.database import NewsDB
         db = NewsDB()
-        today = datetime.date.today().isoformat()
+        today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
         rows = db._query(
             "SELECT COALESCE(SUM(profit), 0) FROM trades "
             "WHERE status IN ('LOSS', 'WIN') AND DATE(timestamp) = ?",

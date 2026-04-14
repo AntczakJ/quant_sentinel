@@ -568,7 +568,11 @@ def _persist_prediction(results: Dict):
             _voter_value('deeptrans'),
         ))
     except Exception as e:
-        logger.debug(f"Could not persist prediction: {e}")
+        # Escalated from debug -> warning. Losing ensemble predictions means
+        # losing the audit trail used by /api/models/voter-attribution. If
+        # this fires regularly something is structurally broken (schema,
+        # disk, lock timeout) and we want it visible.
+        logger.warning(f"_persist_prediction failed: {e}")
 
 
 # ============================================================================
@@ -832,8 +836,9 @@ def get_ensemble_prediction(
                 logger.info(f"⚠️ Ensemble: regime={vol_regime} WR={regime_wr:.0%} — ostrożniejsze wagi")
                 # Wzmocnij SMC (rule-based, stabilniejszy w złych reżimach)
                 regime_weights['smc'] = regime_weights.get('smc', 0.3) * 1.3
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Ensemble regime history lookup failed: {e} — "
+                       f"falling back to default weights")
 
     if vol_pctile < 0.25:
         # Low volatility — XGB (mean reversion) stronger, LSTM/DQN weaker
@@ -880,8 +885,13 @@ def get_ensemble_prediction(
         results["final_score"] = weighted_sum / total_weight
         results["confidence"] = confidence_sum / total_weight
     else:
+        # Degenerate case — all voters unavailable or all weights zero.
+        # Force CZEKAJ immediately so downstream signal logic doesn't
+        # treat NaN/default 0.5 as "neutral but valid".
         results["final_score"] = 0.5
         results["confidence"] = 0.0
+        results["ensemble_signal"] = "CZEKAJ"
+        logger.warning("Ensemble: total_weight=0 (no active voters) — forcing CZEKAJ")
 
     # ========== MODEL AGREEMENT FILTER ==========
     # Sprawdź czy modele się zgadzają w kierunku

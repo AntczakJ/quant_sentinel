@@ -266,7 +266,10 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     # Zasada: SL oparte na strukturze rynku (swing levels), nie na ATR od entry.
     # Minimalne R:R = 2.0:1 — nie otwieraj trade jesli R:R za niskie.
     # ATR sluzy jako bufor/walidacja, NIE jako baza SL.
-    sl_min = max(sl_min_distance, 5.0)  # absolutne minimum $5
+    # SL_min: respect user-configured sl_min_distance (default 4.0 from DB)
+    # but don't force it above 3.0 if user wants tighter. Hardcoded 5.0 floor
+    # was forcing oversized stops on low-ATR 5m setups.
+    sl_min = max(sl_min_distance, 3.0)
     sl_max = max(atr * 4.0, 30.0)      # absolutne maximum $30 (lub 4x ATR)
 
     if direction == "LONG":
@@ -371,6 +374,15 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     lot_size = round(risk_usd / (dist * 100), 2)
     if lot_size < 0.01:
         lot_size = 0.01
+    # Hard upper bound — protect against pathological inputs (tiny dist,
+    # huge balance, bad risk_percent) that could ask for 30+ lots (= $3M
+    # notional on XAU/USD). 0.5 lot = ~$50k notional, well within typical
+    # broker micro limits and consistent with conservative risk profile.
+    if lot_size > 0.5:
+        logger.warning(
+            f"lot_size {lot_size} exceeds safety cap — clamped to 0.5 "
+            f"(risk_usd={risk_usd:.2f} dist={dist:.2f} balance={balance_in_usd:.2f})")
+        lot_size = 0.5
 
     # --- 6. Portfolio heat check (max aggregate risk) ---
     can_open, heat_pct = rm.check_portfolio_heat(balance_in_usd, risk_usd)

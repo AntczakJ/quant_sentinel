@@ -346,7 +346,9 @@ async def _background_scanner():
             logger.info("📡 [BG Scanner] Task cancelled")
             return
         except Exception as e:
-            logger.warning(f"📡 [BG Scanner] Error: {e}")
+            # Log ERROR with traceback so silent death is visible. Loop keeps
+            # running — one bad cycle shouldn't kill the whole scanner.
+            logger.error(f"📡 [BG Scanner] Error in cycle: {e}", exc_info=True)
 
         # Wait until next scan cycle
         await asyncio.sleep(_SCAN_INTERVAL_SEC)
