@@ -177,6 +177,82 @@ async def get_model_alerts(limit: int = 20, unresolved_only: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+LSTM_SWAP_TS = "2026-04-13T01:36:00"  # sweep winner deployed
+
+
+def _hist_stats(vals: list[float], bins: int = 20) -> dict:
+    """Compute histogram + bimodality metrics for a list of [0,1] predictions."""
+    hist = [0] * bins
+    for v in vals:
+        idx = min(int(v * bins), bins - 1)
+        hist[idx] += 1
+    n = len(vals)
+    if n == 0:
+        return {
+            "histogram": hist, "bins": bins, "n": 0,
+            "mean": None, "std": None, "conviction": None,
+            "extreme_frac": None, "middle_frac": None,
+        }
+    mean = sum(vals) / n
+    var = sum((v - mean) ** 2 for v in vals) / n
+    conviction = sum(abs(v - 0.5) for v in vals) / n
+    extreme = sum(1 for v in vals if v < 0.1 or v > 0.9)
+    middle = sum(1 for v in vals if 0.35 <= v <= 0.65)
+    return {
+        "histogram": hist, "bins": bins, "n": n,
+        "mean": round(mean, 4), "std": round(var ** 0.5, 4),
+        "conviction": round(conviction, 4),
+        "extreme_frac": round(extreme / n, 4),
+        "middle_frac": round(middle / n, 4),
+    }
+
+
+@router.get("/lstm-distribution", summary="LSTM prediction distribution (bimodality monitor)")
+async def get_lstm_distribution(hours: int = 48):
+    """
+    Histogram of lstm_pred over last `hours` vs a pre-swap reference window.
+    Detects degenerate overconfident models (2026-04-13 sweep-winner concern).
+    Extreme fraction >0.7 with middle fraction <0.15 = bimodal/degenerate.
+    """
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        post_rows = db._query(
+            "SELECT lstm_pred FROM ml_predictions "
+            "WHERE timestamp >= ? AND lstm_pred IS NOT NULL",
+            (LSTM_SWAP_TS,),
+        )
+        post_vals = [float(r[0]) for r in post_rows if r[0] is not None]
+        pre_rows = db._query(
+            "SELECT lstm_pred FROM ml_predictions "
+            "WHERE timestamp >= ? AND timestamp < ? AND lstm_pred IS NOT NULL "
+            "ORDER BY timestamp DESC LIMIT 5000",
+            ("2026-04-06T00:00:00", LSTM_SWAP_TS),
+        )
+        pre_vals = [float(r[0]) for r in pre_rows if r[0] is not None]
+
+        post = _hist_stats(post_vals)
+        pre = _hist_stats(pre_vals)
+
+        verdict = "healthy"
+        if post["n"] >= 20:
+            if post["extreme_frac"] and post["extreme_frac"] > 0.7 and (post["middle_frac"] or 0) < 0.15:
+                verdict = "degenerate"
+            elif post["conviction"] and pre["conviction"] and post["conviction"] > 3 * pre["conviction"]:
+                verdict = "concerning"
+
+        return {
+            "post_swap": post,
+            "pre_swap_reference": pre,
+            "swap_timestamp": LSTM_SWAP_TS,
+            "verdict": verdict,
+            "hours_requested": hours,
+        }
+    except Exception as e:
+        logger.error(f"lstm-distribution error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/alerts/{alert_id}/resolve", summary="Resolve a model alert")
 async def resolve_model_alert(alert_id: int):
     """Mark a model alert as resolved."""

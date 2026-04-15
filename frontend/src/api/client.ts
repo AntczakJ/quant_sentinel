@@ -349,7 +349,34 @@ export const modelsAPI = {
     const response = await client.get('/models/xgboost');
     return response.data;
   },
+
+  getLSTMDistribution: async (hours: number = 48) => {
+    const response = await client.get<LSTMDistributionResponse>(
+      '/models/lstm-distribution',
+      { params: { hours } }
+    );
+    return response.data;
+  },
 };
+
+export interface LSTMHistogramStats {
+  histogram: number[];
+  bins: number;
+  n: number;
+  mean: number | null;
+  std: number | null;
+  conviction: number | null;
+  extreme_frac: number | null;
+  middle_frac: number | null;
+}
+
+export interface LSTMDistributionResponse {
+  post_swap: LSTMHistogramStats;
+  pre_swap_reference: LSTMHistogramStats;
+  swap_timestamp: string;
+  verdict: 'healthy' | 'concerning' | 'degenerate';
+  hours_requested: number;
+}
 
 // Training endpoints
 export const trainingAPI = {

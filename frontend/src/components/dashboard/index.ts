@@ -30,4 +30,5 @@ export { SweepLeaderboard } from './SweepLeaderboard';
 export { SweepPromotePanel } from './SweepPromotePanel';
 export { VoterAttribution } from './VoterAttribution';
 export { ModelsStalenessBadge } from './ModelsStalenessBadge';
+export { LSTMDistribution } from './LSTMDistribution';
 

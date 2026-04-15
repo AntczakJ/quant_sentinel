@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge, LSTMDistribution } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
 import { PageHeader } from '../components/ui';
 import { trainingAPI } from '../api/client';
@@ -95,6 +95,12 @@ export default function ModelsPage() {
       title: 'Model Health Monitor',
       content: <ModelDriftAlert />,
       defaultLayout: { x: 0, y: 18, w: 12, h: 3, minW: 6, minH: 2 },
+    },
+    {
+      id: 'lstm-distribution',
+      title: 'LSTM Prediction Distribution (bimodality)',
+      content: <LSTMDistribution />,
+      defaultLayout: { x: 0, y: 21, w: 12, h: 5, minW: 6, minH: 4 },
     },
     {
       id: 'voter-attribution',
