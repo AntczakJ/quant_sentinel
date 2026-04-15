@@ -351,16 +351,6 @@ def get_macro_regime(usdjpy_prices: list, current_usdjpy: float, atr: float, atr
     except (ImportError, AttributeError):
         pass
 
-    # --- Signal 8: Retail sentiment — contrarian (Myfxbook) ---
-    try:
-        from src.data.macro_data import get_retail_sentiment
-        retail = get_retail_sentiment()
-        retail_signal = retail.get("signal", 0)
-        if retail_signal != 0:
-            signals["retail_sentiment"] = retail_signal
-    except (ImportError, AttributeError):
-        pass
-
     # --- Signal 9: Seasonality — month + day-of-week historical bias ---
     try:
         from src.data.macro_data import get_seasonality_signal

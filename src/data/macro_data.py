@@ -38,9 +38,7 @@ _CACHE_DIR = "data"
 # with. Macro cache payloads are plain dicts of floats/strings so JSON is
 # a drop-in replacement with no loss of fidelity.)
 _FRED_CACHE_FILE = os.path.join(_CACHE_DIR, "fred_cache.json")
-_SENTIMENT_CACHE_FILE = os.path.join(_CACHE_DIR, "sentiment_cache.json")
 _FRED_CACHE_TTL = 14400   # 4 hours (FRED data is daily)
-_SENTIMENT_CACHE_TTL = 3600  # 1 hour
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -235,157 +233,10 @@ def _interpret_fred_signal(name: str, value: float, series) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  2. MYFXBOOK RETAIL SENTIMENT
+#  (REMOVED 2026-04-15) Myfxbook retail sentiment — required broker linking
+#  which user did not want. Function get_retail_sentiment() removed. Callers
+#  in smc_engine.py and get_full_macro_signal() updated to not reference it.
 # ═══════════════════════════════════════════════════════════════════════════
-
-# Myfxbook login-failure circuit breaker — when credentials are wrong
-# (common case: .env stale after password rotation), the login endpoint
-# fires 4x per scan cycle × 12 cycles/hour = 48 warnings/hour of pure spam.
-# Cache the "bad creds" state for 1h so only one warning lands per hour
-# and we skip 47 network calls. Resets automatically at interval rollover
-# so a .env update is picked up within the hour.
-_myfxbook_bad_until: float = 0.0
-_MYFXBOOK_BAD_BACKOFF_SEC = 3600
-
-
-def get_retail_sentiment() -> Dict:
-    """
-    Fetch XAUUSD retail trader positioning from Myfxbook Community Outlook.
-
-    Returns:
-      {
-        "long_pct": 72.5,       # % of retail traders long
-        "short_pct": 27.5,      # % of retail traders short
-        "signal": 1,            # contrarian: crowd long → bearish gold
-        "signal_text": "bearish (retail crowded long)",
-      }
-
-    Requires MYFXBOOK_EMAIL and MYFXBOOK_PASSWORD in .env (free account).
-    Falls back to empty result if unavailable.
-    """
-    global _myfxbook_bad_until
-
-    cached = _load_cache(_SENTIMENT_CACHE_FILE, _SENTIMENT_CACHE_TTL)
-    if cached is not None:
-        return cached
-
-    # Backtest mode: skip network call entirely — historical retail sentiment
-    # is not reconstructible and isn't the primary signal anyway.
-    if os.environ.get("QUANT_BACKTEST_MODE") == "1":
-        return {"signal": 0, "signal_text": "backtest_skip"}
-
-    # Circuit breaker: if credentials failed recently, short-circuit
-    if time.time() < _myfxbook_bad_until:
-        return {"signal": 0, "error": "myfxbook_bad_creds_backoff"}
-
-    email = os.getenv("MYFXBOOK_EMAIL", "")
-    password = os.getenv("MYFXBOOK_PASSWORD", "")
-
-    if not email or not password:
-        logger.debug("[MACRO] Myfxbook credentials not set — retail sentiment unavailable")
-        return {"signal": 0, "signal_text": "unavailable"}
-
-    try:
-        import requests
-
-        # Step 1: Login to get session ID
-        login_resp = requests.get(
-            "https://www.myfxbook.com/api/login.json",
-            params={"email": email, "password": password},
-            timeout=10,
-        )
-        login_data = login_resp.json()
-        if login_data.get("error"):
-            err_msg = login_data.get('message', '?')
-            # Trip circuit breaker: suppress further calls for 1h
-            _myfxbook_bad_until = time.time() + _MYFXBOOK_BAD_BACKOFF_SEC
-            logger.warning(
-                f"[MACRO] Myfxbook login failed: {err_msg} — "
-                f"suppressing for {_MYFXBOOK_BAD_BACKOFF_SEC//60}min. "
-                f"Update MYFXBOOK_EMAIL/PASSWORD in .env to re-enable."
-            )
-            return {"signal": 0, "error": err_msg}
-
-        session_id = login_data.get("session")
-        if not session_id:
-            return {"signal": 0, "error": "No session ID"}
-
-        # Step 2: Fetch community outlook
-        outlook_resp = requests.get(
-            "https://www.myfxbook.com/api/get-community-outlook.json",
-            params={"session": session_id},
-            timeout=10,
-        )
-        outlook_data = outlook_resp.json()
-
-        # Step 3: Find XAUUSD in the response
-        symbols = outlook_data.get("symbols", [])
-        gold = None
-        for sym in symbols:
-            name = sym.get("name", "").upper()
-            if "XAUUSD" in name or "GOLD" in name:
-                gold = sym
-                break
-
-        if not gold:
-            logger.debug("[MACRO] XAUUSD not found in Myfxbook outlook")
-            # Logout
-            requests.get("https://www.myfxbook.com/api/logout.json",
-                         params={"session": session_id}, timeout=5)
-            return {"signal": 0, "error": "XAUUSD not in outlook"}
-
-        long_pct = float(gold.get("longPercentage", 50))
-        short_pct = float(gold.get("shortPercentage", 50))
-        long_vol = float(gold.get("longVolume", 0))
-        short_vol = float(gold.get("shortVolume", 0))
-        avg_long_price = float(gold.get("avgLongPrice", 0))
-        avg_short_price = float(gold.get("avgShortPrice", 0))
-
-        # Contrarian signal: if retail is heavily one-sided, trade the opposite
-        if long_pct > 75:
-            signal = 1   # retail crowded long → bearish (contrarian)
-            signal_text = "bearish (retail crowded long)"
-        elif short_pct > 75:
-            signal = -1  # retail crowded short → bullish (contrarian)
-            signal_text = "bullish (retail crowded short)"
-        elif long_pct > 65:
-            signal = 1   # mildly bearish
-            signal_text = "mildly bearish (retail majority long)"
-        elif short_pct > 65:
-            signal = -1  # mildly bullish
-            signal_text = "mildly bullish (retail majority short)"
-        else:
-            signal = 0
-            signal_text = "neutral (balanced positioning)"
-
-        result = {
-            "long_pct": round(long_pct, 1),
-            "short_pct": round(short_pct, 1),
-            "long_volume": long_vol,
-            "short_volume": short_vol,
-            "avg_long_price": avg_long_price,
-            "avg_short_price": avg_short_price,
-            "signal": signal,
-            "signal_text": signal_text,
-            "timestamp": datetime.datetime.now().isoformat(),
-        }
-
-        # Logout
-        try:
-            requests.get("https://www.myfxbook.com/api/logout.json",
-                         params={"session": session_id}, timeout=5)
-        except Exception:
-            pass
-
-        _save_cache(_SENTIMENT_CACHE_FILE, result)
-        logger.info(f"[MACRO] Myfxbook: XAUUSD {long_pct:.0f}% long / {short_pct:.0f}% short → {signal_text}")
-        return result
-
-    except ImportError:
-        return {"signal": 0, "error": "requests not installed"}
-    except Exception as e:
-        logger.warning(f"[MACRO] Myfxbook fetch failed: {e}")
-        return {"signal": 0, "error": str(e)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -467,17 +318,17 @@ def get_full_macro_signal() -> Dict:
 
     Combines:
       - FRED real yields + inflation + dollar + gold VIX
-      - Retail sentiment (Myfxbook)
       - Seasonality (month + day-of-week)
       - COT data (already in smc_engine)
 
-    Returns composite signal and all raw data for transparency.
+    Myfxbook retail sentiment removed 2026-04-15 — required broker linking
+    which user didn't want, and credentials had gone stale causing log spam.
     """
-    # Backtest mode: macro data (FRED series, Myfxbook retail) is only
-    # available for TODAY — applying it to historical bars = look-ahead.
-    # Seasonality is deterministic (month/weekday) so can stay. But to
-    # keep backtest behavior comparable to strategy-only signal, we
-    # short-circuit the whole thing to neutral.
+    # Backtest mode: macro data (FRED series) is only available for TODAY —
+    # applying it to historical bars = look-ahead. Seasonality is
+    # deterministic (month/weekday) so can stay. But to keep backtest
+    # behavior comparable to strategy-only signal, we short-circuit the
+    # whole thing to neutral.
     if os.environ.get("QUANT_BACKTEST_MODE") == "1":
         return {
             "composite_signal": 0,
@@ -486,7 +337,6 @@ def get_full_macro_signal() -> Dict:
             "data": {"backtest_mode": True},
         }
     fred = get_fred_data()
-    sentiment = get_retail_sentiment()
     seasonality = get_seasonality_signal()
 
     signals = []
@@ -495,11 +345,6 @@ def get_full_macro_signal() -> Dict:
     fred_signal = fred.get("composite_signal", 0)
     if fred_signal != 0:
         signals.append(("fred", fred_signal))
-
-    # Retail sentiment (contrarian)
-    sent_signal = sentiment.get("signal", 0)
-    if sent_signal != 0:
-        signals.append(("retail_sentiment", sent_signal))
 
     # Seasonality
     season_signal = seasonality.get("combined_signal", 0)
@@ -525,6 +370,5 @@ def get_full_macro_signal() -> Dict:
         "bearish_count": bearish,
         "signals": dict(signals),
         "fred": fred,
-        "retail_sentiment": sentiment,
         "seasonality": seasonality,
     }
