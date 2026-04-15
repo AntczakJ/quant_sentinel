@@ -371,13 +371,23 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     else:
         _allow_stable_5m = False
 
+    # Asian session (typically 00:00-08:00 CEST) is structurally a ranging market
+    # for XAU/USD — "Stable" is the DEFAULT state, not a warning sign. Blocking
+    # Stable in Asian killed ~230 setups across H4/H1/M15 overnight. Allow it
+    # across all TFs when session = asian, on top of the 5m-always exception.
+    _session = (analysis.get('session') or '').lower()
+    _allow_stable_asian = _session == 'asian'
+
     strong_setup = (
         (has_grab_mss and confluence_count >= _min_conf)   # premium: grab+mss + N confirmations
         or (has_dbr_rbd and confluence_count >= _min_conf)  # DBR/RBD + N confirmations
         or confluence_count >= _min_conf                     # standalone: N+ signals required
     )
-    # In relaxed mode OR on 5m scalp setups, Stable structure is NOT an automatic block
-    block_stable = is_stable and not _relax and not _allow_stable_5m
+    # Stable is NOT an automatic block when: relaxed mode, 5m scalp, or asian session
+    block_stable = (
+        is_stable and not _relax
+        and not _allow_stable_5m and not _allow_stable_asian
+    )
 
     if not strong_setup or block_stable:
         reason = "structure=Stable (chop)" if block_stable else f"confluence={confluence_count}<{_min_conf}"

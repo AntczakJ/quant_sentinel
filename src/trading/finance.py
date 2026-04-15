@@ -79,10 +79,15 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     is_killzone = analysis_data.get('is_killzone', False)
     sl_multiplier = 1.3 if is_killzone else 1.0  # Killzone = wyższa zmienność → szerszy SL
 
-    # --- FILTR SESJI: skip Asian session (zbyt niska zmienność → noise stops) ---
-    if session == 'asian':
+    # --- FILTR SESJI: sesja azjatycka dla slow TFs blokowana (za dużo noise
+    # vs sygnał dla SL $5+), ale 5m/15m scalp (SL $2-3) radzi sobie z chop.
+    # Zmiana 2026-04-15: pozwolono 5m/15m w Azji bo user widział sporo ruchów
+    # których silnik nie łapał przez ten filtr. H4/H1 nadal blokowane.
+    _tf_raw = (analysis_data.get('tf') or '').lower()
+    _is_slow_tf = _tf_raw in ('4h', '1h', '60m', 'h4', 'h1')
+    if session == 'asian' and _is_slow_tf:
         _bump_metric("trades_rejected")
-        return {"direction": "CZEKAJ", "reason": "Sesja azjatycka — zbyt niska zmienność na XAU/USD"}
+        return {"direction": "CZEKAJ", "reason": "Sesja azjatycka — slow TF (H4/H1) za dużo noise na XAU/USD"}
 
     # Pobranie dynamicznych parametrów (zamiast hardcoded)
     from src.core.database import NewsDB
