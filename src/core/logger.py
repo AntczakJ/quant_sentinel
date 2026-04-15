@@ -48,10 +48,19 @@ def setup_logger(name: str = 'quant_sentinel', level: int = logging.INFO) -> log
     Returns:
         Configured logger instance
     """
-    # Setup log directory
+    # Setup log directory. On Windows, RotatingFileHandler.doRollover() calls
+    # os.rename() which fails if another process has the file open — causing
+    # the PermissionError [WinError 32] spam we saw when backtest ran
+    # concurrently with the API. Fix: process-specific log files based on
+    # env. Backtest runs log to sentinel-backtest.log; everything else uses
+    # sentinel.log. Clean isolation, no shared locks.
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     log_dir = os.path.join(project_root, 'logs')
-    log_file = os.path.join(log_dir, 'sentinel.log')
+    if os.environ.get("QUANT_BACKTEST_MODE") == "1":
+        log_filename = 'sentinel-backtest.log'
+    else:
+        log_filename = 'sentinel.log'
+    log_file = os.path.join(log_dir, log_filename)
     os.makedirs(log_dir, exist_ok=True)
 
     # Get or create logger
@@ -125,7 +134,14 @@ def setup_json_log_file(name: str = 'quant_sentinel') -> None:
     Does not replace the existing human-readable handlers.
     """
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    json_log_path = os.path.join(project_root, 'logs', 'sentinel_structured.jsonl')
+    # Mirror the backtest/live split from setup_logger so rotation doesn't
+    # contend across processes.
+    json_filename = (
+        'sentinel-backtest_structured.jsonl'
+        if os.environ.get("QUANT_BACKTEST_MODE") == "1"
+        else 'sentinel_structured.jsonl'
+    )
+    json_log_path = os.path.join(project_root, 'logs', json_filename)
 
     existing = logging.getLogger(name)
 
