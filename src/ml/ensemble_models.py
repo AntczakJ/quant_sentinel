@@ -34,14 +34,43 @@ _models_loaded = {
     "dqn": False
 }
 
+# Track source-file mtime per model so auto-retrain can invalidate the cache.
+# Without this, once _models_loaded[x]=True is set, _load_x() returns the
+# cached session/model forever — even after retrain writes fresh .onnx /
+# .keras / .pkl to disk. API restart was the only way to pick up new
+# weights. Fix: on every call, compare current file mtime against what
+# was recorded at load time; if newer, flip _models_loaded[x] back to
+# False so the function re-enters the load path.
+_models_mtime: Dict[str, float] = {"lstm": 0.0, "xgb": 0.0, "dqn": 0.0, "scaler": 0.0}
+
+
+def _file_mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def _invalidate_if_stale(key: str, *paths: str) -> None:
+    """If any of the on-disk files is newer than cached mtime, mark the model
+    as unloaded so the next _load_* call reloads fresh. No-op when files are
+    unchanged — just a few stat() calls, negligible overhead per scan."""
+    current = max((_file_mtime(p) for p in paths if p), default=0.0)
+    if current > _models_mtime.get(key, 0.0) + 0.5:  # 0.5s tolerance for fs granularity
+        if _models_loaded.get(key):
+            logger.info(f"Model {key} changed on disk — invalidating cache")
+            _models_loaded[key] = False
+            _models_cache[key] = None
+
 
 def _load_lstm():
     """Lazy load LSTM model. Prefers ONNX+DirectML GPU if available."""
-    if _models_loaded["lstm"]:
-        return _models_cache["lstm"]
-
     keras_path = "models/lstm.keras"
     onnx_path = "models/lstm.onnx"
+    _invalidate_if_stale("lstm", keras_path, onnx_path)
+    if _models_loaded["lstm"]:
+        return _models_cache["lstm"]
+    _models_mtime["lstm"] = max(_file_mtime(keras_path), _file_mtime(onnx_path))
 
     # Try ONNX Runtime (GPU via DirectML) first
     try:
@@ -76,11 +105,12 @@ def _load_lstm():
 
 def _load_xgb():
     """Lazy load XGBoost model. Prefers ONNX+DirectML GPU if available."""
-    if _models_loaded["xgb"]:
-        return _models_cache["xgb"]
-
     pkl_path = "models/xgb.pkl"
     onnx_path = "models/xgb.onnx"
+    _invalidate_if_stale("xgb", pkl_path, onnx_path)
+    if _models_loaded["xgb"]:
+        return _models_cache["xgb"]
+    _models_mtime["xgb"] = max(_file_mtime(pkl_path), _file_mtime(onnx_path))
 
     # Try ONNX Runtime (GPU via DirectML) first
     try:
@@ -121,11 +151,12 @@ def _load_xgb():
 
 def _load_dqn(state_size=22, action_size=3):
     """Lazy load DQN Agent. Prefers ONNX+DirectML GPU if available."""
-    if _models_loaded["dqn"]:
-        return _models_cache["dqn"]
-
     keras_path = "models/rl_agent.keras"
     onnx_path = "models/rl_agent.onnx"
+    _invalidate_if_stale("dqn", keras_path, onnx_path)
+    if _models_loaded["dqn"]:
+        return _models_cache["dqn"]
+    _models_mtime["dqn"] = max(_file_mtime(keras_path), _file_mtime(onnx_path))
 
     # Try ONNX Runtime (GPU via DirectML) first
     try:
@@ -161,12 +192,19 @@ def _load_dqn(state_size=22, action_size=3):
 
 def _get_scaler():
     """Get or load persisted MinMaxScaler for LSTM (fitted during training)."""
+    scaler_path = "models/lstm_scaler.pkl"
+    # Invalidate if retrain wrote new scaler
+    current_mtime = _file_mtime(scaler_path)
+    if current_mtime > _models_mtime.get("scaler", 0.0) + 0.5:
+        if _models_cache["scaler"] is not None:
+            logger.info("Scaler changed on disk — invalidating cache")
+            _models_cache["scaler"] = None
     if _models_cache["scaler"] is not None:
         return _models_cache["scaler"], True  # (scaler, is_fitted)
+    _models_mtime["scaler"] = current_mtime
 
     try:
         import pickle
-        scaler_path = "models/lstm_scaler.pkl"
         if os.path.exists(scaler_path):
             with open(scaler_path, 'rb') as f:
                 scaler = pickle.load(f)
