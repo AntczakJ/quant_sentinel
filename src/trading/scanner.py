@@ -309,20 +309,33 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         structure_bullish = bos_bullish or choch_bullish
         structure_bearish = bos_bearish or choch_bearish
 
+        # Scalp mode (5m): structure conflict is a RISK SIGNAL, not a hard block.
+        # Small SL ($2-3) limits downside; halving lot further caps it. Slow
+        # TFs (H4/H1/M15) still hard-block because their larger SL makes
+        # fighting structure genuinely expensive.
+        _scalp_soften = str(tf) == "5m" and not _relax
         if direction_str == "LONG" and structure_bearish and not structure_bullish:
-            logger.info(f"[MTF] {tf}: LONG but BOS/CHoCH is bearish — structural conflict")
-            _log_rejection(db, tf, direction_str, current_price,
-                           "structure_direction_conflict", "directional_alignment",
-                           confluence_count=confluence_count, rsi=current_rsi,
-                           trend=current_trend, pattern=pattern, atr=current_atr)
-            return None
+            if _scalp_soften:
+                logger.warning(f"[MTF] {tf}: LONG vs BOS bearish — SCALP halve risk (soft)")
+                analysis['_scalp_risk_halve'] = True
+            else:
+                logger.info(f"[MTF] {tf}: LONG but BOS/CHoCH is bearish — structural conflict")
+                _log_rejection(db, tf, direction_str, current_price,
+                               "structure_direction_conflict", "directional_alignment",
+                               confluence_count=confluence_count, rsi=current_rsi,
+                               trend=current_trend, pattern=pattern, atr=current_atr)
+                return None
         if direction_str == "SHORT" and structure_bullish and not structure_bearish:
-            logger.info(f"[MTF] {tf}: SHORT but BOS/CHoCH is bullish — structural conflict")
-            _log_rejection(db, tf, direction_str, current_price,
-                           "structure_direction_conflict", "directional_alignment",
-                           confluence_count=confluence_count, rsi=current_rsi,
-                           trend=current_trend, pattern=pattern, atr=current_atr)
-            return None
+            if _scalp_soften:
+                logger.warning(f"[MTF] {tf}: SHORT vs BOS bullish — SCALP halve risk (soft)")
+                analysis['_scalp_risk_halve'] = True
+            else:
+                logger.info(f"[MTF] {tf}: SHORT but BOS/CHoCH is bullish — structural conflict")
+                _log_rejection(db, tf, direction_str, current_price,
+                               "structure_direction_conflict", "directional_alignment",
+                               confluence_count=confluence_count, rsi=current_rsi,
+                               trend=current_trend, pattern=pattern, atr=current_atr)
+                return None
 
     # --- 3b. CONFLUENCE THRESHOLD (tightened: 3→4 base, grab+2→grab+3, dbr+2→dbr+3) ---
     # "Stable" structure = konsolidacja = 0% win rate historycznie — blokuj.

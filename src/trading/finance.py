@@ -126,6 +126,10 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     # swing-based TPs while keeping the realistic scalp range on the table).
     tf_signal = (analysis_data.get('tf') or '').lower()
     is_scalp = tf_signal in ('5m', '5min', 'm5')
+    # Tracks soft-block conditions that halve risk instead of blocking.
+    # Used for against-macro scalps on 5m — classic 10-min trade against
+    # slow macro bias is fine if we cut size.
+    scalp_risk_halve = False
     if is_scalp:
         sl_floor = 2.0
         rr_floor = 1.5
@@ -226,7 +230,10 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
             logic += f" [ML: {ensemble_result.get('confidence', 0):.0%}⚠️]"
 
             # BLOKADA: Jeśli ML ma wysoką pewność i mówi inaczej niż SMC — nie otwieraj trade'a
-            if ensemble_result.get('confidence', 0) > 0.55:
+            # Scalp mode: raise conflict threshold from 55% → 65% (ML needs very
+            # high conviction to veto a scalp; small SL limits downside anyway).
+            conflict_threshold = 0.65 if is_scalp else 0.55
+            if ensemble_result.get('confidence', 0) > conflict_threshold:
                 _bump_metric("trades_rejected")
                 return {
                     "direction": "CZEKAJ",
@@ -236,14 +243,25 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
 
     # Filtrowanie makro
     if macro_regime == "czerwony" and direction == "LONG":
-        _bump_metric("trades_rejected")
-        return {"direction": "CZEKAJ", "reason": "Makro czerwony – przeciwwskazanie do LONG"}
+        if is_scalp:
+            logger.warning(f"🟡 [SCALP] Makro czerwony vs LONG — halve risk (not block)")
+            scalp_risk_halve = True
+        else:
+            _bump_metric("trades_rejected")
+            return {"direction": "CZEKAJ", "reason": "Makro czerwony – przeciwwskazanie do LONG"}
     if macro_regime == "zielony" and direction == "SHORT":
-        _bump_metric("trades_rejected")
-        return {"direction": "CZEKAJ", "reason": "Makro zielony – przeciwwskazanie do SHORT"}
+        if is_scalp:
+            logger.warning(f"🟡 [SCALP] Makro zielony vs SHORT — halve risk (not block)")
+            scalp_risk_halve = True
+        else:
+            _bump_metric("trades_rejected")
+            return {"direction": "CZEKAJ", "reason": "Makro zielony – przeciwwskazanie do SHORT"}
 
     # ========== FILTR PEWNOŚCI ENSEMBLE ==========
-    if ensemble_result and ensemble_result.get('confidence', 0) < 0.4 and ml_signal == "CZEKAJ":
+    # Scalp mode: lower min confidence 0.4 → 0.3 so borderline signals on 5m
+    # don't get culled just because ensemble is uncertain (scalp often is).
+    min_conf_threshold = 0.3 if is_scalp else 0.4
+    if ensemble_result and ensemble_result.get('confidence', 0) < min_conf_threshold and ml_signal == "CZEKAJ":
         _bump_metric("trades_rejected")
         return {
             "direction": "CZEKAJ",
@@ -425,6 +443,16 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
             f"lot_size {lot_size} exceeds safety cap — clamped to 0.5 "
             f"(risk_usd={risk_usd:.2f} dist={dist:.2f} balance={balance_in_usd:.2f})")
         lot_size = 0.5
+
+    # Scalp soft-block risk halving — against-macro 5m scalps take half size.
+    # Also honors structure_conflict flag set by scanner (direction_conflict
+    # soft-block on 5m). One flag, one halving regardless of source.
+    if scalp_risk_halve or analysis_data.get('_scalp_risk_halve'):
+        original_lot = lot_size
+        lot_size = round(lot_size * 0.5, 2)
+        if lot_size < 0.01:
+            lot_size = 0.01
+        logger.info(f"[SCALP] Risk halved: {original_lot} → {lot_size} lot")
 
     # --- 6. Portfolio heat check (max aggregate risk) ---
     can_open, heat_pct = rm.check_portfolio_heat(balance_in_usd, risk_usd)
