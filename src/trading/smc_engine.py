@@ -1455,12 +1455,20 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         factors_detail['rsi_extreme_penalty'] = -8
 
     # Penalty: opposing macro regime (scales with signal count)
+    # SKIP on 5m scalp — macro is already handled via finance.py soft-block
+    # (halve risk). Applying the penalty here too was double-counting: a
+    # macro-opposing 5m setup took a halving AND a score drop that pushed
+    # grade to C (blocked). Now: macro filter handles macro, scorer handles
+    # structure. Clean separation of concerns.
+    _tf_for_scoring = str(analysis.get('tf') or '').lower()
+    _is_scalp = _tf_for_scoring in ('5m', '5min', 'm5')
     if (direction == "LONG" and macro == "czerwony") or \
        (direction == "SHORT" and macro == "zielony"):
-        opposing_count = macro_bearish if direction == "LONG" else macro_bullish
-        macro_penalty = min(4 + opposing_count * 2, 14)  # 4+2n, max 14
-        score -= macro_penalty
-        factors_detail['macro_opposing_penalty'] = -macro_penalty
+        if not _is_scalp:
+            opposing_count = macro_bearish if direction == "LONG" else macro_bullish
+            macro_penalty = min(4 + opposing_count * 2, 14)  # 4+2n, max 14
+            score -= macro_penalty
+            factors_detail['macro_opposing_penalty'] = -macro_penalty
 
     # Penalty: off-hours / low liquidity session
     session_info = analysis.get('session_info', {})
