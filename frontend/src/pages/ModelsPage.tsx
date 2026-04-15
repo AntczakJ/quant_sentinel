@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge, LSTMDistribution } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge, LSTMDistribution, WFGridLive } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
 import { PageHeader } from '../components/ui';
 import { trainingAPI } from '../api/client';
@@ -143,6 +143,12 @@ export default function ModelsPage() {
       title: 'Parameter Sweep Leaderboard',
       content: <BacktestGridLeaderboard />,
       defaultLayout: { x: 0, y: 22, w: 12, h: 6, minW: 6, minH: 4 },
+    },
+    {
+      id: 'wf-grid-live',
+      title: 'Walk-Forward Grid (live)',
+      content: <WFGridLive />,
+      defaultLayout: { x: 0, y: 28, w: 12, h: 6, minW: 6, minH: 4 },
     },
     {
       id: 'performance',

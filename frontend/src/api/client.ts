@@ -434,6 +434,36 @@ export const healthAPI = {
   },
 };
 
+export interface WFGridLiveEntry {
+  cell_hash: string;
+  params: {
+    min_confidence: number;
+    sl_atr_mult: number;
+    target_rr: number;
+    partial_close: boolean;
+    risk_percent: number;
+  };
+  composite: number | null;
+  sharpe: number | null;
+  calmar: number | null;
+  profit_factor: number | null;
+  return_pct: number | null;
+  max_drawdown_pct: number | null;
+  win_rate_pct: number | null;
+  total_trades: number | null;
+  on_pareto_front: boolean;
+  elapsed_sec: number | null;
+}
+
+export interface WFGridLiveResponse {
+  name: string;
+  stage: string;
+  completed: number;
+  expected_total: number | null;
+  pareto_front_count: number;
+  top: WFGridLiveEntry[];
+}
+
 export const backtestResultsAPI = {
   listRuns: async (limit = 20) => {
     const response = await client.get('/backtest/runs', { params: { limit } });
@@ -468,6 +498,14 @@ export const backtestResultsAPI = {
       data: Record<string, unknown>;
     };
   },
+  /** Live leaderboard for an in-flight walk-forward grid sweep. */
+  loadWFGridLive: async (name: string = 'prod_v1', stage: string = 'A', top: number = 5) => {
+    const response = await client.get<WFGridLiveResponse>('/backtest/wf-grid-live', {
+      params: { name, stage, top },
+    });
+    return response.data;
+  },
+
   /** List available grid-sweep result files (metadata only). */
   listGrids: async (limit = 20) => {
     const response = await client.get('/backtest/grids', { params: { limit } });

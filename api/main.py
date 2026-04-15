@@ -1188,6 +1188,85 @@ async def backtest_grid(name: str):
     return {"path": path, "mtime": _os.path.getmtime(path), "entries": data}
 
 
+@app.get("/api/backtest/wf-grid-live", tags=["System"])
+async def backtest_wf_grid_live(name: str = "prod_v1", stage: str = "A", top: int = 5):
+    """Live leaderboard for an in-flight walk-forward grid.
+
+    Reads per-cell JSONs from reports/wf_grid_<name>_<stage>/cell_*.json,
+    ranks by composite = 0.4*sharpe + 0.3*calmar + 0.3*PF (same formula as
+    run_backtest_grid.py), returns top-N + pareto count + progress. Safe to
+    call while grid is still running — cells appear as they finish.
+    """
+    import os as _os
+    import glob as _glob
+    import json as _json
+    from fastapi import HTTPException
+
+    safe_name = _os.path.basename(name)
+    safe_stage = stage.upper() if stage.upper() in ("A", "B") else "A"
+    grid_dir = f"reports/wf_grid_{safe_name}_{safe_stage}"
+    if not _os.path.isdir(grid_dir):
+        raise HTTPException(status_code=404, detail=f"Grid dir '{grid_dir}' not found")
+
+    cells = []
+    for fp in sorted(_glob.glob(f"{grid_dir}/cell_*.json")):
+        try:
+            cells.append(_json.loads(open(fp, "r", encoding="utf-8").read()))
+        except Exception:
+            continue
+
+    def _composite(agg):
+        s, c, pf = agg.get("sharpe_mean"), agg.get("calmar_mean"), agg.get("profit_factor_mean")
+        if s is None or c is None or pf is None: return None
+        try: return round(0.4 * float(s) + 0.3 * float(c) + 0.3 * float(pf), 4)
+        except (TypeError, ValueError): return None
+
+    def _pareto_front(items):
+        pts = []
+        for c in items:
+            a = c.get("agg", {})
+            s, dd = a.get("sharpe_mean"), a.get("max_drawdown_pct_mean")
+            if s is None or dd is None: continue
+            pts.append((c, float(s), float(dd)))
+        front = []
+        for c, s, dd in pts:
+            dominated = any(s2 > s and dd2 > dd for _, s2, dd2 in pts if (s2, dd2) != (s, dd))
+            if not dominated: front.append(c.get("params", {}).get("cell_hash"))
+        return front
+
+    ranked = sorted(cells, key=lambda c: _composite(c.get("agg", {})) or -1e18, reverse=True)
+    front = set(_pareto_front(cells))
+
+    top_entries = []
+    for c in ranked[:top]:
+        p, a = c.get("params", {}), c.get("agg", {})
+        top_entries.append({
+            "cell_hash": p.get("cell_hash"),
+            "params": {k: p.get(k) for k in ("min_confidence", "sl_atr_mult", "target_rr", "partial_close", "risk_percent")},
+            "composite": _composite(a),
+            "sharpe": a.get("sharpe_mean"),
+            "calmar": a.get("calmar_mean"),
+            "profit_factor": a.get("profit_factor_mean"),
+            "return_pct": a.get("return_pct_mean"),
+            "max_drawdown_pct": a.get("max_drawdown_pct_mean"),
+            "win_rate_pct": a.get("win_rate_pct_mean"),
+            "total_trades": a.get("total_trades_mean"),
+            "on_pareto_front": p.get("cell_hash") in front,
+            "elapsed_sec": c.get("elapsed_sec"),
+        })
+
+    # Stage A has 96 cells target (hardcoded in build_grid for full mode)
+    total_expected = 96 if safe_stage == "A" else None
+    return {
+        "name": safe_name,
+        "stage": safe_stage,
+        "completed": len(cells),
+        "expected_total": total_expected,
+        "pareto_front_count": len(front),
+        "top": top_entries,
+    }
+
+
 @app.get("/api/backtest/run", tags=["System"])
 async def backtest_run(name: str):
     """Full JSON for a specific run by name (e.g. 'bt_final'). 404 if not found.

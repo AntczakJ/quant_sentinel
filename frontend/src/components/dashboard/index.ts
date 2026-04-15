@@ -31,4 +31,5 @@ export { SweepPromotePanel } from './SweepPromotePanel';
 export { VoterAttribution } from './VoterAttribution';
 export { ModelsStalenessBadge } from './ModelsStalenessBadge';
 export { LSTMDistribution } from './LSTMDistribution';
+export { WFGridLive } from './WFGridLive';
 
