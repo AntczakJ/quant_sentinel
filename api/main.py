@@ -517,12 +517,30 @@ async def _auto_resolve_trades():
 
             db = NewsDB()
             open_trades = db._query(
-                "SELECT id, direction, entry, sl, tp FROM trades WHERE status IN ('PROPOSED', 'OPEN')"
+                "SELECT id, direction, entry, sl, tp, trailing_sl FROM trades WHERE status IN ('PROPOSED', 'OPEN')"
             )
 
             resolved = 0
             for row in open_trades:
-                trade_id, direction, entry, sl, tp = row
+                trade_id, direction, entry, sl, tp, trailing_sl = row
+                # Apply 5-level trailing stop BEFORE checking SL/TP hit. Without
+                # this, trades got pure binary outcomes (full SL distance lost
+                # on every reversal). Now: 1.0R → BE, 1.5R → lock 0.75R,
+                # 2.0R → lock 1.25R, 2.5R+ → ATR trail. Updates trailing_sl
+                # column; subsequent SL hit check uses the trailed level.
+                try:
+                    from src.trading.scanner import apply_trailing_stop
+                    if apply_trailing_stop(db, (trade_id, direction, entry, sl, tp, trailing_sl),
+                                           current_price):
+                        # Reload SL after trailing update
+                        new_sl_row = db._query_one(
+                            "SELECT trailing_sl, sl FROM trades WHERE id=?", (trade_id,)
+                        )
+                        if new_sl_row:
+                            sl = new_sl_row[0] or new_sl_row[1] or sl
+                except Exception as _trail_err:
+                    logger.debug(f"[Resolver] trailing skipped for #{trade_id}: {_trail_err}")
+
                 try:
                     entry_f = float(entry or 0)
                     sl_f = float(sl or 0)

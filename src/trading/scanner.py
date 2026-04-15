@@ -1257,6 +1257,108 @@ async def scan_market_task(context):
         _scan_timer.__exit__(None, None, None)
 
 
+def apply_trailing_stop(db, trade_row: tuple, current_price: float, atr: float = 0.0) -> bool:
+    """Apply 5-level trailing stop to one open trade. Returns True if SL updated.
+
+    Standalone version of the trailing block from resolve_trades_task — usable
+    from api/main.py:_auto_resolve_trades which (until 2026-04-15) had no
+    trailing logic at all and lost the full SL distance on every trade that
+    went 1.5R+ into profit then reversed.
+
+    trade_row: (id, direction, entry, sl, tp, trailing_sl) tuple.
+    current_price: latest market price.
+    atr: optional ATR for ATR_TRAIL level (>=2.5R). Falls back to sl_distance
+         if 0/missing.
+    """
+    try:
+        t_id, direction, entry, sl, tp, trailing_sl = trade_row[:6]
+        dir_clean = str(direction or "").upper()
+        entry_f = float(entry or 0)
+        original_sl = float(sl or 0)
+        sl_f = float(trailing_sl or sl or 0)
+        if entry_f <= 0 or original_sl <= 0:
+            return False
+        sl_distance = abs(entry_f - original_sl)
+        if sl_distance <= 0:
+            return False
+
+        if "LONG" in dir_clean:
+            r_multiple = (current_price - entry_f) / sl_distance
+        else:
+            r_multiple = (entry_f - current_price) / sl_distance
+
+        # Only consider locking levels — under 0.5R no action
+        if r_multiple < 0.5:
+            return False
+
+        try:
+            from src.trading.risk_manager import get_risk_manager
+            spread_buf = get_risk_manager().get_spread_buffer()
+        except (ImportError, AttributeError):
+            spread_buf = 0.60
+
+        def _trail_sl(lock_r: float) -> float:
+            if "LONG" in dir_clean:
+                return round(entry_f + sl_distance * lock_r, 2)
+            return round(entry_f - sl_distance * lock_r, 2)
+
+        def _is_better(cand: float) -> bool:
+            if "LONG" in dir_clean:
+                return cand > sl_f
+            return cand < sl_f
+
+        candidate_sl = None
+        trail_event = None
+
+        if r_multiple >= 2.5:
+            _atr = atr if atr > 0 else sl_distance
+            atr_trail = max(_atr * 1.5, sl_distance * 0.5)
+            if "LONG" in dir_clean:
+                candidate_sl = round(current_price - atr_trail, 2)
+            else:
+                candidate_sl = round(current_price + atr_trail, 2)
+            fixed_floor = _trail_sl(1.25)
+            if "LONG" in dir_clean:
+                candidate_sl = max(candidate_sl, fixed_floor)
+            else:
+                candidate_sl = min(candidate_sl, fixed_floor)
+            trail_event = "ATR_TRAIL"
+        elif r_multiple >= 2.0:
+            candidate_sl = _trail_sl(1.25)
+            trail_event = "TRAIL_2R"
+        elif r_multiple >= 1.5:
+            candidate_sl = _trail_sl(0.75)
+            trail_event = "LOCK_1.5R"
+        elif r_multiple >= 1.0:
+            if "LONG" in dir_clean:
+                candidate_sl = round(entry_f + spread_buf, 2)
+            else:
+                candidate_sl = round(entry_f - spread_buf, 2)
+            trail_event = "BREAKEVEN_1R"
+        elif r_multiple >= 0.5:
+            candidate_sl = _trail_sl(-0.7)
+            trail_event = "REDUCE_0.5R"
+
+        if candidate_sl is None or trail_event is None or not _is_better(candidate_sl):
+            return False
+
+        try:
+            db.update_trade_trailing_sl(t_id, candidate_sl)
+            db.log_trailing_stop_event(t_id, trail_event, sl_f, candidate_sl,
+                                        current_price, round(r_multiple, 2))
+            logger.info(
+                f"[TRAILING] #{t_id} {dir_clean} | {trail_event} R={r_multiple:.2f} | "
+                f"SL: {sl_f:.2f} → {candidate_sl:.2f}"
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"[TRAILING] #{t_id} update failed: {e}")
+            return False
+    except Exception as e:
+        logger.debug(f"apply_trailing_stop error: {e}")
+        return False
+
+
 async def resolve_trades_task(context):
     """
     Resolver v2: Trailing Stop + Setup Quality Stats + Hourly Stats + Loss Classification.
