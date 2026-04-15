@@ -231,6 +231,23 @@ async def _background_scanner():
     _SCAN_INTERVAL_SEC = 300
 
     while True:
+        # Metrics instrumentation — _background_scanner is the LIVE scanner
+        # entry point (legacy scan_market_task is no longer wired in). Without
+        # this, scan_count / scan_last_ts / scan_duration stayed at 0 even
+        # though scans ran fine, breaking /api/metrics observability.
+        _scan_timer_ctx = None
+        try:
+            from src.ops.metrics import (
+                scan_duration as _sd,
+                scan_last_ts as _slts,
+                TimerContext as _TC,
+            )
+            _slts.set(_time.time())
+            _scan_timer_ctx = _TC(_sd)
+            _scan_timer_ctx.__enter__()
+        except Exception:
+            _scan_timer_ctx = None
+
         try:
             from src.core.database import NewsDB
             from src.api_optimizer import get_rate_limiter as _get_rl
@@ -241,6 +258,8 @@ async def _background_scanner():
             _can, _ = _get_rl().can_use_credits(2)
             if not _can:
                 logger.info("📡 [BG Scanner] Credits low — skipping this cycle")
+                if _scan_timer_ctx:
+                    _scan_timer_ctx.__exit__(None, None, None)
                 await asyncio.sleep(_SCAN_INTERVAL_SEC)
                 continue
 
@@ -276,6 +295,14 @@ async def _background_scanner():
                 )
             except asyncio.TimeoutError:
                 logger.warning("📡 [BG Scanner] MTF cascade timed out (120s)")
+                try:
+                    from src.ops.metrics import scan_errors_total as _set
+                    _set.inc()
+                except Exception:
+                    pass
+                if _scan_timer_ctx:
+                    _scan_timer_ctx.__exit__(None, None, None)
+                    _scan_timer_ctx = None
                 await asyncio.sleep(_SCAN_INTERVAL_SEC)
                 continue
 
@@ -344,11 +371,26 @@ async def _background_scanner():
 
         except asyncio.CancelledError:
             logger.info("📡 [BG Scanner] Task cancelled")
+            if _scan_timer_ctx:
+                _scan_timer_ctx.__exit__(None, None, None)
             return
         except Exception as e:
             # Log ERROR with traceback so silent death is visible. Loop keeps
             # running — one bad cycle shouldn't kill the whole scanner.
             logger.error(f"📡 [BG Scanner] Error in cycle: {e}", exc_info=True)
+            try:
+                from src.ops.metrics import scan_errors_total as _set
+                _set.inc()
+            except Exception:
+                pass
+
+        # Close timer for this cycle (populates scan_duration histogram →
+        # drives scan_count, scan_avg_ms, scan_p95_ms metrics).
+        if _scan_timer_ctx:
+            try:
+                _scan_timer_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
 
         # Wait until next scan cycle
         await asyncio.sleep(_SCAN_INTERVAL_SEC)
