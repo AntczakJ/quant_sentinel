@@ -104,8 +104,6 @@ Optional:
 ```
 TURSO_URL=libsql://...      # cloud backup
 TURSO_TOKEN=...
-MYFXBOOK_EMAIL=...          # retail sentiment (uncommon)
-MYFXBOOK_PASSWORD=...
 ```
 
 ### 5. Initialize database

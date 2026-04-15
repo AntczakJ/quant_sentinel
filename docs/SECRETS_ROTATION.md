@@ -12,7 +12,6 @@ Procedures for rotating API keys and tokens without downtime.
 | FRED API | `FRED_API_KEY` | Macro = neutral, trading OK | Yearly |
 | Finnhub API | `FINNHUB_API_KEY` | News sentiment = neutral | Every 90 days |
 | Turso Auth | `TURSO_URL` / `TURSO_TOKEN` | Cloud sync halts, local OK | Every 90 days |
-| Myfxbook | `MYFXBOOK_EMAIL/PASSWORD` | Retail sentiment unavailable | On password change |
 | JWT Secret | `JWT_SECRET` | All users logged out | On breach only |
 
 ## Twelve Data API key rotation
