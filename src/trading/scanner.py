@@ -1555,33 +1555,55 @@ async def resolve_trades_task(context):
                         except Exception as e:
                             logger.debug(f"Loss classification skipped: {e}")
 
-                    # Ensemble weights
+                    # Ensemble weights — per-model attribution from ml_predictions
+                    # Previous version only credited SMC + (mistakenly) LSTM/XGB based
+                    # on Ichimoku indicator. DQN/dpformer/deeptrans/attention were
+                    # never updated → all stuck at 0/0 forever. Fix: pull the actual
+                    # per-model directional vote from ml_predictions row that fired
+                    # closest to trade open, then credit correctly:
+                    #   model.direction == trade.direction AND WIN → correct
+                    #   model.direction == trade.direction AND LOSS → incorrect
+                    #   model.direction != trade.direction AND WIN → incorrect (disagreed with winner)
+                    #   model.direction != trade.direction AND LOSS → correct (correctly avoided loser)
+                    # NEUTRAL/HOLD votes get no credit either way (didn't take a side).
                     try:
                         from src.ml.ensemble_models import update_ensemble_weights
-                        factors = db.get_trade_factors(t_id)
-                        correct = []
-                        incorrect = []
-
+                        import json as _json
+                        # Find prediction within 10 min of trade open
+                        pred_row = db._query_one(
+                            "SELECT predictions_json FROM ml_predictions "
+                            "WHERE timestamp <= (SELECT timestamp FROM trades WHERE id = ?) "
+                            "AND julianday((SELECT timestamp FROM trades WHERE id = ?)) - julianday(timestamp) < 0.007 "
+                            "ORDER BY id DESC LIMIT 1",
+                            (t_id, t_id),
+                        )
+                        correct: list = []
+                        incorrect: list = []
+                        # SMC always credited from outcome direction (its signal IS the trade direction)
                         if status == "WIN":
                             correct.append("smc")
                         else:
                             incorrect.append("smc")
 
-                        ml_factors_bull = any(factors.get(k) for k in ('ichimoku_bull', 'ml_ensemble_long'))
-                        ml_factors_bear = any(factors.get(k) for k in ('ichimoku_bear', 'ml_ensemble_short'))
-
-                        has_ml_signal = ml_factors_bull or ml_factors_bear
-                        if has_ml_signal:
-                            ml_agreed_with_direction = (
-                                (ml_factors_bull and "LONG" in dir_clean) or
-                                (ml_factors_bear and "SHORT" in dir_clean)
-                            )
-                            if status == "WIN" and ml_agreed_with_direction:
-                                correct.extend(["lstm", "xgb"])
-                            elif status == "LOSS" and ml_agreed_with_direction:
-                                incorrect.extend(["lstm", "xgb"])
-                            elif status == "WIN" and not ml_agreed_with_direction:
-                                incorrect.extend(["lstm", "xgb"])
+                        if pred_row and pred_row[0]:
+                            try:
+                                preds_blob = _json.loads(pred_row[0])
+                                preds = preds_blob.get("predictions", {})
+                                trade_long = "LONG" in dir_clean
+                                for model_name in ("lstm", "xgb", "dqn", "attention",
+                                                   "dpformer", "deeptrans"):
+                                    p = preds.get(model_name) or {}
+                                    pdir = str(p.get("direction") or "").upper()
+                                    if pdir not in ("LONG", "SHORT"):
+                                        continue  # NEUTRAL/HOLD/missing — no credit
+                                    model_long = pdir == "LONG"
+                                    agreed = model_long == trade_long
+                                    if status == "WIN":
+                                        (correct if agreed else incorrect).append(model_name)
+                                    else:  # LOSS
+                                        (incorrect if agreed else correct).append(model_name)
+                            except (ValueError, TypeError, KeyError) as e:
+                                logger.debug(f"per-model attribution parse skipped: {e}")
 
                         if correct or incorrect:
                             update_ensemble_weights(correct, incorrect)

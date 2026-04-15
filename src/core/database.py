@@ -733,8 +733,15 @@ class NewsDB:
         return results, history
 
     def log_trade(self, direction, price, sl, tp, rsi, trend, structure="Stable", pattern=None, factors=None, lot=None, profit=None):
-        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        session = self.get_session(ts)
+        # Use UTC to match ml_predictions.timestamp (CURRENT_TIMESTAMP = UTC).
+        # Pre-2026-04-15 trades stored local CEST — historical analytics that
+        # joined ml_predictions to trades by timestamp were silently broken
+        # (~2h offset in summer, ~1h in winter). New trades are UTC; old rows
+        # stay as-is. get_session() takes local-time string for session
+        # classification — pass local explicitly so behavior is unchanged.
+        now_utc = datetime.datetime.utcnow()
+        ts = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+        session = self.get_session(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         fj = json.dumps(factors) if factors else None
         self._execute("INSERT INTO trades (timestamp, direction, entry, sl, tp, rsi, trend, structure, pattern, factors, session, lot, profit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (ts, direction, price, sl, tp, rsi, trend, structure, pattern, fj, session, lot, profit))
 
