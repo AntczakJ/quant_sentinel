@@ -189,13 +189,21 @@ class RiskManager:
             logger.debug(f"Circuit breaker check failed: {e}")
 
         # 4. Consecutive loss cooldown trigger
+        # Only activate cooldown if the most recent LOSS is recent (< 2h ago).
+        # Without the recency check, a restart after yesterday's losses would
+        # re-trigger cooldown from old losses indefinitely — _last_cooldown_until
+        # is in-memory only, so state resets on every restart.
         try:
             consec = self._get_consecutive_losses()
             if consec >= CONSEC_LOSS_COOLDOWN:
-                self._last_cooldown_until = datetime.datetime.now() + datetime.timedelta(
-                    minutes=CONSEC_LOSS_COOLDOWN_MINS
-                )
-                return False, f"{consec} consecutive losses — {CONSEC_LOSS_COOLDOWN_MINS}min cooldown activated"
+                last_loss_age = self._get_last_loss_age_hours()
+                if last_loss_age is not None and last_loss_age <= 2.0:
+                    self._last_cooldown_until = datetime.datetime.now() + datetime.timedelta(
+                        minutes=CONSEC_LOSS_COOLDOWN_MINS
+                    )
+                    return False, (f"{consec} consecutive losses (last {last_loss_age:.1f}h ago) — "
+                                   f"{CONSEC_LOSS_COOLDOWN_MINS}min cooldown activated")
+                # else: old losses — streak exists but not fresh enough to cooldown
         except (ImportError, AttributeError, TypeError):
             pass
 
@@ -296,6 +304,33 @@ class RiskManager:
             else:
                 break
         return count
+
+    def _get_last_loss_age_hours(self) -> Optional[float]:
+        """Return age in hours of the most recent LOSS trade. None if no loss
+        on record. Used to avoid ratcheting cooldown off old losses after
+        API restart (previously _last_cooldown_until was in-memory only, so
+        every restart would re-trigger cooldown on historical losses from
+        days ago)."""
+        from src.core.database import NewsDB
+        db = NewsDB()
+        rows = db._query(
+            "SELECT timestamp FROM trades WHERE status = 'LOSS' ORDER BY id DESC LIMIT 1"
+        )
+        if not rows:
+            return None
+        try:
+            ts = str(rows[0][0])
+            # Try common timestamp formats
+            for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S.%f'):
+                try:
+                    dt = datetime.datetime.strptime(ts[:19], fmt[:19])
+                    age = (datetime.datetime.now() - dt).total_seconds() / 3600.0
+                    return max(age, 0.0)
+                except ValueError:
+                    continue
+        except (IndexError, TypeError):
+            pass
+        return None
 
     # ─── PORTFOLIO HEAT ───────────────────────────────────────────────
 
