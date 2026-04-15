@@ -1480,16 +1480,26 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     # Clamp score to 0-100
     score = max(0, min(100, score))
 
-    # --- GRADE ASSIGNMENT (tightened thresholds) ---
-    if score >= 75:
+    # --- GRADE ASSIGNMENT ---
+    # 5m scalp uses lower thresholds — the TF naturally has thinner SMC
+    # confluence (fewer structural patterns per bar), so the same score
+    # represents a stronger relative signal than on H1+. Without this,
+    # a 5m setup with 5 positive factors could still fall short of grade B
+    # (seen in prod: score 34.4 with fvg+OB+RSI+macro aligned = grade C).
+    if _is_scalp:
+        a_plus_cut, a_cut, b_cut = 65, 45, 30
+    else:
+        a_plus_cut, a_cut, b_cut = 75, 55, 40
+
+    if score >= a_plus_cut:
         grade = "A+"
         risk_mult = 1.5
         target_rr = 3.0
-    elif score >= 55:
+    elif score >= a_cut:
         grade = "A"
         risk_mult = 1.0
         target_rr = 2.5
-    elif score >= 40:
+    elif score >= b_cut:
         grade = "B"
         risk_mult = 0.5
         target_rr = 2.0
