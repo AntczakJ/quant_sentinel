@@ -238,6 +238,16 @@ def _interpret_fred_signal(name: str, value: float, series) -> int:
 #  2. MYFXBOOK RETAIL SENTIMENT
 # ═══════════════════════════════════════════════════════════════════════════
 
+# Myfxbook login-failure circuit breaker — when credentials are wrong
+# (common case: .env stale after password rotation), the login endpoint
+# fires 4x per scan cycle × 12 cycles/hour = 48 warnings/hour of pure spam.
+# Cache the "bad creds" state for 1h so only one warning lands per hour
+# and we skip 47 network calls. Resets automatically at interval rollover
+# so a .env update is picked up within the hour.
+_myfxbook_bad_until: float = 0.0
+_MYFXBOOK_BAD_BACKOFF_SEC = 3600
+
+
 def get_retail_sentiment() -> Dict:
     """
     Fetch XAUUSD retail trader positioning from Myfxbook Community Outlook.
@@ -253,6 +263,8 @@ def get_retail_sentiment() -> Dict:
     Requires MYFXBOOK_EMAIL and MYFXBOOK_PASSWORD in .env (free account).
     Falls back to empty result if unavailable.
     """
+    global _myfxbook_bad_until
+
     cached = _load_cache(_SENTIMENT_CACHE_FILE, _SENTIMENT_CACHE_TTL)
     if cached is not None:
         return cached
@@ -261,6 +273,10 @@ def get_retail_sentiment() -> Dict:
     # is not reconstructible and isn't the primary signal anyway.
     if os.environ.get("QUANT_BACKTEST_MODE") == "1":
         return {"signal": 0, "signal_text": "backtest_skip"}
+
+    # Circuit breaker: if credentials failed recently, short-circuit
+    if time.time() < _myfxbook_bad_until:
+        return {"signal": 0, "error": "myfxbook_bad_creds_backoff"}
 
     email = os.getenv("MYFXBOOK_EMAIL", "")
     password = os.getenv("MYFXBOOK_PASSWORD", "")
@@ -280,11 +296,15 @@ def get_retail_sentiment() -> Dict:
         )
         login_data = login_resp.json()
         if login_data.get("error"):
-            # Downgrade to debug in backtest mode — gets called 100s of times
-            import os as _os
-            _log = logger.debug if _os.environ.get("QUANT_BACKTEST_MODE") == "1" else logger.warning
-            _log(f"[MACRO] Myfxbook login failed: {login_data.get('message', '?')}")
-            return {"signal": 0, "error": login_data.get("message")}
+            err_msg = login_data.get('message', '?')
+            # Trip circuit breaker: suppress further calls for 1h
+            _myfxbook_bad_until = time.time() + _MYFXBOOK_BAD_BACKOFF_SEC
+            logger.warning(
+                f"[MACRO] Myfxbook login failed: {err_msg} — "
+                f"suppressing for {_MYFXBOOK_BAD_BACKOFF_SEC//60}min. "
+                f"Update MYFXBOOK_EMAIL/PASSWORD in .env to re-enable."
+            )
+            return {"signal": 0, "error": err_msg}
 
         session_id = login_data.get("session")
         if not session_id:
