@@ -923,10 +923,18 @@ def get_ensemble_prediction(
         regime_weights = {k: v / rw_total for k, v in regime_weights.items()}
 
     # ========== FUZJA PREDYKCJI ==========
+    # Self-quarantine: models with weight < MIN_ACTIVE_WEIGHT are skipped
+    # entirely (no contribution to weighted sum, confidence, or agreement
+    # ratio). Keeps historically-broken models (e.g. DeepTrans @ 0.05 after
+    # self-learning penalized it) from generating noise in the vote.
+    # Threshold matches the DB floor set in update_ensemble_weights (_WEIGHT_MIN),
+    # so the instant a model recovers above 0.05 + small buffer it re-joins.
+    MIN_ACTIVE_WEIGHT = 0.10
     total_weight = 0.0
     weighted_sum = 0.0
     confidence_sum = 0.0
     available_models = 0
+    muted_models: list = []
     # Model Agreement tracking
     models_long = 0
     models_short = 0
@@ -936,6 +944,12 @@ def get_ensemble_prediction(
         if model_name in results["predictions"]:
             pred = results["predictions"][model_name]
             if "status" not in pred:  # Model dostepny
+                if weight < MIN_ACTIVE_WEIGHT:
+                    # Tag as muted for audit trail but don't count the vote
+                    pred["status"] = "muted_low_weight"
+                    pred["muted_weight"] = round(float(weight), 4)
+                    muted_models.append(model_name)
+                    continue
                 weighted_sum += pred["value"] * weight
                 confidence_sum += pred.get("confidence", 0.5) * weight
                 total_weight += weight
@@ -947,6 +961,9 @@ def get_ensemble_prediction(
                     models_short += 1
                 else:
                     models_neutral += 1
+
+    if muted_models:
+        logger.debug(f"Ensemble: muted low-weight voters: {muted_models}")
 
     # Znormalizuj wagi
     if total_weight > 0:
