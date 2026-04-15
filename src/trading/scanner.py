@@ -298,6 +298,15 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         bool(has_engulfing),
     ])
 
+    # Backtest isolation flag — used in both step 3a (direction_conflict
+    # scalp soften) and step 3 below (confluence/stable). Kept here (before
+    # first usage) so scalp_soften doesn't UnboundLocalError.
+    import os as _os_bt
+    _relax = (
+        _os_bt.environ.get("QUANT_BACKTEST_RELAX") == "1"
+        and _os_bt.environ.get("QUANT_BACKTEST_MODE") == "1"
+    )
+
     # --- 3a. DIRECTIONAL ALIGNMENT CHECK (new) ---
     # BOS/CHoCH must agree with trade direction — don't trade against structure
     if has_bos or has_choch:
@@ -346,17 +355,11 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # Directional alignment + RSI extreme stay strict — those are reality
     # checks, not data-source-dependent.
     #
-    # SAFETY: double-gate — requires BOTH env vars. QUANT_BACKTEST_MODE is
-    # only set by src.backtest.isolation.enforce_isolation(), which runs in
-    # a separate process with a separate DB file. Production API never calls
-    # enforce_isolation(), so it never sees either flag. Even if someone has
-    # QUANT_BACKTEST_RELAX=1 leaked in their shell env, the MODE check blocks
-    # the relaxation from reaching live trades.
-    import os as _os_bt
-    _relax = (
-        _os_bt.environ.get("QUANT_BACKTEST_RELAX") == "1"
-        and _os_bt.environ.get("QUANT_BACKTEST_MODE") == "1"
-    )
+    # SAFETY: _relax already initialized at top of function (step 3a).
+    # Double-gate — requires BOTH env vars. QUANT_BACKTEST_MODE is only set
+    # by src.backtest.isolation.enforce_isolation(), which runs in a separate
+    # process with a separate DB file. Production API never calls
+    # enforce_isolation(), so it never sees either flag.
     # Backtest: threshold=1 — yfinance data produces max confluence=2-3,
     # and we lose news/macro signals (worth ~1-2 confluence in live).
     # At threshold=2 we got 0.5 trades/day; target is 2-3/day for
