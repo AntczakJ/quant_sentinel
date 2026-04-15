@@ -59,9 +59,10 @@ cache/
 .cache/
 persistent_cache/
 
-# ── BAZA DANYCH — KOPIE ZAPASOWE ──────────────────────────────
-# data/sentinel.db        → ŚLEDZONE w git (potrzebne do treningu)
-# data/test_sentinel.db   → ŚLEDZONE (testy)
+# ── BAZA DANYCH ──────────────────────────────────────────────
+# data/sentinel.db        → IGNOROWANE (zawiera realne trejdy + konta userów)
+# data/test_sentinel.db   → ŚLEDZONE (fixtures testowe, bez PII)
+data/sentinel.db
 data/sentinel_backup_*.db
 data/backups/
 data/*.db.bak
@@ -69,6 +70,7 @@ data/*.db-wal
 data/*.db-shm
 data/cot_cache.pkl
 data/fred_cache.pkl
+data/fred_cache.json
 data/sentiment_cache.pkl
 data/gpr_cache.pkl
 data/event_reactions_cache.pkl
