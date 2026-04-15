@@ -474,11 +474,17 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
             ml_signal = ensemble.get('ensemble_signal', 'CZEKAJ')
             ml_conf = ensemble.get('confidence', 0)
 
+            # ML conflict threshold per TF — 5m scalp uses 65% (matches
+            # finance.py scalp threshold so the morning raise takes effect),
+            # H1+ uses 45% (slow TFs more sensitive to ML disagreement,
+            # larger SL means wrong-direction trade is genuinely costly).
+            _ml_conflict_threshold = 0.65 if str(tf) == "5m" else 0.45
             if ml_conf > 0.6 and ml_signal == direction_str:
                 ml_info = f"ML: {ml_signal} ({ml_conf:.0%})"
                 logger.info(f"[MTF] {tf}: ML potwierdza kierunek — {ml_info}")
-            elif ml_conf > 0.45 and ml_signal != "CZEKAJ" and ml_signal != direction_str:
-                # ML conflict (tightened: 50%→40%) — block earlier
+            elif (ml_conf > _ml_conflict_threshold
+                    and ml_signal != "CZEKAJ"
+                    and ml_signal != direction_str):
                 logger.warning(
                     f"[MTF] {tf}: ML ({ml_signal}, {ml_conf:.0%}) "
                     f"KONFLIKT z SMC ({direction_str}) — BLOKUJĘ trade"
