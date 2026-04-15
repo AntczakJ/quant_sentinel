@@ -220,8 +220,6 @@ async def run_backtest(
             except ImportError:
                 raise ImportError("Neither Twelve Data nor yfinance available for backtest data")
 
-            return pd.DataFrame()
-
         df = await asyncio.to_thread(_fetch_data)
 
         if df.empty or len(df) < 50:

@@ -8,9 +8,6 @@ import hashlib
 import time as _time
 from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.gzip import GZipMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
 import asyncio
