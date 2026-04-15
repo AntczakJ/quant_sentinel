@@ -366,7 +366,13 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # apply — so we're not opening the flood gates, just letting a scalp
     # setup through when one of the slower TFs isn't giving us anything.
     if str(tf) == "5m" and not _relax:
-        _min_conf = 2
+        # 5m scalp: single price-action factor (pin bar, engulfing, FVG
+        # retest etc.) is a legitimate scalp trigger. Raising the bar to 2
+        # was cutting ~29 setups/13h that the user saw on the chart.
+        # Other filters (direction_conflict, RSI, ATR, macro, ML ensemble,
+        # setup_quality, event guard) still apply — so we're accepting
+        # thinner SMC confirmation, not a flood of junk.
+        _min_conf = 1
         _allow_stable_5m = True
     else:
         _allow_stable_5m = False
