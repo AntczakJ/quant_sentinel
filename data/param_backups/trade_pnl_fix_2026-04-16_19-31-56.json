@@ -1,0 +1,69 @@
+{
+  "reason": "Retroactive fix: backfill_trade_profits was missing lot multiplier. Old profits = price_move only, new = price_move*100*lot.",
+  "timestamp_utc": "2026-04-16_19-31-56",
+  "corrections": [
+    {
+      "id": 124,
+      "old_profit": -30.26,
+      "new_profit": -181.56,
+      "lot": 0.06,
+      "status": "LOSS"
+    },
+    {
+      "id": 123,
+      "old_profit": -5.81,
+      "new_profit": -92.96,
+      "lot": 0.16,
+      "status": "LOSS"
+    },
+    {
+      "id": 122,
+      "old_profit": -30.74,
+      "new_profit": -153.7,
+      "lot": 0.05,
+      "status": "LOSS"
+    },
+    {
+      "id": 52,
+      "old_profit": -5.91,
+      "new_profit": -47.28,
+      "lot": 0.08,
+      "status": "LOSS"
+    },
+    {
+      "id": 51,
+      "old_profit": -28.64,
+      "new_profit": -57.28,
+      "lot": 0.02,
+      "status": "LOSS"
+    },
+    {
+      "id": 32,
+      "old_profit": -2.0,
+      "new_profit": -4.0,
+      "lot": 0.02,
+      "status": "LOSS"
+    },
+    {
+      "id": 31,
+      "old_profit": -2.0,
+      "new_profit": -4.0,
+      "lot": 0.02,
+      "status": "LOSS"
+    },
+    {
+      "id": 148,
+      "old_profit": 35.86,
+      "new_profit": 358.6,
+      "lot": 0.1,
+      "status": "WIN"
+    },
+    {
+      "id": 126,
+      "old_profit": 72.8,
+      "new_profit": 145.6,
+      "lot": 0.02,
+      "status": "WIN"
+    }
+  ]
+}

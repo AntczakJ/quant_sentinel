@@ -1,0 +1,351 @@
+{
+  "pattern_stats": {
+    "cols": [
+      "pattern",
+      "count",
+      "wins",
+      "losses",
+      "win_rate",
+      "last_updated"
+    ],
+    "rows": [
+      [
+        "[M5] Trend Bull + FVG",
+        5,
+        1,
+        4,
+        0.2,
+        "2026-04-16 17:55:12"
+      ],
+      [
+        "[M5] Trend Bear + FVG",
+        4,
+        3,
+        1,
+        0.75,
+        "2026-04-16 17:55:12"
+      ],
+      [
+        "LONG_Stable_None",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:04"
+      ],
+      [
+        "SHORT_Stable_bearish",
+        6,
+        0,
+        6,
+        0.0,
+        "2026-04-16 17:55:10"
+      ],
+      [
+        "[M15] Trend Bull + FVG",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:04"
+      ],
+      [
+        "LONG_Stable_bullish",
+        2,
+        0,
+        2,
+        0.0,
+        "2026-04-16 17:55:06"
+      ],
+      [
+        "[M15] Trend Bear + FVG",
+        5,
+        0,
+        5,
+        0.0,
+        "2026-04-16 17:55:09"
+      ],
+      [
+        "SHORT_Stable_bullish",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:07"
+      ],
+      [
+        "[H4] Trend Bull + FVG",
+        1,
+        1,
+        0,
+        1.0,
+        "2026-04-16 17:55:13"
+      ]
+    ]
+  },
+  "hourly_stats": {
+    "cols": [
+      "hour",
+      "direction",
+      "count",
+      "wins",
+      "losses",
+      "win_rate",
+      "last_updated"
+    ],
+    "rows": [
+      [
+        14,
+        "LONG",
+        1,
+        1,
+        0,
+        1.0,
+        "2026-04-08 18:20:04"
+      ],
+      [
+        13,
+        "LONG",
+        1,
+        1,
+        0,
+        1.0,
+        "2026-04-12 15:50:39"
+      ],
+      [
+        12,
+        "LONG",
+        1,
+        1,
+        0,
+        1.0,
+        "2026-04-12 15:50:43"
+      ]
+    ]
+  },
+  "session_stats": {
+    "cols": [
+      "pattern",
+      "session",
+      "count",
+      "wins",
+      "losses",
+      "win_rate",
+      "last_updated"
+    ],
+    "rows": [
+      [
+        "[M5] Trend Bull + FVG",
+        "asian",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:02"
+      ],
+      [
+        "[M5] Trend Bear + FVG",
+        "london",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:02"
+      ],
+      [
+        "[M5] Trend Bull + FVG",
+        "off_hours",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:03"
+      ],
+      [
+        "[M5] Trend Bull + FVG",
+        "london",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:03"
+      ],
+      [
+        "LONG_Stable_None",
+        "london",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:04"
+      ],
+      [
+        "SHORT_Stable_bearish",
+        "new_york",
+        3,
+        0,
+        3,
+        0.0,
+        "2026-04-16 17:55:10"
+      ],
+      [
+        "[M15] Trend Bull + FVG",
+        "new_york",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:05"
+      ],
+      [
+        "LONG_Stable_bullish",
+        "new_york",
+        2,
+        0,
+        2,
+        0.0,
+        "2026-04-16 17:55:06"
+      ],
+      [
+        "[M15] Trend Bear + FVG",
+        "london",
+        2,
+        0,
+        2,
+        0.0,
+        "2026-04-16 17:55:07"
+      ],
+      [
+        "SHORT_Stable_bullish",
+        "london",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:07"
+      ],
+      [
+        "SHORT_Stable_bearish",
+        "london",
+        1,
+        0,
+        1,
+        0.0,
+        "2026-04-16 17:55:08"
+      ],
+      [
+        "[M15] Trend Bear + FVG",
+        "asian",
+        3,
+        0,
+        3,
+        0.0,
+        "2026-04-16 17:55:09"
+      ],
+      [
+        "SHORT_Stable_bearish",
+        "asian",
+        2,
+        0,
+        2,
+        0.0,
+        "2026-04-16 17:55:10"
+      ],
+      [
+        "[M5] Trend Bull + FVG",
+        "new_york",
+        2,
+        1,
+        1,
+        0.5,
+        "2026-04-16 17:55:12"
+      ],
+      [
+        "[M5] Trend Bear + FVG",
+        "new_york",
+        3,
+        3,
+        0,
+        1.0,
+        "2026-04-16 17:55:12"
+      ],
+      [
+        "[H4] Trend Bull + FVG",
+        "new_york",
+        1,
+        1,
+        0,
+        1.0,
+        "2026-04-16 17:55:13"
+      ]
+    ]
+  },
+  "setup_quality_stats": {
+    "cols": [
+      "grade",
+      "direction",
+      "count",
+      "wins",
+      "losses",
+      "win_rate",
+      "avg_profit",
+      "last_updated"
+    ],
+    "rows": [
+      [
+        "A+",
+        "LONG",
+        1,
+        1,
+        0,
+        1.0,
+        15.0,
+        "2026-04-08 18:20:04"
+      ]
+    ]
+  },
+  "filter_performance": {
+    "cols": [
+      "filter_name",
+      "direction",
+      "correct_blocks",
+      "incorrect_blocks",
+      "correct_passes",
+      "incorrect_passes",
+      "accuracy",
+      "last_updated"
+    ],
+    "rows": [
+      [
+        "confluence",
+        "LONG",
+        10,
+        0,
+        0,
+        0,
+        1.0,
+        "2026-04-12 15:50:45"
+      ],
+      [
+        "atr_filter",
+        "SHORT",
+        20,
+        0,
+        0,
+        0,
+        1.0,
+        "2026-04-12 15:50:45"
+      ],
+      [
+        "atr_filter",
+        "LONG",
+        10,
+        0,
+        0,
+        0,
+        1.0,
+        "2026-04-12 15:50:45"
+      ]
+    ]
+  }
+}
