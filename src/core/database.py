@@ -111,6 +111,31 @@ def _should_sync_to_turso(sql: str) -> bool:
 _db_initialized = False
 
 
+def _reinit_connection_for_test():
+    """Test-only helper: reopens the module-level _conn against the current
+    os.environ['DATABASE_URL']. Without this, tests that mock DATABASE_URL
+    via monkeypatch.setenv are silently ignored because `_conn` was
+    opened once at module import time with whatever env was then.
+
+    Called from tests/conftest.py autouse fixture. Production code never
+    touches this — the expensive part (schema create + migrate) runs only
+    if target DB is fresh.
+    """
+    global _conn, _cursor, _db_initialized, DATABASE_URL
+    new_url = os.getenv("DATABASE_URL", "data/sentinel.db")
+    if new_url == DATABASE_URL:
+        return  # no change
+    try:
+        _conn.close()
+    except Exception:
+        pass
+    DATABASE_URL = new_url
+    os.makedirs(os.path.dirname(DATABASE_URL) or ".", exist_ok=True)
+    _conn = sqlite3.connect(DATABASE_URL, check_same_thread=False)
+    _cursor = _conn.cursor()
+    _db_initialized = False  # trigger create_tables() + migrate() on next NewsDB()
+
+
 class NewsDB:
     def __init__(self):
         global _db_initialized

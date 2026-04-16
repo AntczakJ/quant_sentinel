@@ -43,6 +43,17 @@ def _reset_backtest_env(monkeypatch, tmp_path_factory):
     # Fresh temp DB per test — no shared state possible.
     test_db = tmp_path_factory.mktemp("db") / "test.db"
     monkeypatch.setenv("DATABASE_URL", str(test_db))
+    # KEY (2026-04-16 evening): monkeypatch.setenv alone is NOT enough
+    # because database.py opens a module-level _conn at import time.
+    # _reinit_connection_for_test() closes the stale _conn and reopens
+    # against the new env. Without this, tests that instantiate NewsDB()
+    # would still write to data/sentinel.db (prod) — discovered via ghost
+    # trades #152/#156/#157 appearing in prod during pytest runs.
+    try:
+        from src.core.database import _reinit_connection_for_test
+        _reinit_connection_for_test()
+    except ImportError:
+        pass  # pre-2026-04-16 test runs or module not yet loaded — OK
     yield
 
 
