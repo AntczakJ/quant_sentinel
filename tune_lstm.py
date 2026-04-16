@@ -516,10 +516,28 @@ class LSTMObjective:
 # ---------------------------------------------------------------------------
 
 def _is_viable(trial: optuna.FrozenTrial, min_live_stdev: float,
-               min_val_bal: float) -> bool:
+               min_val_bal: float, min_test_bal: float = 0.52) -> bool:
+    """A trial is viable if it passes validation AND held-out test score AND
+    has non-flat live output. The test_bal gate was added 2026-04-16 after
+    the production sweep-winner shipped as an anti-signal model (25% live
+    directional accuracy) despite val_bal=0.547.
+
+    KNOWN LIMITATION: balanced_accuracy on backtest classification data does
+    NOT predict live forward-move accuracy. The 2026-04-13 winner passed
+    both val_bal=0.547 and test_bal=0.542, yet is 25% accurate live. Future
+    hardening should either (a) swap the objective to a trade-simulation
+    profit score, or (b) add a post-promotion live-accuracy watchdog that
+    auto-reverts if rolling 20-prediction accuracy drops below 0.45. This
+    gate is the MINIMUM bar — it's necessary but not sufficient.
+    """
     if trial.state != optuna.trial.TrialState.COMPLETE:
         return False
     if (trial.value or 0.0) < min_val_bal:
+        return False
+    # Held-out test score must also clear the bar — overfit val scores
+    # are the trap that shipped the current production anti-signal.
+    tb = trial.user_attrs.get("test_balanced_acc")
+    if tb is not None and tb < min_test_bal:
         return False
     ls = trial.user_attrs.get("live_stdev")
     if ls is not None and ls < min_live_stdev:
