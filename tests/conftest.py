@@ -21,18 +21,25 @@ if sys.platform == "win32":
 
 @pytest.fixture(autouse=True)
 def _reset_backtest_env(monkeypatch):
-    """Clear backtest-isolation env vars before every test.
+    """Clear backtest-isolation env vars AND pin DATABASE_URL to test DB.
 
-    Some tests (notably test_backtest_grid) import run_backtest_grid.py
-    which calls enforce_isolation() at module load — that permanently
-    mutates os.environ for the lifetime of the pytest process. Later
-    tests (e.g. test_macro_data) then hit the backtest code path and
-    see 'signal_text: backtest neutral' stubs instead of real outputs.
-    Scrub the env at every test boundary to keep tests independent.
+    Original purpose (2026-04-13): prevent enforce_isolation() state leaks
+    between tests — env vars set by one test were polluting later tests
+    that expected default behavior.
+
+    Extended 2026-04-16: now ALSO pins DATABASE_URL to data/test_sentinel.db.
+    Without this, tests that instantiate NewsDB() without going through
+    enforce_isolation() were writing to data/sentinel.db (production).
+    Symptom: 6 fake OPEN trades with entry=$2350 appeared in prod after
+    a pytest run, plus #125/#126 got set to status=WIN profit=None by a
+    test fixture. Prod DB is now defended at the conftest level.
     """
     for var in ("QUANT_BACKTEST_MODE", "QUANT_BACKTEST_RELAX",
                 "QUANT_BACKTEST_PARTIAL", "QUANT_BACKTEST_MIN_CONF"):
         monkeypatch.delenv(var, raising=False)
+    # Pin to test DB — tests that need a specific DB can override with
+    # their own monkeypatch.setenv AFTER this fixture runs.
+    monkeypatch.setenv("DATABASE_URL", "data/test_sentinel.db")
     yield
 
 
