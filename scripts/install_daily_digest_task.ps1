@@ -1,4 +1,4 @@
-# install_daily_digest_task.ps1 — Windows Task Scheduler registration
+# install_daily_digest_task.ps1 - Windows Task Scheduler registration
 #
 # Registers a daily 08:00 local-time task that runs
 # scripts/daily_digest.py. Must be run as Administrator once.
@@ -48,7 +48,7 @@ $Settings = New-ScheduledTaskSettingsSet `
     -RestartInterval (New-TimeSpan -Minutes 5)
 
 # Run as current user (no admin needed for execution once registered).
-# UserId needs full DOMAIN\USER or COMPUTERNAME\USER format on Windows —
+# UserId needs full DOMAIN\USER or COMPUTERNAME\USER format on Windows -
 # bare $env:USERNAME fails with "parameter is incorrect" (20,8):UserId.
 $FullUser = "$env:USERDOMAIN\$env:USERNAME"
 $Principal = New-ScheduledTaskPrincipal -UserId $FullUser -LogonType Interactive -RunLevel Limited

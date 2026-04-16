@@ -1,4 +1,4 @@
-# install_voter_watchdog_task.ps1 — register voter_watchdog.py every 6h.
+# install_voter_watchdog_task.ps1 - register voter_watchdog.py every 6h.
 #
 # Runs `python scripts/voter_watchdog.py --auto-mute --notify` every 6h.
 # Must be run once as Administrator.
@@ -42,7 +42,7 @@ $Settings = New-ScheduledTaskSettingsSet `
     -RestartCount 1 `
     -RestartInterval (New-TimeSpan -Minutes 10)
 
-# UserId needs DOMAIN\USER format on Windows — bare $env:USERNAME fails.
+# UserId needs DOMAIN\USER format on Windows - bare $env:USERNAME fails.
 $FullUser = "$env:USERDOMAIN\$env:USERNAME"
 $Principal = New-ScheduledTaskPrincipal -UserId $FullUser -LogonType Interactive -RunLevel Limited
 
@@ -54,7 +54,7 @@ try {
         -Trigger $Trigger `
         -Settings $Settings `
         -Principal $Principal `
-        -Description "Quant Sentinel voter accuracy watchdog — every 6h, auto-mutes anti-signal voters + Telegram alert" | Out-Null
+        -Description "Quant Sentinel voter accuracy watchdog - every 6h, auto-mutes anti-signal voters + Telegram alert" | Out-Null
 } catch {
     Write-Error "Register-ScheduledTask failed: $_"
     exit 1
