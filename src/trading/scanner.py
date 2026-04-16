@@ -180,16 +180,32 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     from src.trading.finance import calculate_position
     from src.learning.self_learning import get_pattern_adjustment
 
-    # ─── EVENT GUARD: block new entries 15 min before high-impact news ───
-    # Gold moves 2-3% in 30 sec on NFP/CPI/FOMC — SL hits before signal
-    # matures. Better to miss the trade than guarantee a losing one.
+    # ─── EVENT GUARD: tiered (2026-04-16) ───
+    # Gold moves 2-3% in 30 sec on NFP/CPI/FOMC. Old behavior: flat 15-min
+    # block. New tiered:
+    #   0-5 min before: full block (imminent, SL almost guaranteed hit)
+    #   5-15 min before: halve risk on low-TF scalp, full block on H1+
+    #     (small stops on 5m can ride a ~30min news reaction; H1+ cares
+    #      about post-news trend which is inherently uncertain)
+    # Event guard is a data-availability check — if feed fails, don't block.
+    event_halve_risk = False
     try:
         from src.data.news import get_imminent_high_impact_events
-        imminent = get_imminent_high_impact_events(minutes_window=15)
-        if imminent:
-            titles = ", ".join(e.get("event", "?") for e in imminent[:2])
-            logger.info(f"⏸️ [EVENT GUARD] {tf}: blokuję — high-impact event w <15min: {titles}")
+        imminent_hard = get_imminent_high_impact_events(minutes_window=5)
+        imminent_soft = get_imminent_high_impact_events(minutes_window=15)
+        if imminent_hard:
+            titles = ", ".join(e.get("event", "?") for e in imminent_hard[:2])
+            logger.info(f"⏸️ [EVENT GUARD] {tf}: hard block — event w <5min: {titles}")
             return None
+        if imminent_soft:
+            is_low_tf = str(tf) in ("5m", "15m", "30m")
+            titles = ", ".join(e.get("event", "?") for e in imminent_soft[:2])
+            if is_low_tf:
+                logger.warning(f"🟡 [EVENT GUARD] {tf}: soft block — event w <15min, halve risk: {titles}")
+                event_halve_risk = True
+            else:
+                logger.info(f"⏸️ [EVENT GUARD] {tf}: block (H1+) — event w <15min: {titles}")
+                return None
     except Exception as _e:
         logger.debug(f"Event guard check failed: {_e}")  # soft-fail, don't block trading
 
@@ -197,6 +213,10 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     if not analysis:
         logger.debug(f"🔍 [MTF] {tf}: brak danych SMC — pomijam")
         return None
+
+    # Propagate event-guard halve flag to position sizing
+    if event_halve_risk:
+        analysis['_scalp_risk_halve'] = True
 
     current_price = analysis['price']
     current_rsi = analysis['rsi']
@@ -792,17 +812,23 @@ def _check_trade_cooldown(db, min_hours: float = None) -> bool:
         min_hours = _get_adaptive_cooldown_hours(db)
 
     try:
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
         last_trade = db._query_one(
             "SELECT timestamp FROM trades ORDER BY id DESC LIMIT 1"
         )
         if last_trade and last_trade[0]:
+            # Trade timestamps are stored in UTC since 2026-04-15. `datetime.now()`
+            # without tz returns LOCAL time (CEST = UTC+2), which added a fake 2h
+            # to elapsed — effectively disabling cooldown. The 5 consecutive
+            # SHORT trades opened 3-5 min apart on 2026-04-16 16:37-16:53 traced
+            # to this. Compare both as UTC.
             last_time = datetime.strptime(last_trade[0], "%Y-%m-%d %H:%M:%S")
-            elapsed = (datetime.now() - last_time).total_seconds() / 3600
+            last_time = last_time.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - last_time).total_seconds() / 3600
             if elapsed < min_hours:
                 logger.info(
-                    f"[COOLDOWN] Ostatni trade {elapsed:.1f}h temu, "
-                    f"adaptive minimum {min_hours:.1f}h — pomijam"
+                    f"[COOLDOWN] Ostatni trade {elapsed:.2f}h temu, "
+                    f"adaptive minimum {min_hours:.2f}h — pomijam"
                 )
                 return False
     except (ValueError, TypeError, AttributeError) as e:

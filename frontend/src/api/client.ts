@@ -561,6 +561,15 @@ export const backtestResultsAPI = {
     return response.data;
   },
 
+  /** Markdown digest of last N hours (same as Telegram daily digest). */
+  loadDailyDigest: async (hours: number = 24) => {
+    const response = await client.get<{ text: string; hours: number }>(
+      '/daily-digest',
+      { params: { hours } }
+    );
+    return response.data;
+  },
+
   /** Per-voter live directional accuracy (cached 10min server-side). */
   loadVoterAccuracy: async (hours: number = 72, horizonCandles: number = 12) => {
     const response = await client.get<VoterLiveAccuracyResponse>(

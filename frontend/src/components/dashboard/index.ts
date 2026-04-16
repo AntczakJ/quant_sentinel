@@ -34,4 +34,5 @@ export { LSTMDistribution } from './LSTMDistribution';
 export { WFGridLive } from './WFGridLive';
 export { SystemHealth } from './SystemHealth';
 export { VoterAccuracy } from './VoterAccuracy';
+export { DailyDigest } from './DailyDigest';
 

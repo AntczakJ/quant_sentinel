@@ -1247,6 +1247,23 @@ _VOTER_ACCURACY_CACHE: dict = {}
 _VOTER_ACCURACY_TTL_SEC = 600  # 10-min cache; yfinance fetch is expensive
 
 
+@app.get("/api/daily-digest", tags=["System"])
+async def daily_digest_preview(hours: int = 24):
+    """Lightweight in-process digest (same content as scripts/daily_digest.py
+    but returned as JSON for the dashboard widget)."""
+    import sys as _sys
+    from pathlib import Path as _Path
+    _root = _Path(__file__).resolve().parent.parent
+    if str(_root) not in _sys.path:
+        _sys.path.insert(0, str(_root))
+    from scripts.daily_digest import build_digest
+    try:
+        text = build_digest(hours=int(hours))
+        return {"text": text, "hours": hours}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/voter-live-accuracy", tags=["System"])
 async def voter_live_accuracy(hours: int = 72, horizon_candles: int = 12):
     """Live forward-move accuracy per ensemble voter.
