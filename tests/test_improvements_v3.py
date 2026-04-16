@@ -528,7 +528,10 @@ class TestIntegrationSmoke:
                 assert len(open_trades) > 0, "Trade was not logged to database"
 
                 # 5. Verify factors are stored
-                trade_id = open_trades[-1][0]
+                # get_open_trades returns unordered rows — find the trade we
+                # JUST inserted (highest ID in current session) rather than
+                # relying on [-1] which can return a stale prior-test entry.
+                trade_id = max(t[0] for t in open_trades)
                 factors = db.get_trade_factors(trade_id)
                 assert 'ichimoku_bull' in factors or 'test' in factors
 

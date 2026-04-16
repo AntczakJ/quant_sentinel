@@ -57,10 +57,16 @@ class TestPlattScaler:
 class TestModelCalibrator:
     """Test calibrator singleton."""
 
-    def test_calibrate_unknown_model_returns_input(self):
+    def test_calibrate_unknown_model_applies_shrinkage(self):
+        """Uncalibrated models get shrunk 20% toward 0.5 (Platt-scaling
+        penalty). Uncalibrated raw LSTM was routinely overconfident
+        (outputs 0.97 when live accuracy ~0.55), so the penalty damps
+        voting power until the model earns calibration with enough
+        history. 0.75 -> 0.5 + (0.75-0.5)*0.8 = 0.70."""
         from src.ml.model_calibration import get_calibrator
         cal = get_calibrator()
-        assert cal.calibrate("nonexistent", 0.75) == 0.75
+        result = cal.calibrate("nonexistent", 0.75)
+        assert abs(result - 0.70) < 1e-6, f"Expected 0.70, got {result}"
 
     def test_get_status(self):
         from src.ml.model_calibration import get_calibrator

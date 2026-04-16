@@ -26,6 +26,11 @@ class TestHashChainAudit:
 
     def test_verify_chain_on_empty(self):
         from src.ops.compliance import verify_audit_chain
+        # Reset audit log so this test is deterministic regardless of test
+        # order. Other tests (or a carried-over test_sentinel.db) can leave
+        # audit entries whose chain is broken mid-way, failing verify.
+        from src.core.database import NewsDB
+        NewsDB()._execute("DELETE FROM trades_audit")
         result = verify_audit_chain()
         assert result["valid"] is True
 

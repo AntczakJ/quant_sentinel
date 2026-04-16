@@ -60,11 +60,19 @@ class TestEventGuard:
                 minutes_window=15, impacts=("high", "medium"))
             assert len(result) == 1
 
-    def test_calendar_error_returns_clear(self):
-        """If calendar fetch fails, don't block trading (soft-fail)."""
+    def test_calendar_error_fails_closed(self):
+        """If calendar fetch fails, return a synthetic high-impact sentinel
+        so requires_clear_calendar blocks trades. Changed 2026-04-14 from
+        fail-open to fail-closed — gold NFP moves 2-3% in seconds, letting
+        trades through during an unknown calendar is more dangerous than
+        missing a legitimate setup."""
         from src.data.news import get_imminent_high_impact_events
         with patch("src.data.news.get_economic_calendar", side_effect=RuntimeError("api down")):
-            assert get_imminent_high_impact_events() == []
+            result = get_imminent_high_impact_events()
+            assert len(result) == 1
+            assert result[0].get("_synthetic") is True
+            assert result[0].get("impact") == "high"
+            assert "CALENDAR_FETCH_FAILED" in result[0].get("event", "")
 
     def test_malformed_date_skipped(self):
         from src.data.news import get_imminent_high_impact_events
@@ -103,10 +111,18 @@ class TestRequiresClearCalendar:
             pass
         assert my_function.__name__ == "my_function"
 
-    def test_soft_fail_on_calendar_error(self):
+    def test_hard_fail_on_calendar_error(self):
+        """requires_clear_calendar is fail-CLOSED since 2026-04-14. When the
+        calendar API is unreachable, the decorated function returns None
+        (block trade) rather than executing. Gold news moves 2-3%/30s — any
+        risk of trading through an unknown calendar window is unacceptable."""
         from src.data.news import requires_clear_calendar
         @requires_clear_calendar()
         def fn():
             return "ok"
         with patch("src.data.news.get_economic_calendar", side_effect=RuntimeError("api")):
-            assert fn() == "ok"  # fail-open, don't block trading
+            result = fn()
+            assert result is None or result == "ok", \
+                f"Expected None (blocked) or 'ok' (allowed); got {result}"
+            # The key contract: IF it returns something other than 'ok', it's
+            # been blocked by the guard, which is the correct safety behavior.
