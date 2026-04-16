@@ -343,16 +343,27 @@ class RiskManager:
         try:
             from src.core.database import NewsDB
             db = NewsDB()
-            open_trades = db.get_open_trades()
+            # Inline query to include lot size — get_open_trades() returns only
+            # (id, direction, entry, sl, tp). Heat calculation needs lot to
+            # size each position's actual $ risk.
+            open_trades = db._query(
+                "SELECT id, direction, entry, sl, tp, lot FROM trades WHERE status = 'OPEN'"
+            )
 
+            # XAU/USD contract sizing: standard lot = 100 oz, so $ risk per
+            # trade = |entry - sl| * 100 * lot. A 0.01 lot trade with $30 SL
+            # distance is $30 risk, not $3000 — using * 100 without lot
+            # inflated heat by 100x for micro-lot trades.
+            OZ_PER_STANDARD_LOT = 100.0
             current_risk = 0.0
             for trade in (open_trades or []):
-                _, direction, entry, sl, _ = trade
+                _id, _direction, entry, sl, _tp, lot = trade
                 try:
                     entry_f = float(entry or 0)
                     sl_f = float(sl or 0)
-                    if entry_f > 0 and sl_f > 0:
-                        current_risk += abs(entry_f - sl_f) * 100  # * 100 oz per lot (simplified)
+                    lot_f = float(lot or 0)
+                    if entry_f > 0 and sl_f > 0 and lot_f > 0:
+                        current_risk += abs(entry_f - sl_f) * OZ_PER_STANDARD_LOT * lot_f
                 except (ValueError, TypeError):
                     continue
 
