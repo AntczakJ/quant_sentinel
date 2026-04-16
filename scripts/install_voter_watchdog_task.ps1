@@ -30,10 +30,12 @@ $Action = New-ScheduledTaskAction `
     -Argument "`"$Script`" --auto-mute --notify" `
     -WorkingDirectory $RepoRoot
 
-# Trigger: every 6 hours, starting now, repeating indefinitely
+# Trigger: every 6h for 10 years. [TimeSpan]::MaxValue (P99999999DT...)
+# is rejected by Task Scheduler as out-of-range. 10 years is effectively
+# indefinite for our purposes.
 $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Hours 6) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)
+    -RepetitionDuration (New-TimeSpan -Days 3650)
 
 $Settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
