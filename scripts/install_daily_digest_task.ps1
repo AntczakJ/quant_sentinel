@@ -47,19 +47,28 @@ $Settings = New-ScheduledTaskSettingsSet `
     -RestartCount 2 `
     -RestartInterval (New-TimeSpan -Minutes 5)
 
-# Run as current user (no admin needed for execution once registered)
-$Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+# Run as current user (no admin needed for execution once registered).
+# UserId needs full DOMAIN\USER or COMPUTERNAME\USER format on Windows —
+# bare $env:USERNAME fails with "parameter is incorrect" (20,8):UserId.
+$FullUser = "$env:USERDOMAIN\$env:USERNAME"
+$Principal = New-ScheduledTaskPrincipal -UserId $FullUser -LogonType Interactive -RunLevel Limited
 
-Register-ScheduledTask `
-    -TaskName $TaskName `
-    -Action $Action `
-    -Trigger $Trigger `
-    -Settings $Settings `
-    -Principal $Principal `
-    -Description "Quant Sentinel daily 24h digest via Telegram (sends summary at 08:00)"
+$ErrorActionPreference = "Stop"  # abort on any command failure
+try {
+    Register-ScheduledTask `
+        -TaskName $TaskName `
+        -Action $Action `
+        -Trigger $Trigger `
+        -Settings $Settings `
+        -Principal $Principal `
+        -Description "Quant Sentinel daily 24h digest via Telegram (sends summary at 08:00)" | Out-Null
+} catch {
+    Write-Error "Register-ScheduledTask failed: $_"
+    exit 1
+}
 
 Write-Host ""
-Write-Host "[OK] Task '$TaskName' registered. Daily at 08:00."
+Write-Host "[OK] Task '$TaskName' registered (as $FullUser). Daily at 08:00."
 Write-Host "Logs will be written to $LogFile (when task runs)."
 Write-Host ""
 Write-Host "Test now:"

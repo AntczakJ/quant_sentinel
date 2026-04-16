@@ -42,16 +42,24 @@ $Settings = New-ScheduledTaskSettingsSet `
     -RestartCount 1 `
     -RestartInterval (New-TimeSpan -Minutes 10)
 
-$Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+# UserId needs DOMAIN\USER format on Windows — bare $env:USERNAME fails.
+$FullUser = "$env:USERDOMAIN\$env:USERNAME"
+$Principal = New-ScheduledTaskPrincipal -UserId $FullUser -LogonType Interactive -RunLevel Limited
 
-Register-ScheduledTask `
-    -TaskName $TaskName `
-    -Action $Action `
-    -Trigger $Trigger `
-    -Settings $Settings `
-    -Principal $Principal `
-    -Description "Quant Sentinel voter accuracy watchdog — every 6h, auto-mutes anti-signal voters + Telegram alert"
+$ErrorActionPreference = "Stop"
+try {
+    Register-ScheduledTask `
+        -TaskName $TaskName `
+        -Action $Action `
+        -Trigger $Trigger `
+        -Settings $Settings `
+        -Principal $Principal `
+        -Description "Quant Sentinel voter accuracy watchdog — every 6h, auto-mutes anti-signal voters + Telegram alert" | Out-Null
+} catch {
+    Write-Error "Register-ScheduledTask failed: $_"
+    exit 1
+}
 
 Write-Host ""
-Write-Host "[OK] Task '$TaskName' registered. Runs every 6h."
+Write-Host "[OK] Task '$TaskName' registered (as $FullUser). Runs every 6h."
 Write-Host "Test: Start-ScheduledTask -TaskName $TaskName"
