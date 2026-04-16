@@ -1040,13 +1040,22 @@ def get_ensemble_prediction(
     elif results["confidence"] < 0.30:
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "UNCERTAIN"
-    elif agreement_ratio < 0.60 and available_models >= 3:
-        # Modele zbyt podzielone — nie ryzykuj
+    elif agreement_ratio < 0.45 and available_models >= 3:
+        # Threshold lowered 0.60 -> 0.45 (2026-04-16): the old value required
+        # 60% of ALL available voters (including neutrals) to take the same
+        # side. With 7 voters where XGB/attention routinely sit neutral
+        # (range 0.35-0.63), that ceiling was unreachable — 49 scans with
+        # final_score>0.58 still got CZEKAJ. 0.45 is ~3 of 7 voters which
+        # matches what the system actually produces when SMC+LSTM agree.
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "CONFLICTED"
         logger.info(f"Ensemble: modele podzielone (agreement={agreement_ratio:.0%}) — CZEKAJ")
-    elif high_conf_count < 2 and available_models >= 3:
-        # Nie wystarczająco pewnych modeli
+    elif high_conf_count < 1 and available_models >= 3:
+        # Required threshold lowered 2 -> 1 (2026-04-16): at least one
+        # voter must be confident (conf>0.50 AND value aligned). Was
+        # requiring 2, which was killed by conservative voters never
+        # crossing the confidence bar. SMC alone at 65% accuracy justifies
+        # firing on a single high-conf voice when agreement also holds.
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "LOW_CONVICTION"
         logger.info(f"Ensemble: only {high_conf_count} high-confidence models — CZEKAJ")

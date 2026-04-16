@@ -471,6 +471,26 @@ export interface SystemHealthResponse {
   portfolio_balance: number;
 }
 
+export interface VoterLiveAccuracyEntry {
+  decisive_samples: number;
+  combined_accuracy_pct: number | null;
+  bullish_accuracy_pct: number | null;
+  bearish_accuracy_pct: number | null;
+  status: 'good' | 'weak' | 'anti_signal' | 'insufficient';
+}
+
+export interface VoterLiveAccuracyResponse {
+  hours_window: number;
+  horizon_candles: number;
+  horizon_label: string;
+  voters: Record<string, VoterLiveAccuracyEntry>;
+  alerts: string[];
+  warnings: string[];
+  verdict: 'ok' | 'warn' | 'critical';
+  cached: boolean;
+  cache_age_sec: number;
+}
+
 export interface WFGridLiveEntry {
   cell_hash: string;
   params: {
@@ -538,6 +558,15 @@ export const backtestResultsAPI = {
   /** Aggregated system health for dashboard summary widget. */
   loadSystemHealth: async () => {
     const response = await client.get<SystemHealthResponse>('/system-health');
+    return response.data;
+  },
+
+  /** Per-voter live directional accuracy (cached 10min server-side). */
+  loadVoterAccuracy: async (hours: number = 72, horizonCandles: number = 12) => {
+    const response = await client.get<VoterLiveAccuracyResponse>(
+      '/voter-live-accuracy',
+      { params: { hours, horizon_candles: horizonCandles } }
+    );
     return response.data;
   },
 

@@ -354,6 +354,31 @@ def close_trade(req: CloseTradeRequest):
         portfolio["equity"] = portfolio["balance"]
         _save_portfolio(portfolio)
 
+        # Append to equity-curve history (same shape as auto-resolver writes)
+        try:
+            import json as _json
+            raw = db.get_param("portfolio_history", None)
+            hist = []
+            if raw:
+                try:
+                    hist = _json.loads(raw) if isinstance(raw, str) else []
+                except Exception:
+                    hist = []
+            if not isinstance(hist, list):
+                hist = []
+            hist.append({
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "balance": portfolio["balance"],
+                "pnl": portfolio["pnl"],
+                "trade_id": req.trade_id,
+                "delta": pnl,
+            })
+            if len(hist) > 500:
+                hist = hist[-500:]
+            db.set_param("portfolio_history", _json.dumps(hist))
+        except Exception as _hist_err:
+            logger.debug(f"portfolio_history append skipped: {_hist_err}")
+
         logger.info(f"Trade #{req.trade_id} closed @ ${close_price:.2f} | P&L: {pnl:+.2f}")
 
         return {

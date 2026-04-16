@@ -590,11 +590,42 @@ async def _auto_resolve_trades():
                         # drawdown/profit over time (previously balance stayed
                         # at $10000 forever, scanner sized based on stale value).
                         try:
+                            import json as _json
+                            from datetime import datetime as _dt, timezone as _tz
                             cur_balance = float(db.get_param("portfolio_balance") or 10000)
                             cur_pnl = float(db.get_param("portfolio_pnl") or 0)
-                            db.set_param("portfolio_balance", round(cur_balance + pnl, 2))
-                            db.set_param("portfolio_equity", round(cur_balance + pnl, 2))
-                            db.set_param("portfolio_pnl", round(cur_pnl + pnl, 2))
+                            new_balance = round(cur_balance + pnl, 2)
+                            new_pnl = round(cur_pnl + pnl, 2)
+                            db.set_param("portfolio_balance", new_balance)
+                            db.set_param("portfolio_equity", new_balance)
+                            db.set_param("portfolio_pnl", new_pnl)
+                            # Append to portfolio_history (JSON in param_text).
+                            # Keeps last 500 datapoints so the equity curve
+                            # widget has real data. Each point = {ts, balance,
+                            # pnl, trade_id, delta}.
+                            try:
+                                raw = db.get_param("portfolio_history", None)
+                                hist = []
+                                if raw:
+                                    try:
+                                        hist = _json.loads(raw) if isinstance(raw, str) else []
+                                    except Exception:
+                                        hist = []
+                                if not isinstance(hist, list):
+                                    hist = []
+                                hist.append({
+                                    "ts": _dt.now(_tz.utc).isoformat(),
+                                    "balance": new_balance,
+                                    "pnl": new_pnl,
+                                    "trade_id": trade_id,
+                                    "delta": pnl,
+                                })
+                                # Cap to 500 entries (~1-2 years of trades)
+                                if len(hist) > 500:
+                                    hist = hist[-500:]
+                                db.set_param("portfolio_history", _json.dumps(hist))
+                            except Exception as _hist_err:
+                                logger.debug(f"[Resolver] history append skipped for #{trade_id}: {_hist_err}")
                         except Exception as _pfu:
                             logger.debug(f"[Resolver] portfolio update skipped for #{trade_id}: {_pfu}")
 
@@ -1212,6 +1243,10 @@ async def backtest_grid(name: str):
     return {"path": path, "mtime": _os.path.getmtime(path), "entries": data}
 
 
+_VOTER_ACCURACY_CACHE: dict = {}
+_VOTER_ACCURACY_TTL_SEC = 600  # 10-min cache; yfinance fetch is expensive
+
+
 @app.get("/api/voter-live-accuracy", tags=["System"])
 async def voter_live_accuracy(hours: int = 72, horizon_candles: int = 12):
     """Live forward-move accuracy per ensemble voter.
@@ -1226,8 +1261,19 @@ async def voter_live_accuracy(hours: int = 72, horizon_candles: int = 12):
     the runtime early-warning: anything below 45% fires a warning.
     """
     import pandas as pd
+    import time as _time
     from collections import Counter
     from src.core.database import NewsDB
+
+    # Cache hit check: same params + fresh
+    cache_key = (int(hours), int(horizon_candles))
+    now = _time.time()
+    cached = _VOTER_ACCURACY_CACHE.get(cache_key)
+    if cached and (now - cached["ts"]) < _VOTER_ACCURACY_TTL_SEC:
+        payload = dict(cached["payload"])
+        payload["cache_age_sec"] = round(now - cached["ts"], 1)
+        payload["cached"] = True
+        return payload
 
     db = NewsDB()
 
@@ -1316,7 +1362,7 @@ async def voter_live_accuracy(hours: int = 72, horizon_candles: int = 12):
     warnings = [name for name, v in voters.items()
                 if v["status"] == "weak"]
 
-    return {
+    payload = {
         "hours_window": hours,
         "horizon_candles": horizon_candles,
         "horizon_label": f"{horizon_candles * 5}min",
@@ -1324,7 +1370,11 @@ async def voter_live_accuracy(hours: int = 72, horizon_candles: int = 12):
         "alerts": alerts,
         "warnings": warnings,
         "verdict": "critical" if alerts else "warn" if warnings else "ok",
+        "cached": False,
+        "cache_age_sec": 0,
     }
+    _VOTER_ACCURACY_CACHE[cache_key] = {"ts": now, "payload": payload}
+    return payload
 
 
 @app.get("/api/system-health", tags=["System"])

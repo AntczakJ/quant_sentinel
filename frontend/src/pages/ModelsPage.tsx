@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge, LSTMDistribution, WFGridLive, SystemHealth } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge, LSTMDistribution, WFGridLive, SystemHealth, VoterAccuracy } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
 import { PageHeader } from '../components/ui';
 import { trainingAPI } from '../api/client';
@@ -71,6 +71,12 @@ export default function ModelsPage() {
       title: 'System Health Summary',
       content: <SystemHealth />,
       defaultLayout: { x: 0, y: 0, w: 12, h: 4, minW: 6, minH: 3 },
+    },
+    {
+      id: 'voter-accuracy',
+      title: 'Voter Live Accuracy (forward-move)',
+      content: <VoterAccuracy />,
+      defaultLayout: { x: 0, y: 4, w: 12, h: 5, minW: 6, minH: 4 },
     },
     {
       id: 'training-live',
