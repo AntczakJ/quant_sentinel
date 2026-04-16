@@ -126,9 +126,14 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     # swing-based TPs while keeping the realistic scalp range on the table).
     tf_signal = (analysis_data.get('tf') or '').lower()
     is_scalp = tf_signal in ('5m', '5min', 'm5')
+    # Low-TF scalp window: covers 5m/15m/30m for filter decisions (macro
+    # soft-halve, ML conf threshold 0.3). Keeps strict SL/RR floors
+    # reserved for `is_scalp` (5m only) because 15m/30m ATR is larger
+    # and needs wider stops from structure.
+    is_low_tf_scalp = tf_signal in ('5m', '5min', 'm5', '15m', '15min', 'm15', '30m', '30min', 'm30')
     # Tracks soft-block conditions that halve risk instead of blocking.
-    # Used for against-macro scalps on 5m — classic 10-min trade against
-    # slow macro bias is fine if we cut size.
+    # Used for against-macro scalps on low TFs — classic intraday trade
+    # against slow macro bias is fine if we cut size.
     scalp_risk_halve = False
     if is_scalp:
         sl_floor = 2.0
@@ -243,24 +248,25 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
 
     # Filtrowanie makro
     if macro_regime == "czerwony" and direction == "LONG":
-        if is_scalp:
-            logger.warning(f"🟡 [SCALP] Makro czerwony vs LONG — halve risk (not block)")
+        if is_low_tf_scalp:
+            logger.warning(f"🟡 [SCALP] Makro czerwony vs LONG on {tf_signal} — halve risk (not block)")
             scalp_risk_halve = True
         else:
             _bump_metric("trades_rejected")
             return {"direction": "CZEKAJ", "reason": "Makro czerwony – przeciwwskazanie do LONG"}
     if macro_regime == "zielony" and direction == "SHORT":
-        if is_scalp:
-            logger.warning(f"🟡 [SCALP] Makro zielony vs SHORT — halve risk (not block)")
+        if is_low_tf_scalp:
+            logger.warning(f"🟡 [SCALP] Makro zielony vs SHORT on {tf_signal} — halve risk (not block)")
             scalp_risk_halve = True
         else:
             _bump_metric("trades_rejected")
             return {"direction": "CZEKAJ", "reason": "Makro zielony – przeciwwskazanie do SHORT"}
 
     # ========== FILTR PEWNOŚCI ENSEMBLE ==========
-    # Scalp mode: lower min confidence 0.4 → 0.3 so borderline signals on 5m
-    # don't get culled just because ensemble is uncertain (scalp often is).
-    min_conf_threshold = 0.3 if is_scalp else 0.4
+    # Low-TF scalp: lower min confidence 0.4 → 0.3 so borderline signals on
+    # 5m/15m/30m don't get culled just because ensemble is uncertain (scalp
+    # is inherently noisier than swing setups).
+    min_conf_threshold = 0.3 if is_low_tf_scalp else 0.4
     if ensemble_result and ensemble_result.get('confidence', 0) < min_conf_threshold and ml_signal == "CZEKAJ":
         _bump_metric("trades_rejected")
         return {
