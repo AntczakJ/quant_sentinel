@@ -44,29 +44,22 @@ if sys.platform == "win32":
 
 
 def fetch_candles():
-    """Prefer live provider (scanner's actual source), fall back to yf."""
-    try:
-        from src.data.data_sources import get_provider
-        df = get_provider().get_candles("XAU/USD", "5m", 2016)
-        if df is not None and not df.empty:
-            import pandas as pd
-            if "timestamp" in df.columns:
-                df = df.set_index("timestamp")
-            df.index = pd.to_datetime(df.index)
-            if df.index.tz is None:
-                df.index = df.index.tz_localize("UTC")
-            df.columns = [str(c).lower() for c in df.columns]
-            return df
-    except Exception as e:
-        print(f"[warn] live provider failed: {e}")
-    # Fallback
-    import yfinance as yf
-    df = yf.download("GC=F", interval="5m", period="7d",
-                     progress=False, auto_adjust=False)
-    df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower()
-                  for c in df.columns]
+    """Uses TwelveData XAU/USD spot (same source the scanner actually saw).
+    yfinance GC=F futures fallback is deliberately removed — mixing futures
+    prices with scanner predictions produces misleading accuracy numbers
+    (the 2026-04-16 session discovered a 74% vs 40.5% gap caused by this).
+    See memory/data_source_reality.md."""
+    import pandas as pd
+    from src.data.data_sources import get_provider
+    df = get_provider().get_candles("XAU/USD", "5m", 2016)
+    if df is None or df.empty:
+        raise RuntimeError("Live candle fetch failed — cannot run analyzer")
+    if "timestamp" in df.columns:
+        df = df.set_index("timestamp")
+    df.index = pd.to_datetime(df.index)
     if df.index.tz is None:
         df.index = df.index.tz_localize("UTC")
+    df.columns = [str(c).lower() for c in df.columns]
     return df
 
 
