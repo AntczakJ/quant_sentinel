@@ -759,14 +759,28 @@ class NewsDB:
         self._execute("UPDATE trades SET profit = ? WHERE id = ?", (profit, trade_id))
 
     def backfill_trade_profits(self) -> int:
-        rows = self._query("SELECT id, direction, entry, sl, tp, status FROM trades WHERE status IN ('WIN', 'LOSS', 'PROFIT') AND (profit IS NULL OR profit = 0 OR profit = 0.0)")
+        """Populate missing profit values for closed trades.
+
+        Includes the lot multiplier (fixed 2026-04-16): standard XAU contract
+        is 100 oz, so $ PnL = price_move * 100 * lot. Earlier version of
+        this function ignored lot and wrote price_move as-is, resulting in
+        10x underreporting for 0.1 lot trades and 2x for 0.02 lot.
+        """
+        rows = self._query(
+            "SELECT id, direction, entry, sl, tp, status, lot FROM trades "
+            "WHERE status IN ('WIN', 'LOSS', 'PROFIT') AND "
+            "(profit IS NULL OR profit = 0 OR profit = 0.0)"
+        )
         if not rows: return 0
+        OZ_PER_STANDARD_LOT = 100.0
         updated = 0
-        for t_id, direction, entry, sl, tp, status in rows:
+        for t_id, direction, entry, sl, tp, status, lot in rows:
             try:
                 ef, sf, tf = float(entry or 0), float(sl or 0), float(tp or 0)
-                if ef <= 0: continue
-                pv = round(abs(tf - ef), 2) if status in ('WIN', 'PROFIT') else round(-abs(ef - sf), 2)
+                lf = float(lot or 0.01)
+                if ef <= 0 or lf <= 0: continue
+                price_move = abs(tf - ef) if status in ('WIN', 'PROFIT') else -abs(ef - sf)
+                pv = round(price_move * OZ_PER_STANDARD_LOT * lf, 2)
                 if pv != 0:
                     self._execute("UPDATE trades SET profit = ? WHERE id = ?", (pv, t_id)); updated += 1
             except (ValueError, TypeError): continue
