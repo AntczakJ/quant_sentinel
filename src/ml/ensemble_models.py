@@ -723,10 +723,13 @@ def get_ensemble_prediction(
         from src.ml.attention_model import predict_attention
         attn_pred = predict_attention(df)
         if attn_pred is not None:
+            # Attention empirical range on XAU is 0.35-0.63 (±0.13 from 0.5).
+            # Naive |p-0.5|*2 caps at ~0.26, never clearing conviction gate.
+            # Use *6 to match its narrow output scale (0.13*6 = ~0.78).
             results["predictions"]["attention"] = {
                 "value": attn_pred,
                 "direction": "LONG" if attn_pred > 0.5 else "SHORT",
-                "confidence": abs(attn_pred - 0.5) * 2
+                "confidence": min(1.0, abs(attn_pred - 0.5) * 6),
             }
         else:
             results["predictions"]["attention"] = {
@@ -820,11 +823,16 @@ def get_ensemble_prediction(
         raw_xgb = xgb_pred
         if calibrator:
             xgb_pred = calibrator.calibrate("xgb", xgb_pred)
+        # Confidence stretch: XGB empirical output on XAU is 0.26-0.62 (range
+        # ±0.24 from 0.5). With the naive |p-0.5|*2 formula the model could
+        # never clear the 0.50 confidence gate — stuck at max ~0.48. Use
+        # *4 multiplier (clamped) so its natural decisiveness registers.
+        # Equivalent to saying "for this model, 0.25 offset IS full conviction".
         results["predictions"]["xgb"] = {
             "value": xgb_pred,
             "raw_value": raw_xgb,
             "direction": "LONG" if xgb_pred > 0.5 else "SHORT",
-            "confidence": abs(xgb_pred - 0.5) * 2,
+            "confidence": min(1.0, abs(xgb_pred - 0.5) * 4),
             "calibrated": calibrator.is_calibrated("xgb") if calibrator else False,
         }
     else:
@@ -1040,6 +1048,31 @@ def get_ensemble_prediction(
     elif results["confidence"] < 0.30:
         results["ensemble_signal"] = "CZEKAJ"
         results["final_direction"] = "UNCERTAIN"
+    # SMC-standalone override: if SMC alone is extremely confident,
+    # short-circuit the conflict/conviction gates. SMC had 74% live
+    # directional accuracy over 50 decisive samples — single-voter
+    # conviction from SMC is more reliable than a coalition of weaker
+    # voters. Only fires when SMC's own confidence is >0.85 and its
+    # value is firmly on one side.
+    smc_pred = results["predictions"].get("smc", {})
+    smc_value = smc_pred.get("value", 0.5)
+    smc_conf = smc_pred.get("confidence", 0)
+    smc_active = "status" not in smc_pred or smc_pred.get("status") == "used"
+    smc_override = (
+        smc_active and smc_conf > 0.85
+        and (smc_value > 0.7 or smc_value < 0.3)
+    )
+    if smc_override:
+        if smc_value > 0.7:
+            results["ensemble_signal"] = "LONG"
+            results["final_direction"] = "LONG"
+            results["smc_standalone_override"] = True
+            logger.info(f"Ensemble: SMC standalone LONG override (smc_conf={smc_conf:.2f} smc_val={smc_value:.2f})")
+        else:
+            results["ensemble_signal"] = "SHORT"
+            results["final_direction"] = "SHORT"
+            results["smc_standalone_override"] = True
+            logger.info(f"Ensemble: SMC standalone SHORT override (smc_conf={smc_conf:.2f} smc_val={smc_value:.2f})")
     elif agreement_ratio < 0.45 and available_models >= 3:
         # Threshold lowered 0.60 -> 0.45 (2026-04-16): the old value required
         # 60% of ALL available voters (including neutrals) to take the same
