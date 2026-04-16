@@ -505,10 +505,28 @@ class LSTMObjective:
         trial.set_user_attr("class_balance_train",
                             round(float(splits.y_train.mean()), 3))
 
+        # Composite objective (2026-04-16 — after the 'anti-signal winner'
+        # incident): penalize val-test overfitting + reward output diversity.
+        # Trials where val_bal >> test_bal (model memorized val set) get
+        # pushed down. Trials with flat live output (stdev < 0.02) also
+        # penalized since they can't generate actionable signals regardless
+        # of accuracy. Composite keeps val_bal as primary but adds corrective
+        # terms so the optimizer can't be fooled by a single overfit bullet.
+        val_test_gap = abs(val_bal - test_bal)
+        overfit_penalty = min(val_test_gap * 0.5, 0.15)
+        flat_penalty = 0.05 if (live_stdev is not None and live_stdev < 0.02) else 0.0
+        composite = val_bal - overfit_penalty - flat_penalty
+        trial.set_user_attr("composite_objective",
+                            round(float(composite), 4))
+        trial.set_user_attr("val_test_gap",
+                            round(float(val_test_gap), 4))
+
         # Cleanup per trial — TF graphs pile up otherwise.
         del model
         gc.collect()
-        return val_bal
+        # Return composite (not raw val_bal) so Optuna maximizes the
+        # robustness-adjusted score, not the cherry-picked one.
+        return float(composite)
 
 
 # ---------------------------------------------------------------------------
