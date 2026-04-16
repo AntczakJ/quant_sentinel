@@ -709,9 +709,16 @@ class NewsDB:
         fw = {'weight_ob_main': 2.0, 'weight_ob_m5': 1.5, 'weight_ob_h1': 1.5, 'weight_fvg': 1.5, 'weight_grab_mss': 2.0, 'weight_dbr_rbd': 1.5, 'weight_news': 1.0, 'weight_macro': 1.5, 'weight_rsi_opt': 1.0, 'weight_m5_confluence': 1.0, 'weight_bos': 1.5, 'weight_choch': 1.5, 'weight_ob_count': 0.8, 'weight_ob_confluence': 0.8, 'weight_choch_h1': 1.2, 'weight_supply_demand': 1.5, 'weight_rsi_divergence': 1.5, 'weight_ichimoku_bull': 1.2, 'weight_near_poc': 1.0, 'weight_engulfing_bull': 1.3, 'weight_engulfing_bear': 1.3, 'weight_pin_bar_bull': 1.2, 'weight_pin_bar_bear': 1.2, 'weight_inside_bar': 0.8, 'weight_ml_bull': 1.5, 'weight_ml_bear': 1.5, 'weight_rl_buy': 1.5, 'weight_rl_sell': 1.5}
         for name, val in fw.items():
             if self.get_param(name) is None: self.set_param(name, val)
+        # NOTE on target_rr vs tp_to_sl_ratio: self_learning writes both
+        # (as of 2026-04-16 fix commit 95569f7), production trading reads
+        # tp_to_sl_ratio in finance.py:119. target_rr is kept for
+        # historical / debug visibility of what the optimizer chose; it's
+        # not seeded as a default here to avoid the confusion that caused
+        # a ~2-month bug where target_rr=3.16 was optimizer output but
+        # tp_to_sl_ratio=2.39 was what production actually used.
         for name, val in {
             'min_score': 5.0, 'risk_percent': 1.0, 'min_tp_distance_mult': 1.0,
-            'target_rr': 2.5, 'sl_atr_multiplier': 1.5, 'sl_min_distance': 4.0,
+            'sl_atr_multiplier': 1.5, 'sl_min_distance': 4.0,
             'tp_to_sl_ratio': 2.5,
         }.items():
             if self.get_param(name) is None: self.set_param(name, val)

@@ -165,5 +165,48 @@ class TestTargetRRSync:
         )
 
 
+class TestCooldownTimezone:
+    """_check_trade_cooldown must compare UTC to UTC. The pre-fix bug used
+    datetime.now() (local, CEST=UTC+2) vs DB UTC strings, adding 2h fake
+    elapsed — effectively disabling cooldown in NY/London sessions."""
+
+    def test_cooldown_blocks_on_recent_trade(self):
+        """A trade timestamped 10 minutes ago (UTC) with 30-minute cooldown
+        should block a new trade."""
+        from unittest.mock import MagicMock, patch
+        from datetime import datetime, timezone, timedelta
+
+        fake_db = MagicMock()
+        now_utc = datetime.now(timezone.utc)
+        ten_min_ago_utc = now_utc - timedelta(minutes=10)
+        fake_db._query_one.return_value = (ten_min_ago_utc.strftime("%Y-%m-%d %H:%M:%S"),)
+
+        from src.trading.scanner import _check_trade_cooldown
+        # min_hours=0.5 (30min). Elapsed 10min < 30min → should return False.
+        result = _check_trade_cooldown(fake_db, min_hours=0.5)
+        assert result is False, "Cooldown should block a trade from 10min ago with 30min minimum"
+
+    def test_cooldown_allows_after_expiry(self):
+        """A trade timestamped 2 hours ago with 30-minute cooldown should pass."""
+        from unittest.mock import MagicMock
+        from datetime import datetime, timezone, timedelta
+
+        fake_db = MagicMock()
+        now_utc = datetime.now(timezone.utc)
+        two_hours_ago_utc = now_utc - timedelta(hours=2)
+        fake_db._query_one.return_value = (two_hours_ago_utc.strftime("%Y-%m-%d %H:%M:%S"),)
+
+        from src.trading.scanner import _check_trade_cooldown
+        assert _check_trade_cooldown(fake_db, min_hours=0.5) is True
+
+    def test_cooldown_no_history_passes(self):
+        """No previous trade → should pass."""
+        from unittest.mock import MagicMock
+        fake_db = MagicMock()
+        fake_db._query_one.return_value = None
+        from src.trading.scanner import _check_trade_cooldown
+        assert _check_trade_cooldown(fake_db, min_hours=0.5) is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

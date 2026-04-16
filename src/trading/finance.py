@@ -113,6 +113,27 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
         logger.info(f"Daily risk reduction active: {daily_mult:.0%} of normal risk")
         risk_percent *= daily_mult
 
+    # Session-based risk multiplier (2026-04-16): thin liquidity sessions
+    # see wider spreads, slower move development, higher slippage. Cut
+    # risk accordingly so a bad fill doesn't become a bad trade.
+    #   overlap (London+NY): 1.0x — max liquidity window
+    #   london:              1.0x
+    #   new_york:            1.0x
+    #   asian:               0.6x — narrow range, breakout-heavy failures
+    #   off_hours:           0.5x — post-NY close, lowest vol
+    #   weekend:             0.0x — shouldn't trade at all, belt+braces
+    try:
+        _session = (analysis_data.get('session') or 'off_hours').lower()
+        _session_mult = {
+            'overlap': 1.0, 'london': 1.0, 'new_york': 1.0,
+            'asian': 0.6, 'off_hours': 0.5, 'weekend': 0.0,
+        }.get(_session, 0.75)
+        if _session_mult < 1.0:
+            logger.info(f"Session risk scaling: {_session}={_session_mult:.0%}")
+            risk_percent *= _session_mult
+    except Exception:
+        pass
+
     min_tp_distance_mult = db.get_param("min_tp_distance_mult", 1.0)
     sl_atr_mult = db.get_param("sl_atr_multiplier", 1.5)
     sl_min_distance = db.get_param("sl_min_distance", 4.0)
