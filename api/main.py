@@ -206,7 +206,9 @@ async def lifespan(app: FastAPI):
 async def _background_scanner():
     """
     Background scanner: cascading multi-timeframe SMC scan every 5 minutes.
-    Checks 4h → 1h → 15m → 5m and places a trade on the first TF with a valid setup.
+    Scalp-first cascade: 5m → 15m → 30m → 1h → 4h. Places a trade on the
+    first TF with a valid setup. Lower TFs have relaxed filters (Stable
+    allowed, confluence=1); H1/4h remain strict (premium SMC setups only).
 
     Uses the same cascade logic as the Telegram bot scanner (src/scanner.py).
     Saves to both trades and scanner_signals with deduplication.
@@ -249,7 +251,7 @@ async def _background_scanner():
             from src.core.database import NewsDB
             from src.api_optimizer import get_rate_limiter as _get_rl
 
-            logger.info("📡 [BG Scanner] Starting multi-TF cascade scan (4h→1h→15m→5m)...")
+            logger.info("📡 [BG Scanner] Starting multi-TF cascade scan (5m→15m→30m→1h→4h)...")
 
             # Global credit pre-check — need at least 2 credits for the first TF
             _can, _ = _get_rl().can_use_credits(2)
