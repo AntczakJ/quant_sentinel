@@ -29,7 +29,12 @@ class BalanceUpdate(BaseModel):
 
 
 def _get_portfolio():
-    """Pobierz portfolio z bazy danych (persistentne) — single batch query"""
+    """Pobierz portfolio z bazy danych (persistentne) — single batch query.
+
+    PnL is derived from SUM(trades.profit) for consistency with digest +
+    system-health. balance-vs-initial drifts when user resets /cap or
+    tests pollute state. Canonical source: realized trade P&L.
+    """
     try:
         db = NewsDB()
         params = db.get_portfolio_params()
@@ -39,17 +44,21 @@ def _get_portfolio():
             balance = float(balance)
             initial = float(params.get("portfolio_initial_balance", balance) or balance)
             equity = float(params.get("portfolio_equity", balance) or balance)
-            pnl = float(params.get("portfolio_pnl", 0) or 0)
             currency = str(params.get("portfolio_currency_text", "PLN") or "PLN")
 
-            # Recalculate PnL from balance vs initial to avoid stale data
-            computed_pnl = balance - initial if initial > 0 else pnl
+            # Canonical PnL: SUM of realized trade profit. Keeps all three
+            # surfaces (portfolio-status / system-health / digest) in sync.
+            pnl_row = db._query_one(
+                "SELECT COALESCE(SUM(profit), 0) FROM trades "
+                "WHERE status IN ('WIN','LOSS','PROFIT','CLOSED') AND profit IS NOT NULL"
+            )
+            canonical_pnl = float(pnl_row[0] or 0) if pnl_row else 0.0
 
             return {
                 "balance": balance,
                 "initial_balance": initial,
                 "equity": equity if equity > 0 else balance,
-                "pnl": computed_pnl,
+                "pnl": round(canonical_pnl, 2),
                 "currency": currency,
                 "current_price": float(params.get("current_price", 2050.0) or 2050.0)
             }
