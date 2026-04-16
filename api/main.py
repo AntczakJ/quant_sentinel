@@ -1247,6 +1247,141 @@ _VOTER_ACCURACY_CACHE: dict = {}
 _VOTER_ACCURACY_TTL_SEC = 600  # 10-min cache; yfinance fetch is expensive
 
 
+_REPLAY_CACHE: dict = {}
+_REPLAY_TTL_SEC = 600
+
+
+@app.get("/api/replay-analyzer", tags=["System"])
+async def replay_analyzer_endpoint(hours: int = 24, horizon_bars: int = 24,
+                                   target_pct: float = 0.1):
+    """Runs the offline replay_analyzer.py logic and returns per-filter
+    'what-if' verdict JSON for the dashboard. Cached 10min server-side.
+    Answers: which filters are rejecting trades that would have been
+    profitable?
+    """
+    import time as _time
+    from collections import Counter, defaultdict
+    import pandas as pd
+
+    cache_key = (int(hours), int(horizon_bars), round(float(target_pct), 3))
+    now = _time.time()
+    cached = _REPLAY_CACHE.get(cache_key)
+    if cached and (now - cached["ts"]) < _REPLAY_TTL_SEC:
+        payload = dict(cached["payload"])
+        payload["cached"] = True
+        payload["cache_age_sec"] = round(now - cached["ts"], 1)
+        return payload
+
+    from src.core.database import NewsDB
+    from src.data.data_sources import get_provider
+    db = NewsDB()
+    try:
+        df = get_provider().get_candles("XAU/USD", "5m", 2016)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"live fetch failed: {e}")
+    if df is None or df.empty:
+        raise HTTPException(status_code=503, detail="no candle data")
+    if "timestamp" in df.columns:
+        df = df.set_index("timestamp")
+    df.index = pd.to_datetime(df.index)
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
+    df.columns = [str(c).lower() for c in df.columns]
+
+    since = f"-{int(hours)} hours"
+    rows = db._query(
+        "SELECT timestamp, timeframe, direction, price, rejection_reason, filter_name "
+        "FROM rejected_setups WHERE timestamp >= datetime('now', ?) ORDER BY timestamp",
+        (since,),
+    )
+    by_filter: dict = defaultdict(lambda: Counter())
+    outcomes: dict = defaultdict(
+        lambda: {"win": 0, "loss": 0, "flat": 0, "n": 0, "total_pnl_pct": 0.0}
+    )
+
+    for row in rows:
+        ts_str, _tf, direction, price, _reason, fname = row
+        by_filter[fname]["total"] += 1
+        if not price or not direction:
+            continue
+        ts = pd.Timestamp(ts_str)
+        if ts.tz is None:
+            ts = ts.tz_localize("UTC")
+        mask = df.index >= ts
+        if not mask.any():
+            continue
+        idx_from = df.index[mask][0]
+        future = df.index[df.index > idx_from][:horizon_bars]
+        if len(future) < horizon_bars:
+            continue
+        try:
+            entry = float(price)
+            high = float(df.loc[future, "high"].max())
+            low = float(df.loc[future, "low"].min())
+        except Exception:
+            continue
+        if direction == "LONG":
+            max_gain = (high - entry) / entry * 100
+            max_loss = (low - entry) / entry * 100
+        else:
+            max_gain = (entry - low) / entry * 100
+            max_loss = (entry - high) / entry * 100
+        outcomes[fname]["n"] += 1
+        if max_gain >= target_pct:
+            outcomes[fname]["win"] += 1
+            outcomes[fname]["total_pnl_pct"] += target_pct
+        elif max_loss <= -target_pct:
+            outcomes[fname]["loss"] += 1
+            outcomes[fname]["total_pnl_pct"] -= target_pct
+        else:
+            outcomes[fname]["flat"] += 1
+
+    total = sum(c["total"] for c in by_filter.values())
+    filters = []
+    for fname, ct in sorted(by_filter.items(), key=lambda x: -x[1]["total"]):
+        n = ct["total"]
+        out = outcomes.get(fname, {"n": 0, "win": 0, "total_pnl_pct": 0})
+        n_outcome = out["n"]
+        if n_outcome > 0:
+            wr = out["win"] / n_outcome * 100
+            expectancy = out["total_pnl_pct"] / n_outcome
+            verdict = ("should_accept" if wr > 55 and expectancy > 0
+                       else "borderline" if wr > 45
+                       else "correct_reject")
+            filters.append({
+                "name": fname,
+                "rejected": n,
+                "share_pct": round(n / total * 100, 1) if total else 0,
+                "hypothetical_wr_pct": round(wr, 1),
+                "expectancy_pct": round(expectancy, 3),
+                "sample_size": n_outcome,
+                "verdict": verdict,
+            })
+        else:
+            filters.append({
+                "name": fname,
+                "rejected": n,
+                "share_pct": round(n / total * 100, 1) if total else 0,
+                "hypothetical_wr_pct": None,
+                "expectancy_pct": None,
+                "sample_size": 0,
+                "verdict": "insufficient",
+            })
+
+    payload = {
+        "hours": hours,
+        "horizon_bars": horizon_bars,
+        "horizon_label": f"{horizon_bars * 5}min",
+        "target_pct": target_pct,
+        "total_rejected": total,
+        "filters": filters,
+        "cached": False,
+        "cache_age_sec": 0,
+    }
+    _REPLAY_CACHE[cache_key] = {"ts": now, "payload": payload}
+    return payload
+
+
 @app.get("/api/daily-digest", tags=["System"])
 async def daily_digest_preview(hours: int = 24):
     """Lightweight in-process digest (same content as scripts/daily_digest.py

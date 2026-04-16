@@ -651,29 +651,56 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     elif tf == "1h":
         htf_checks = [("4h", "H4")]
 
+    # HTF conflict semantics (2026-04-16 relax):
+    # Previously ANY single HTF disagreement hard-rejected. Replay analyzer
+    # showed 100% hypothetical win-rate on 4 htf_confirmation rejects over
+    # 24h (small sample, but directional signal). For low-TF scalps, use
+    # quorum logic: reject only if MAJORITY of HTFs disagree. For 1h, keep
+    # hard reject (a single H4 disagreement on an hourly trade is real risk).
+    htf_is_scalp_quorum = str(tf) in ("5m", "15m", "30m")
+    htf_conflicts = 0
+    htf_conflict_label = None
     for htf_tf, htf_label in htf_checks:
         try:
             htf_analysis = get_smc_analysis(htf_tf)
-            if htf_analysis:
-                htf_trend = htf_analysis.get('trend', '')
-                if direction == "LONG" and htf_trend == "bear":
-                    logger.info(f"[MTF] {tf}: LONG ale {htf_label} trend=bear — NIE handluj przeciw HTF")
+            if not htf_analysis:
+                continue
+            htf_trend = htf_analysis.get('trend', '')
+            conflict = (direction == "LONG" and htf_trend == "bear") or \
+                       (direction == "SHORT" and htf_trend == "bull")
+            if conflict:
+                if not htf_is_scalp_quorum:
+                    # H1 trades: single disagreement = hard reject (bigger SL, costlier to be wrong)
+                    logger.info(f"[MTF] {tf}: {direction} vs {htf_label} trend={htf_trend} — NIE handluj przeciw HTF")
                     _log_rejection(db, tf, direction, current_price,
-                                   f"htf_conflict:{htf_label}=bear", "htf_confirmation",
+                                   f"htf_conflict:{htf_label}={htf_trend}", "htf_confirmation",
                                    confluence_count=confluence_count, rsi=current_rsi,
                                    trend=current_trend, pattern=pattern, atr=current_atr)
                     return None
-                if direction == "SHORT" and htf_trend == "bull":
-                    logger.info(f"[MTF] {tf}: SHORT ale {htf_label} trend=bull — NIE handluj przeciw HTF")
-                    _log_rejection(db, tf, direction, current_price,
-                                   f"htf_conflict:{htf_label}=bull", "htf_confirmation",
-                                   confluence_count=confluence_count, rsi=current_rsi,
-                                   trend=current_trend, pattern=pattern, atr=current_atr)
-                    return None
+                htf_conflicts += 1
+                htf_conflict_label = htf_label
         except (ImportError, AttributeError, TypeError) as e:
             logger.debug(f"[MTF] {htf_label} confirmation skipped: {e}")
 
-    if htf_checks:
+    # Low-TF quorum: majority of HTFs must disagree before hard-reject.
+    # For 15m/30m we check 2 HTFs (H1+H4), so require BOTH to disagree.
+    # If only 1 disagrees: soft-halve risk via existing _scalp_risk_halve.
+    if htf_is_scalp_quorum and htf_conflicts > 0:
+        n_checks = len(htf_checks)
+        if n_checks > 0 and htf_conflicts >= (n_checks + 1) // 2 + (0 if n_checks == 1 else 0):
+            # Majority conflict (or only HTF disagrees for 5m)
+            if htf_conflicts == n_checks:
+                logger.info(f"[MTF] {tf}: {direction} all HTFs disagree — block")
+                _log_rejection(db, tf, direction, current_price,
+                               f"htf_conflict_quorum:{htf_conflicts}/{n_checks}", "htf_confirmation",
+                               confluence_count=confluence_count, rsi=current_rsi,
+                               trend=current_trend, pattern=pattern, atr=current_atr)
+                return None
+        # Partial conflict on multi-HTF: halve risk, let it through
+        logger.warning(f"[MTF] {tf}: {direction} partial HTF conflict ({htf_conflicts}/{n_checks}, {htf_conflict_label}) — halve risk")
+        analysis['_scalp_risk_halve'] = True
+
+    if htf_checks and htf_conflicts == 0:
         logger.info(f"[MTF] {tf}: HTF trend alignment confirmed for {direction}")
 
     # --- 7. SETUP QUALITY SCORING (nowe!) ---

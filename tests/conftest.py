@@ -20,26 +20,29 @@ if sys.platform == "win32":
                 pass
 
 @pytest.fixture(autouse=True)
-def _reset_backtest_env(monkeypatch):
-    """Clear backtest-isolation env vars AND pin DATABASE_URL to test DB.
+def _reset_backtest_env(monkeypatch, tmp_path_factory):
+    """Clear backtest env vars + pin DATABASE_URL to a PER-TEST temp file.
 
-    Original purpose (2026-04-13): prevent enforce_isolation() state leaks
-    between tests — env vars set by one test were polluting later tests
-    that expected default behavior.
+    Evolution:
+    2026-04-13: cleared QUANT_BACKTEST_* env to prevent state leaks.
+    2026-04-16 AM: pinned DATABASE_URL to shared data/test_sentinel.db
+      (stopped pytest writing to prod — 6 fake trades incident).
+    2026-04-16 PM: extended to per-test temp DB. Shared test_sentinel.db
+      still bled state between tests — compliance audit chain, stale
+      OPEN trades [-1] grabs, pattern weights. Now each test gets a
+      fresh SQLite via tmp_path_factory, so NO cross-test pollution
+      possible.
 
-    Extended 2026-04-16: now ALSO pins DATABASE_URL to data/test_sentinel.db.
-    Without this, tests that instantiate NewsDB() without going through
-    enforce_isolation() were writing to data/sentinel.db (production).
-    Symptom: 6 fake OPEN trades with entry=$2350 appeared in prod after
-    a pytest run, plus #125/#126 got set to status=WIN profit=None by a
-    test fixture. Prod DB is now defended at the conftest level.
+    Tests that need a specific DB (e.g. test_backtest_grid's isolation
+    harness) can override with their own monkeypatch.setenv AFTER this
+    fixture runs.
     """
     for var in ("QUANT_BACKTEST_MODE", "QUANT_BACKTEST_RELAX",
                 "QUANT_BACKTEST_PARTIAL", "QUANT_BACKTEST_MIN_CONF"):
         monkeypatch.delenv(var, raising=False)
-    # Pin to test DB — tests that need a specific DB can override with
-    # their own monkeypatch.setenv AFTER this fixture runs.
-    monkeypatch.setenv("DATABASE_URL", "data/test_sentinel.db")
+    # Fresh temp DB per test — no shared state possible.
+    test_db = tmp_path_factory.mktemp("db") / "test.db"
+    monkeypatch.setenv("DATABASE_URL", str(test_db))
     yield
 
 

@@ -471,6 +471,27 @@ export interface SystemHealthResponse {
   portfolio_balance: number;
 }
 
+export interface ReplayFilterEntry {
+  name: string;
+  rejected: number;
+  share_pct: number;
+  hypothetical_wr_pct: number | null;
+  expectancy_pct: number | null;
+  sample_size: number;
+  verdict: 'should_accept' | 'borderline' | 'correct_reject' | 'insufficient';
+}
+
+export interface ReplayAnalyzerResponse {
+  hours: number;
+  horizon_bars: number;
+  horizon_label: string;
+  target_pct: number;
+  total_rejected: number;
+  filters: ReplayFilterEntry[];
+  cached: boolean;
+  cache_age_sec: number;
+}
+
 export interface VoterLiveAccuracyEntry {
   decisive_samples: number;
   combined_accuracy_pct: number | null;
@@ -558,6 +579,16 @@ export const backtestResultsAPI = {
   /** Aggregated system health for dashboard summary widget. */
   loadSystemHealth: async () => {
     const response = await client.get<SystemHealthResponse>('/system-health');
+    return response.data;
+  },
+
+  /** "What-if" analysis: for each filter, would rejected trades have been
+   *  profitable? Cached 10min server-side. */
+  loadReplayAnalyzer: async (hours: number = 24, horizonBars: number = 24) => {
+    const response = await client.get<ReplayAnalyzerResponse>(
+      '/replay-analyzer',
+      { params: { hours, horizon_bars: horizonBars } }
+    );
     return response.data;
   },
 
