@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge, LSTMDistribution, WFGridLive } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge, LSTMDistribution, WFGridLive, SystemHealth } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
 import { PageHeader } from '../components/ui';
 import { trainingAPI } from '../api/client';
@@ -66,6 +66,12 @@ function TrainingControls() {
 
 export default function ModelsPage() {
   const widgets: GridWidget[] = useMemo(() => [
+    {
+      id: 'system-health',
+      title: 'System Health Summary',
+      content: <SystemHealth />,
+      defaultLayout: { x: 0, y: 0, w: 12, h: 4, minW: 6, minH: 3 },
+    },
     {
       id: 'training-live',
       title: 'Live Training',

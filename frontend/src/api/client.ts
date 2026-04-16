@@ -434,6 +434,32 @@ export const healthAPI = {
   },
 };
 
+export interface SystemHealthResponse {
+  overall: 'healthy' | 'issues';
+  issues: string[];
+  lstm: {
+    verdict: 'healthy' | 'concerning' | 'degenerate' | 'insufficient_data' | 'unknown';
+    n_predictions: number | null;
+    extreme_frac: number | null;
+    middle_frac: number | null;
+  };
+  drift_alerts: { alert: number; warn: number; total: number };
+  trades: {
+    open: number;
+    total_risk_usd: number;
+    heat_pct: number;
+    pnl_24h: number;
+    trades_24h: number;
+    pnl_7d: number;
+    trades_7d: number;
+  };
+  scanner: {
+    last_signal_age_sec: number | null;
+    last_rejection_age_sec: number | null;
+  };
+  portfolio_balance: number;
+}
+
 export interface WFGridLiveEntry {
   cell_hash: string;
   params: {
@@ -498,6 +524,12 @@ export const backtestResultsAPI = {
       data: Record<string, unknown>;
     };
   },
+  /** Aggregated system health for dashboard summary widget. */
+  loadSystemHealth: async () => {
+    const response = await client.get<SystemHealthResponse>('/system-health');
+    return response.data;
+  },
+
   /** Live leaderboard for an in-flight walk-forward grid sweep. */
   loadWFGridLive: async (name: string = 'prod_v1', stage: string = 'A', top: number = 5) => {
     const response = await client.get<WFGridLiveResponse>('/backtest/wf-grid-live', {

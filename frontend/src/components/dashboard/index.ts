@@ -32,4 +32,5 @@ export { VoterAttribution } from './VoterAttribution';
 export { ModelsStalenessBadge } from './ModelsStalenessBadge';
 export { LSTMDistribution } from './LSTMDistribution';
 export { WFGridLive } from './WFGridLive';
+export { SystemHealth } from './SystemHealth';
 

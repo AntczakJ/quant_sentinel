@@ -1212,6 +1212,146 @@ async def backtest_grid(name: str):
     return {"path": path, "mtime": _os.path.getmtime(path), "entries": data}
 
 
+@app.get("/api/system-health", tags=["System"])
+async def system_health_summary():
+    """Aggregated at-a-glance system health for the dashboard summary widget.
+
+    Single-call replacement for 6 separate widget queries: LSTM verdict,
+    drift alerts, open positions, portfolio heat, signal age, realized PnL.
+    """
+    import time as _time
+    from src.core.database import NewsDB
+    db = NewsDB()
+    now = _time.time()
+
+    # LSTM verdict (reuse existing logic inline)
+    try:
+        from api.routers.models import _hist_stats, LSTM_SWAP_TS
+        post_rows = db._query(
+            "SELECT lstm_pred FROM ml_predictions WHERE timestamp >= ? AND lstm_pred IS NOT NULL",
+            (LSTM_SWAP_TS,),
+        )
+        vals = [float(r[0]) for r in post_rows if r[0] is not None]
+        post_stats = _hist_stats(vals)
+        if post_stats["n"] >= 20:
+            if (post_stats["extreme_frac"] or 0) > 0.7 and (post_stats["middle_frac"] or 0) < 0.15:
+                lstm_verdict = "degenerate"
+            else:
+                lstm_verdict = "healthy"
+        else:
+            lstm_verdict = "insufficient_data"
+    except Exception:
+        lstm_verdict = "unknown"
+        post_stats = {"n": 0}
+
+    # Drift alerts
+    try:
+        drifts = db._query(
+            "SELECT severity, COUNT(*) FROM model_alerts WHERE resolved = 0 GROUP BY severity"
+        )
+        drift_by_sev = {r[0]: r[1] for r in drifts}
+    except Exception:
+        drift_by_sev = {}
+
+    # Open trades + heat
+    try:
+        open_rows = db._query(
+            "SELECT id, direction, entry, sl, lot FROM trades WHERE status='OPEN'"
+        )
+        open_count = len(open_rows)
+        total_risk = 0.0
+        for r in open_rows:
+            try:
+                e, s, l = float(r[2] or 0), float(r[3] or 0), float(r[4] or 0)
+                if e > 0 and s > 0 and l > 0:
+                    total_risk += abs(e - s) * 100.0 * l
+            except (ValueError, TypeError):
+                continue
+        balance = float(db.get_param("portfolio_balance") or 10000)
+        heat_pct = (total_risk / balance * 100) if balance > 0 else 0.0
+    except Exception:
+        open_count = 0
+        heat_pct = 0.0
+        total_risk = 0.0
+        balance = 10000.0
+
+    # Last scanner signal / rejection age
+    def _age_seconds(sql):
+        try:
+            row = db._query_one(sql)
+            if row and row[0]:
+                from datetime import datetime
+                t = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=__import__("datetime").timezone.utc)
+                return (now - t.timestamp())
+        except Exception:
+            pass
+        return None
+
+    last_signal_age = _age_seconds("SELECT MAX(timestamp) FROM scanner_signals")
+    last_rejection_age = _age_seconds("SELECT MAX(timestamp) FROM rejected_setups")
+
+    # Realized PnL last 24h + 7d
+    try:
+        r24 = db._query_one(
+            "SELECT COALESCE(SUM(profit), 0), COUNT(*) FROM trades "
+            "WHERE status IN ('WIN','LOSS','PROFIT') AND profit IS NOT NULL "
+            "AND julianday('now') - julianday(timestamp) < 1"
+        )
+        r7 = db._query_one(
+            "SELECT COALESCE(SUM(profit), 0), COUNT(*) FROM trades "
+            "WHERE status IN ('WIN','LOSS','PROFIT') AND profit IS NOT NULL "
+            "AND julianday('now') - julianday(timestamp) < 7"
+        )
+        pnl_24h, trades_24h = float(r24[0] or 0), int(r24[1] or 0)
+        pnl_7d, trades_7d = float(r7[0] or 0), int(r7[1] or 0)
+    except Exception:
+        pnl_24h = pnl_7d = 0.0
+        trades_24h = trades_7d = 0
+
+    # Overall verdict
+    issues = []
+    if lstm_verdict == "degenerate":
+        issues.append("LSTM degenerate")
+    if drift_by_sev.get("alert", 0) > 10:
+        issues.append(f"{drift_by_sev['alert']} drift alerts")
+    if heat_pct > 6.0:
+        issues.append(f"heat {heat_pct:.1f}%")
+    if last_signal_age is None or (last_signal_age and last_signal_age > 48 * 3600):
+        issues.append("scanner silent")
+
+    return {
+        "overall": "issues" if issues else "healthy",
+        "issues": issues,
+        "lstm": {
+            "verdict": lstm_verdict,
+            "n_predictions": post_stats.get("n"),
+            "extreme_frac": post_stats.get("extreme_frac"),
+            "middle_frac": post_stats.get("middle_frac"),
+        },
+        "drift_alerts": {
+            "alert": drift_by_sev.get("alert", 0),
+            "warn": drift_by_sev.get("warn", 0),
+            "total": sum(drift_by_sev.values()),
+        },
+        "trades": {
+            "open": open_count,
+            "total_risk_usd": round(total_risk, 2),
+            "heat_pct": round(heat_pct, 2),
+            "pnl_24h": round(pnl_24h, 2),
+            "trades_24h": trades_24h,
+            "pnl_7d": round(pnl_7d, 2),
+            "trades_7d": trades_7d,
+        },
+        "scanner": {
+            "last_signal_age_sec": last_signal_age,
+            "last_rejection_age_sec": last_rejection_age,
+        },
+        "portfolio_balance": balance,
+    }
+
+
 @app.get("/api/backtest/wf-grid-live", tags=["System"])
 async def backtest_wf_grid_live(name: str = "prod_v1", stage: str = "A", top: int = 5):
     """Live leaderboard for an in-flight walk-forward grid.
