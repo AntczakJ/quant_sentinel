@@ -1212,6 +1212,121 @@ async def backtest_grid(name: str):
     return {"path": path, "mtime": _os.path.getmtime(path), "entries": data}
 
 
+@app.get("/api/voter-live-accuracy", tags=["System"])
+async def voter_live_accuracy(hours: int = 72, horizon_candles: int = 12):
+    """Live forward-move accuracy per ensemble voter.
+
+    For each ml_predictions row within the last `hours`, joins its
+    timestamp to a 5m yfinance candle, then compares the prediction
+    to the actual close `horizon_candles` ahead (default 12 = 1h).
+    Returns per-voter accuracy among decisive predictions.
+
+    Motivation: 2026-04-16 discovered the live LSTM was an anti-signal
+    (25% accuracy) despite passing sweep validation. This endpoint is
+    the runtime early-warning: anything below 45% fires a warning.
+    """
+    import pandas as pd
+    from collections import Counter
+    from src.core.database import NewsDB
+
+    db = NewsDB()
+
+    try:
+        import yfinance as yf
+        df = yf.download("GC=F", interval="5m", period="14d",
+                         progress=False, auto_adjust=False)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"yfinance fetch failed: {e}")
+    if df is None or df.empty:
+        raise HTTPException(status_code=503, detail="no yfinance data")
+
+    df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
+
+    since = f"-{int(hours)} hours"
+
+    def _eval(col, high_thr, low_thr, is_action=False):
+        cats = Counter()
+        rows = db._query(
+            f"SELECT timestamp, {col} FROM ml_predictions "
+            f"WHERE {col} IS NOT NULL AND timestamp >= datetime('now', ?) "
+            f"ORDER BY timestamp",
+            (since,),
+        )
+        for ts_str, raw in rows:
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                continue
+            ts = pd.Timestamp(ts_str)
+            if ts.tz is None:
+                ts = ts.tz_localize("UTC")
+            mask = df.index >= ts
+            if not mask.any():
+                continue
+            idx = df.index[mask][0]
+            future = df.index[df.index > idx][:horizon_candles]
+            if len(future) < horizon_candles:
+                continue
+            entry = float(df.loc[idx, "close"])
+            end = float(df.loc[future[-1], "close"])
+            move = (end - entry) / entry * 100
+            up = move > 0.1
+            down = move < -0.1
+            if is_action:
+                # DQN: 1=BUY, 2=SELL, 0=HOLD
+                if val == 1:
+                    cats["bull_correct" if up else "bull_wrong" if down else "bull_flat"] += 1
+                elif val == 2:
+                    cats["bear_correct" if down else "bear_wrong" if up else "bear_flat"] += 1
+            else:
+                if val > high_thr:
+                    cats["bull_correct" if up else "bull_wrong" if down else "bull_flat"] += 1
+                elif val < low_thr:
+                    cats["bear_correct" if down else "bear_wrong" if up else "bear_flat"] += 1
+        bc, bw = cats.get("bull_correct", 0), cats.get("bull_wrong", 0)
+        sc, sw = cats.get("bear_correct", 0), cats.get("bear_wrong", 0)
+        total_c, total_w = bc + sc, bw + sw
+        acc = (total_c / (total_c + total_w) * 100) if (total_c + total_w) else None
+        bull_acc = (bc / (bc + bw) * 100) if (bc + bw) else None
+        bear_acc = (sc / (sc + sw) * 100) if (sc + sw) else None
+        status = "insufficient" if (total_c + total_w) < 10 else (
+            "good" if acc and acc >= 55 else "weak" if acc and acc >= 45 else "anti_signal"
+        )
+        return {
+            "decisive_samples": total_c + total_w,
+            "combined_accuracy_pct": round(acc, 1) if acc is not None else None,
+            "bullish_accuracy_pct": round(bull_acc, 1) if bull_acc is not None else None,
+            "bearish_accuracy_pct": round(bear_acc, 1) if bear_acc is not None else None,
+            "status": status,
+        }
+
+    voters = {
+        "smc": _eval("smc_pred", 0.7, 0.3),
+        "lstm": _eval("lstm_pred", 0.7, 0.3),
+        "xgb": _eval("xgb_pred", 0.7, 0.3),
+        "attention": _eval("attention_pred", 0.7, 0.3),
+        "dqn": _eval("dqn_action", 0.5, -0.5, is_action=True),
+        "ensemble": _eval("ensemble_score", 0.7, 0.3),
+    }
+
+    alerts = [name for name, v in voters.items()
+              if v["status"] == "anti_signal"]
+    warnings = [name for name, v in voters.items()
+                if v["status"] == "weak"]
+
+    return {
+        "hours_window": hours,
+        "horizon_candles": horizon_candles,
+        "horizon_label": f"{horizon_candles * 5}min",
+        "voters": voters,
+        "alerts": alerts,
+        "warnings": warnings,
+        "verdict": "critical" if alerts else "warn" if warnings else "ok",
+    }
+
+
 @app.get("/api/system-health", tags=["System"])
 async def system_health_summary():
     """Aggregated at-a-glance system health for the dashboard summary widget.

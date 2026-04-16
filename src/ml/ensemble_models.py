@@ -940,6 +940,14 @@ def get_ensemble_prediction(
     models_short = 0
     models_neutral = 0
 
+    # LSTM directional filter: 2026-04-16 analysis showed the current
+    # sweep-winner has 100% directional accuracy on bullish predictions
+    # at 1h+ horizons but 0-14% on bearish (anti-signal). Until rollback
+    # or retrain, accept ONLY bullish LSTM calls — skip bearish. This
+    # is gated to the 'lstm' slot only, not lstm_prev (which is the
+    # reliable pre-swap model).
+    LSTM_BULLISH_ONLY = True
+
     for model_name, weight in regime_weights.items():
         if model_name in results["predictions"]:
             pred = results["predictions"][model_name]
@@ -949,6 +957,15 @@ def get_ensemble_prediction(
                     pred["status"] = "muted_low_weight"
                     pred["muted_weight"] = round(float(weight), 4)
                     muted_models.append(model_name)
+                    continue
+                # Directional asymmetry guard (currently only affects
+                # 'lstm'): bearish calls from known-bad-on-short models
+                # contribute noise, bullish calls are reliable.
+                if (LSTM_BULLISH_ONLY and model_name == "lstm"
+                        and pred.get("value", 0.5) < 0.5):
+                    pred["status"] = "muted_bearish_lstm"
+                    pred["muted_reason"] = "LSTM bearish calls 0-14% live accuracy"
+                    muted_models.append(f"{model_name}:bearish")
                     continue
                 weighted_sum += pred["value"] * weight
                 confidence_sum += pred.get("confidence", 0.5) * weight
