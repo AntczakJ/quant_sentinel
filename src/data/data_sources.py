@@ -359,7 +359,7 @@ class TwelveDataProvider(DataProvider):
         Called once at the top of each scanner cycle.
         """
         if timeframes is None:
-            timeframes = ['5m', '15m', '1h', '4h']
+            timeframes = ['5m', '15m', '30m', '1h', '4h']
 
         fetched = 0
         for tf in timeframes:
@@ -453,7 +453,7 @@ class AlphaVantageProvider(DataProvider):
             return {}
 
     def get_candles(self, symbol, interval, count):
-        interval_map = {'5m':'5min','15m':'15min','1h':'60min','4h':'60min'}
+        interval_map = {'5m':'5min','15m':'15min','30m':'30min','1h':'60min','4h':'60min'}
         av_interval = interval_map.get(interval, '60min')
         data = self._req('TIME_SERIES_INTRADAY', {'symbol': symbol, 'interval': av_interval, 'outputsize': 'full'})
         key = f'Time Series ({av_interval})'

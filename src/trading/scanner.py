@@ -22,12 +22,13 @@ from src.core.config import TOKEN, CHAT_ID, USER_PREFS, LAST_STATUS, LAST_STATUS
 from src.trading.smc_engine import get_smc_analysis
 
 # Kolejność kaskady: od najniższego do najwyższego timeframe'u
-# (scalp-first: 5m/15m jako primary, 1h/4h jako fallback premium setups)
-SCAN_TIMEFRAMES = ["5m", "15m", "1h", "4h"]
+# (scalp-first: 5m/15m/30m jako primary, 1h/4h jako fallback premium setups)
+SCAN_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h"]
 
 TF_LABELS = {
     "4h": "H4",
     "1h": "H1",
+    "30m": "M30",
     "15m": "M15",
     "5m": "M5",
 }
@@ -382,7 +383,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # Other filters (RSI extreme, directional alignment, ML ensemble
     # validation, pattern_weight, event guard, etc.) still apply — so we
     # accept thinner SMC confirmation, not a flood of junk.
-    if str(tf) in ("5m", "15m") and not _relax:
+    if str(tf) in ("5m", "15m", "30m") and not _relax:
         _min_conf = 1
         _allow_stable_5m = True
     else:
@@ -624,6 +625,8 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     if tf == "5m":
         htf_checks = [("1h", "H1")]
     elif tf == "15m":
+        htf_checks = [("1h", "H1"), ("4h", "H4")]
+    elif tf == "30m":
         htf_checks = [("1h", "H1"), ("4h", "H4")]
     elif tf == "1h":
         htf_checks = [("4h", "H4")]

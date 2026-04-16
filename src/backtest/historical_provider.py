@@ -127,7 +127,7 @@ class HistoricalProvider(DataProvider):
     @classmethod
     def from_yfinance(cls, symbol: str = "XAU/USD", period: str = "2y",
                       yf_symbol: str = "GC=F",
-                      intervals: tuple = ("5m", "15m", "1h", "4h"),
+                      intervals: tuple = ("5m", "15m", "30m", "1h", "4h"),
                       use_cache: bool = True) -> "HistoricalProvider":
         """Fetch all TFs from yfinance. 5m has 60-day max; we truncate.
 
@@ -147,8 +147,8 @@ class HistoricalProvider(DataProvider):
         cache: dict[str, pd.DataFrame] = {}
         for tf in intervals:
             yf_int = _YF_INTERVAL_MAP.get(tf, tf)
-            # yfinance 5m max 60d; use 60d for 5m, full period for others
-            yf_period = "60d" if tf == "5m" else period
+            # yfinance intraday limits: 5m/15m/30m max 60d, 1h up to 730d
+            yf_period = "60d" if tf in ("5m", "15m", "30m") else period
 
             # ── Try disk cache first ──
             safe_name = yf_symbol.replace("=", "_").replace("/", "_")
