@@ -664,9 +664,13 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         grade = setup_quality['grade']
 
         if grade == "C":
+            # Surface factors_detail so we can see WHAT is missing. Previously
+            # we only logged "C (14/100)" which made diagnosis impossible.
+            factors = setup_quality.get('factors_detail', {})
+            factors_str = ', '.join(f"{k}={v}" for k, v in factors.items()) if factors else '(no factors matched)'
             logger.info(
                 f"🔍 [MTF] {tf}: Setup grade=C ({setup_quality['score']}/100) — "
-                f"zbyt niska jakość, pomijam"
+                f"zbyt niska jakość, pomijam | factors: {factors_str}"
             )
             _log_rejection(db, tf, direction, current_price,
                            f"setup_grade=C({setup_quality['score']}/100)", "setup_quality",

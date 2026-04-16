@@ -1481,7 +1481,13 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     # a 5m setup with 5 positive factors could still fall short of grade B
     # (seen in prod: score 34.4 with fvg+OB+RSI+macro aligned = grade C).
     if _is_scalp:
-        a_plus_cut, a_cut, b_cut = 65, 45, 30
+        # b_cut lowered 30 -> 25 on 2026-04-16. Live data showed scalp
+        # setups routinely scoring 25-26 (strong CHoCH/OB+RSI+ichimoku
+        # confluence) but missing grade B by 4-5 pts. Grab/MSS/BOS are
+        # rare enough on lower TFs that requiring them as gatekeepers
+        # killed all scalp flow. 25 keeps ~5-factor setups active while
+        # still rejecting 1-2 factor noise.
+        a_plus_cut, a_cut, b_cut = 65, 45, 25
     else:
         a_plus_cut, a_cut, b_cut = 75, 55, 40
 
