@@ -167,6 +167,29 @@ function SystemHealthInner() {
           hint={data.issues[0] || 'all clear'}
         />
       </div>
+      {data.trades.open_detail.length > 0 && (
+        <div className="mt-1 bg-dark-bg rounded p-2 border border-dark-secondary">
+          <div className="text-[10px] text-th-muted uppercase tracking-wider mb-1.5">
+            Open positions ({data.trades.open_detail.length})
+          </div>
+          <div className="space-y-1">
+            {data.trades.open_detail.map((t) => (
+              <div key={t.id} className="flex items-center gap-3 text-[11px] font-mono">
+                <span className="text-th-muted">#{t.id}</span>
+                <span className={t.direction === 'LONG' ? 'text-accent-green' : 'text-accent-red'}>
+                  {t.direction}
+                </span>
+                <span>${t.entry.toFixed(2)}</span>
+                <span className="text-th-muted">→</span>
+                <span className="text-accent-red">SL ${t.sl.toFixed(2)}</span>
+                <span className="text-accent-green">TP ${t.tp.toFixed(2)}</span>
+                <span className="text-th-muted">lot {t.lot}</span>
+                <span className="text-th-muted ml-auto">risk ${t.risk_usd.toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="text-[10px] text-th-muted">Auto-refresh 20s</div>
     </div>
   );

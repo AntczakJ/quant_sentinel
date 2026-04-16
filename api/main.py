@@ -1253,18 +1253,33 @@ async def system_health_summary():
     except Exception:
         drift_by_sev = {}
 
-    # Open trades + heat
+    # Open trades + heat + per-trade details
+    open_trades_detail = []
     try:
         open_rows = db._query(
-            "SELECT id, direction, entry, sl, lot FROM trades WHERE status='OPEN'"
+            "SELECT id, direction, entry, sl, tp, lot, timestamp, pattern "
+            "FROM trades WHERE status='OPEN' ORDER BY timestamp DESC LIMIT 5"
         )
         open_count = len(open_rows)
         total_risk = 0.0
         for r in open_rows:
             try:
-                e, s, l = float(r[2] or 0), float(r[3] or 0), float(r[4] or 0)
-                if e > 0 and s > 0 and l > 0:
-                    total_risk += abs(e - s) * 100.0 * l
+                _id, direction, entry, sl, tp, lot, ts, pattern = r
+                e, s, l = float(entry or 0), float(sl or 0), float(lot or 0)
+                tp_f = float(tp or 0)
+                risk_usd = abs(e - s) * 100.0 * l if (e > 0 and s > 0 and l > 0) else 0.0
+                total_risk += risk_usd
+                open_trades_detail.append({
+                    "id": _id,
+                    "direction": direction,
+                    "entry": e,
+                    "sl": s,
+                    "tp": tp_f,
+                    "lot": l,
+                    "risk_usd": round(risk_usd, 2),
+                    "pattern": pattern,
+                    "timestamp": ts,
+                })
             except (ValueError, TypeError):
                 continue
         balance = float(db.get_param("portfolio_balance") or 10000)
@@ -1343,6 +1358,7 @@ async def system_health_summary():
             "trades_24h": trades_24h,
             "pnl_7d": round(pnl_7d, 2),
             "trades_7d": trades_7d,
+            "open_detail": open_trades_detail,
         },
         "scanner": {
             "last_signal_age_sec": last_signal_age,

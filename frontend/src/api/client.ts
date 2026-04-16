@@ -452,6 +452,17 @@ export interface SystemHealthResponse {
     trades_24h: number;
     pnl_7d: number;
     trades_7d: number;
+    open_detail: Array<{
+      id: number;
+      direction: string;
+      entry: number;
+      sl: number;
+      tp: number;
+      lot: number;
+      risk_usd: number;
+      pattern: string | null;
+      timestamp: string;
+    }>;
   };
   scanner: {
     last_signal_age_sec: number | null;
