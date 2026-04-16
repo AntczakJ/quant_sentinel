@@ -205,9 +205,8 @@ class TestRunner:
 
         tests_passed = 0
 
-        # Check core modules
+        # Check core modules (2026-04-16: removed main.py after Telegram bot deleted)
         modules = [
-            ("main.py", "Main bot entry"),
             ("smc_engine.py", "SMC analysis"),
             ("ai_engine.py", "AI/sentiment"),
             ("ml_models.py", "ML models"),
