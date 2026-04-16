@@ -1000,9 +1000,14 @@ class NewsDB:
         self._execute("UPDATE trades SET setup_grade = ?, setup_score = ? WHERE id = ?", (grade, score, trade_id))
 
     def get_open_trades_extended(self):
-        """Zwraca otwarte trade'y z rozszerzonymi danymi (do trailing stop)."""
+        """Zwraca otwarte trade'y z rozszerzonymi danymi (do trailing stop).
+
+        Includes `lot` column (added 2026-04-16) so resolve_trades_task
+        can compute PnL with correct position size instead of raw
+        price_move.
+        """
         return self._query(
-            "SELECT id, direction, entry, sl, tp, trailing_sl, setup_grade, factors FROM trades WHERE status = 'OPEN'"
+            "SELECT id, direction, entry, sl, tp, trailing_sl, setup_grade, factors, lot FROM trades WHERE status = 'OPEN'"
         )
 
     # ── REJECTED SETUPS ──

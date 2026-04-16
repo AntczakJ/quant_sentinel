@@ -1471,12 +1471,13 @@ async def resolve_trades_task(context):
             market_snapshot = f"Cena: {current_price}"
 
         for trade in open_trades:
-            t_id, direction, entry, sl, tp, trailing_sl, setup_grade, factors_json = trade
+            t_id, direction, entry, sl, tp, trailing_sl, setup_grade, factors_json, lot = trade
             status = None
 
             dir_clean = str(direction).strip().upper()
             entry_f = float(entry or 0)
             sl_f = float(trailing_sl or sl or 0)  # użyj trailing SL jeśli istnieje
+            lot_f = float(lot or 0.01)  # 2026-04-16: PnL calc needs lot
             tp_f = float(tp or 0)
             original_sl = float(sl or 0)
 
@@ -1619,16 +1620,23 @@ async def resolve_trades_task(context):
                     status = "LOSS"
 
             if status:
-                # Oblicz profit/loss
+                # Oblicz profit/loss. 2026-04-16: multiply by 100 * lot.
+                # XAU contract: standard lot = 100 oz. Previous version wrote
+                # raw price_move, under-reporting profit N*100 times (N=lot).
+                # Matches api/main.py _auto_resolve_trades and portfolio.py
+                # close_trade formulas.
                 try:
+                    OZ_PER_STANDARD_LOT = 100.0
                     if status == "WIN":
-                        profit_val = round(abs(tp_f - entry_f), 2) if entry_f > 0 else 0
+                        price_move = abs(tp_f - entry_f) if entry_f > 0 else 0
+                        profit_val = round(price_move * OZ_PER_STANDARD_LOT * lot_f, 2)
                     else:
                         # SL hit — compute actual P&L (trailing stop may yield positive P&L)
                         if "LONG" in dir_clean:
-                            profit_val = round(sl_f - entry_f, 2)
+                            price_move = sl_f - entry_f
                         else:
-                            profit_val = round(entry_f - sl_f, 2)
+                            price_move = entry_f - sl_f
+                        profit_val = round(price_move * OZ_PER_STANDARD_LOT * lot_f, 2)
 
                         # Trailing stop correction: if SL hit yields positive P&L, it's a WIN
                         if profit_val > 0:
