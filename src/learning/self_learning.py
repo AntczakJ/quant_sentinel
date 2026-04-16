@@ -208,6 +208,9 @@ def optimize_parameters():
     # Zapisz najlepsze parametry
     for name, value in best_params.items():
         db.set_param(name, value)
+    # Mirror target_rr → tp_to_sl_ratio (production reads tp_to_sl_ratio in finance.py)
+    if 'target_rr' in best_params:
+        db.set_param('tp_to_sl_ratio', best_params['target_rr'])
     logger.info(f"[BACKTEST] Zoptymalizowano parametry: {best_params} (score: {best_score:.2f})")
 
 def auto_tune_pattern_weights():
@@ -282,7 +285,6 @@ def run_learning_cycle():
                 'min_score': (3.0, 7.0),
                 'sl_atr_multiplier': (1.0, 2.5),
                 'sl_min_distance': (3.0, 8.0),
-                'tp_to_sl_ratio': (2.0, 4.0),
             }
             opt = BayesianOptimizer(bounds, objective, n_init=10, n_iter=40)
             best_params, best_score = opt.optimize()
@@ -301,6 +303,11 @@ def run_learning_cycle():
                 db = NewsDB()
                 for name, val in best_params.items():
                     db.set_param(name, val)
+                # Mirror target_rr → tp_to_sl_ratio: production reads tp_to_sl_ratio
+                # in finance.py:119 but the optimizer only objects on target_rr,
+                # so they must be coupled or live trading sees a stale value.
+                if 'target_rr' in best_params:
+                    db.set_param('tp_to_sl_ratio', best_params['target_rr'])
                 logger.info(
                     f"Bayesian optimization APPLIED: {best_params} "
                     f"(train={best_score:.0f}, holdout={holdout_equity:.0f}, holdout_dd={holdout_dd:.1%})"

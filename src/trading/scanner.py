@@ -21,8 +21,9 @@ from src.core.logger import logger
 from src.core.config import TOKEN, CHAT_ID, USER_PREFS, LAST_STATUS, LAST_STATUS_LOCK, TD_API_KEY
 from src.trading.smc_engine import get_smc_analysis
 
-# Kolejność kaskady: od najwyższego do najniższego timeframe'u
-SCAN_TIMEFRAMES = ["4h", "1h", "15m", "5m"]
+# Kolejność kaskady: od najniższego do najwyższego timeframe'u
+# (scalp-first: 5m/15m jako primary, 1h/4h jako fallback premium setups)
+SCAN_TIMEFRAMES = ["5m", "15m", "1h", "4h"]
 
 TF_LABELS = {
     "4h": "H4",
@@ -370,24 +371,18 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     structure = analysis.get('structure', 'Stable')
     is_stable = 'Stable' in str(structure)
 
-    # --- 5m special case (2026-04-14) ---
-    # User empirically catches $10-20 moves on 5m during intraday. Higher
-    # TFs correctly wait for full swing setups (confluence=3 + non-Stable)
-    # but 5m's granularity means Stable often IS the relevant context
-    # (short holding time, small SL). Lower bar for 5m specifically:
-    #   - min_conf 2 instead of 3
-    #   - don't block on structure=Stable
+    # --- Low-TF scalp exceptions (5m/15m, 2026-04-16) ---
+    # Scalp-primary workflow: 5m and 15m catch $10-30 daily moves that don't
+    # involve fresh grab/mss. Higher TFs (1h/4h) keep strict gates for
+    # premium swing setups. On these lower TFs:
+    #   - min_conf = 1 (single price-action factor is legit scalp trigger)
+    #   - allow structure=Stable (Stable IS the default context — most
+    #     ticks don't have a fresh SMC event; blocking Stable here kills
+    #     every intraday setup)
     # Other filters (RSI extreme, directional alignment, ML ensemble
-    # validation at line 421, pattern_weight, event guard, etc.) still
-    # apply — so we're not opening the flood gates, just letting a scalp
-    # setup through when one of the slower TFs isn't giving us anything.
-    if str(tf) == "5m" and not _relax:
-        # 5m scalp: single price-action factor (pin bar, engulfing, FVG
-        # retest etc.) is a legitimate scalp trigger. Raising the bar to 2
-        # was cutting ~29 setups/13h that the user saw on the chart.
-        # Other filters (direction_conflict, RSI, ATR, macro, ML ensemble,
-        # setup_quality, event guard) still apply — so we're accepting
-        # thinner SMC confirmation, not a flood of junk.
+    # validation, pattern_weight, event guard, etc.) still apply — so we
+    # accept thinner SMC confirmation, not a flood of junk.
+    if str(tf) in ("5m", "15m") and not _relax:
         _min_conf = 1
         _allow_stable_5m = True
     else:
@@ -412,7 +407,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     )
 
     if not strong_setup or block_stable:
-        reason = "structure=Stable (chop)" if block_stable else f"confluence={confluence_count}<{_min_conf}"
+        reason = "structure=Stable (no grab/mss)" if block_stable else f"confluence={confluence_count}<{_min_conf}"
         logger.debug(f"[MTF] {tf}: brak silnego setupu ({reason}) -- pomijam")
         _log_rejection(db, tf, direction_str, current_price, reason, "confluence",
                        confluence_count=confluence_count, rsi=current_rsi,

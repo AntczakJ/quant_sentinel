@@ -100,7 +100,7 @@ export default function ModelsPage() {
       id: 'lstm-distribution',
       title: 'LSTM Prediction Distribution (bimodality)',
       content: <LSTMDistribution />,
-      defaultLayout: { x: 0, y: 21, w: 12, h: 5, minW: 6, minH: 4 },
+      defaultLayout: { x: 0, y: 33, w: 12, h: 6, minW: 6, minH: 4 },
     },
     {
       id: 'voter-attribution',
@@ -148,7 +148,7 @@ export default function ModelsPage() {
       id: 'wf-grid-live',
       title: 'Walk-Forward Grid (live)',
       content: <WFGridLive />,
-      defaultLayout: { x: 0, y: 28, w: 12, h: 6, minW: 6, minH: 4 },
+      defaultLayout: { x: 0, y: 39, w: 12, h: 7, minW: 6, minH: 4 },
     },
     {
       id: 'performance',
