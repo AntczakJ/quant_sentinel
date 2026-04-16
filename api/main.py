@@ -516,12 +516,12 @@ async def _auto_resolve_trades():
 
             db = NewsDB()
             open_trades = db._query(
-                "SELECT id, direction, entry, sl, tp, trailing_sl FROM trades WHERE status IN ('PROPOSED', 'OPEN')"
+                "SELECT id, direction, entry, sl, tp, trailing_sl, lot FROM trades WHERE status IN ('PROPOSED', 'OPEN')"
             )
 
             resolved = 0
             for row in open_trades:
-                trade_id, direction, entry, sl, tp, trailing_sl = row
+                trade_id, direction, entry, sl, tp, trailing_sl, lot = row
                 # Apply 5-level trailing stop BEFORE checking SL/TP hit. Without
                 # this, trades got pure binary outcomes (full SL distance lost
                 # on every reversal). Now: 1.0R → BE, 1.5R → lock 0.75R,
@@ -568,13 +568,35 @@ async def _auto_resolve_trades():
 
                     if hit_tp or hit_sl:
                         status = "WIN" if hit_tp else "LOSS"
-                        pnl = round(abs(tp_f - entry_f), 2) if hit_tp else round(-abs(entry_f - sl_f), 2)
+                        # XAU contract: standard lot = 100 oz, so $ PnL per
+                        # trade = price_move * 100 * lot. Without the lot
+                        # multiplier, a 1.0 lot win of $30 price move would
+                        # record as $30 instead of $3000. Micro-lots happen
+                        # to match because lot=0.01 * 100 = 1.
+                        lot_f = float(lot or 0.01)
+                        OZ_PER_STANDARD_LOT = 100.0
+                        if hit_tp:
+                            pnl = round(abs(tp_f - entry_f) * OZ_PER_STANDARD_LOT * lot_f, 2)
+                        else:
+                            pnl = round(-abs(entry_f - sl_f) * OZ_PER_STANDARD_LOT * lot_f, 2)
                         if entry_f <= 0:
                             pnl = 0
                         db._execute(
                             "UPDATE trades SET status=?, profit=? WHERE id=?",
                             (status, pnl, trade_id),
                         )
+
+                        # Auto-update portfolio aggregates so sizing adapts to
+                        # drawdown/profit over time (previously balance stayed
+                        # at $10000 forever, scanner sized based on stale value).
+                        try:
+                            cur_balance = float(db.get_param("portfolio_balance") or 10000)
+                            cur_pnl = float(db.get_param("portfolio_pnl") or 0)
+                            db.set_param("portfolio_balance", round(cur_balance + pnl, 2))
+                            db.set_param("portfolio_equity", round(cur_balance + pnl, 2))
+                            db.set_param("portfolio_pnl", round(cur_pnl + pnl, 2))
+                        except Exception as _pfu:
+                            logger.debug(f"[Resolver] portfolio update skipped for #{trade_id}: {_pfu}")
 
                         # Fill failure_reason + condition for LOSS trades
                         if hit_sl:
