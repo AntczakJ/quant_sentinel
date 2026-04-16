@@ -169,13 +169,20 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     ensemble_result = None
     ml_signal = None
 
-    # Pobierz live data z Twelve Data jeśli nie podany df
+    # Pobierz live data z Twelve Data jeśli nie podany df.
+    # Match the ML-analysis TF to the signal TF. Old behavior hardcoded 15m
+    # regardless of whether scanner fired on 5m / 15m / 30m / 1h / 4h — ensemble
+    # predictions on 15m data for a 5m-triggered trade were timing-mismatched.
+    # 5m/15m/30m use their own candle window; 1h/4h still fall back to 15m
+    # because that's the smallest window ML models were trained on (using 1h+
+    # candles here needs 200 bars → 2+ weeks, overkill for ML signal).
     if df is None:
         try:
             from src.data.data_sources import get_provider
             provider = get_provider()
-            logger.debug("📡 Fetching live candles from Twelve Data for ML analysis")
-            df = provider.get_candles('XAU/USD', '15m', 200)
+            ml_tf = tf_signal if tf_signal in ('5m', '15m', '30m') else '15m'
+            logger.debug(f"📡 Fetching live {ml_tf} candles from Twelve Data for ML analysis")
+            df = provider.get_candles('XAU/USD', ml_tf, 200)
         except Exception as e:
             logger.warning(f"⚠️ Could not fetch live data: {e}")
             df = None
