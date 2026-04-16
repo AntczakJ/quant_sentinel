@@ -1451,7 +1451,11 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     # grade to C (blocked). Now: macro filter handles macro, scorer handles
     # structure. Clean separation of concerns.
     _tf_for_scoring = str(analysis.get('tf') or '').lower()
-    _is_scalp = _tf_for_scoring in ('5m', '5min', 'm5')
+    # Low-TF scalp umbrella: 5m/15m/30m share scalp-adjusted macro penalty
+    # skip AND grade thresholds (65/45/30 vs H1+ 75/55/40). Lower TFs have
+    # thinner structural confluence by nature — H1+ thresholds would mark
+    # every scalp setup as grade C despite real tradeable quality.
+    _is_scalp = _tf_for_scoring in ('5m', '5min', 'm5', '15m', '15min', 'm15', '30m', '30min', 'm30')
     if (direction == "LONG" and macro == "czerwony") or \
        (direction == "SHORT" and macro == "zielony"):
         if not _is_scalp:
