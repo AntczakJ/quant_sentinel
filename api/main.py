@@ -1294,18 +1294,25 @@ async def voter_live_accuracy(hours: int = 72, horizon_candles: int = 12):
 
     db = NewsDB()
 
+    # Use the same live data provider the scanner uses (cached, fast)
+    # rather than yfinance (slow external fetch every cache miss).
     try:
-        import yfinance as yf
-        df = yf.download("GC=F", interval="5m", period="14d",
-                         progress=False, auto_adjust=False)
+        from src.data.data_sources import get_provider
+        provider = get_provider()
+        df = provider.get_candles("XAU/USD", "5m", 2016)  # ~7d of 5m bars
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"yfinance fetch failed: {e}")
+        raise HTTPException(status_code=503, detail=f"live data fetch failed: {e}")
     if df is None or df.empty:
-        raise HTTPException(status_code=503, detail="no yfinance data")
+        raise HTTPException(status_code=503, detail="no live candle data available")
 
-    df.columns = [c[0].lower() if isinstance(c, tuple) else c.lower() for c in df.columns]
+    # Normalize to expected shape
+    if "timestamp" in df.columns:
+        df = df.set_index("timestamp")
+    df.columns = [c.lower() if isinstance(c, str) else str(c).lower() for c in df.columns]
     if df.index.tz is None:
-        df.index = df.index.tz_localize("UTC")
+        df.index = pd.to_datetime(df.index).tz_localize("UTC")
+    if "close" not in df.columns:
+        raise HTTPException(status_code=500, detail=f"provider returned unexpected columns: {list(df.columns)}")
 
     since = f"-{int(hours)} hours"
 
