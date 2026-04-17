@@ -582,6 +582,41 @@ export const backtestResultsAPI = {
     return response.data;
   },
 
+  /** Per-timeframe win rate + PnL. */
+  loadPerTF: async () => {
+    const response = await client.get('/trades/per-tf');
+    return response.data as {
+      timeframes: Array<{
+        tf: string; trades: number; wins: number; losses: number;
+        win_rate_pct: number; net_pnl: number; avg_pnl: number;
+      }>;
+    };
+  },
+
+  /** Per-session win rate + PnL. */
+  loadPerSession: async () => {
+    const response = await client.get('/trades/per-session');
+    return response.data as {
+      sessions: Array<{
+        session: string; trades: number; wins: number; losses: number;
+        win_rate_pct: number; net_pnl: number; avg_pnl: number;
+      }>;
+    };
+  },
+
+  /** Recent trade streak. */
+  loadStreak: async (n: number = 10) => {
+    const response = await client.get('/trades/recent-streak', { params: { n } });
+    return response.data as {
+      trades: Array<{
+        id: number; timestamp: string; direction: string; entry: number;
+        outcome: 'win' | 'loss'; profit: number; pattern: string;
+      }>;
+      current_streak: number;
+      streak_label: string;
+    };
+  },
+
   /** "What-if" analysis: for each filter, would rejected trades have been
    *  profitable? Cached 10min server-side. */
   loadReplayAnalyzer: async (hours: number = 24, horizonBars: number = 24) => {

@@ -49,7 +49,7 @@ interface Props {
 
 const STORAGE_PREFIX = 'qs:grid-layout:';
 /** Bump this when default layouts change to auto-reset stale saved layouts */
-const LAYOUT_VERSION = 7;
+const LAYOUT_VERSION = 8;
 
 function loadLayout(pageKey: string): Layouts | null {
   try {

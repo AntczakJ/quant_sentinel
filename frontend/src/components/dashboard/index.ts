@@ -36,4 +36,5 @@ export { SystemHealth } from './SystemHealth';
 export { VoterAccuracy } from './VoterAccuracy';
 export { DailyDigest } from './DailyDigest';
 export { ReplayAnalyzer } from './ReplayAnalyzer';
+export { TradeAnalytics } from './TradeAnalytics';
 

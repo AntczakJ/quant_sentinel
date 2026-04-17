@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge, LSTMDistribution, WFGridLive, SystemHealth, VoterAccuracy, DailyDigest, ReplayAnalyzer } from '../components/dashboard';
+import { ModelStats, RiskMetrics, ModelDriftAlert, BacktestPanel, TrainingHistory, BacktestResults, BacktestGridLeaderboard, TrainingProgressLive, SweepProgressLive, SweepLeaderboard, SweepPromotePanel, VoterAttribution, ModelsStalenessBadge, LSTMDistribution, WFGridLive, SystemHealth, VoterAccuracy, DailyDigest, ReplayAnalyzer, TradeAnalytics } from '../components/dashboard';
 import { DraggableGrid, type GridWidget } from '../components/layout/DraggableGrid';
 import { PageHeader } from '../components/ui';
 import { trainingAPI } from '../api/client';
@@ -89,6 +89,12 @@ export default function ModelsPage() {
       title: 'Replay Analyzer — filter what-if',
       content: <ReplayAnalyzer />,
       defaultLayout: { x: 6, y: 9, w: 6, h: 5, minW: 4, minH: 4 },
+    },
+    {
+      id: 'trade-analytics',
+      title: 'Trade Analytics (TF / Session / Streak)',
+      content: <TradeAnalytics />,
+      defaultLayout: { x: 0, y: 14, w: 12, h: 5, minW: 6, minH: 4 },
     },
     {
       id: 'training-live',
