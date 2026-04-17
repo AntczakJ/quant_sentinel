@@ -1062,7 +1062,34 @@ def get_ensemble_prediction(
         smc_active and smc_conf > 0.85
         and (smc_value > 0.7 or smc_value < 0.3)
     )
-    if smc_override:
+    # DQN+SMC compound override (2026-04-17): if BOTH the top-accuracy
+    # voters agree on direction, bypass agreement/conviction gates even
+    # at lower individual confidence. DQN 78% + SMC 50% = strongest
+    # two-voter coalition in the ensemble. Requires both to have value
+    # on the same side (>0.55 for LONG, <0.45 for SHORT).
+    dqn_pred = results["predictions"].get("dqn", {})
+    dqn_value = dqn_pred.get("value", 0.5)
+    dqn_active = "status" not in dqn_pred
+    # DQN outputs 0/1/2 (HOLD/BUY/SELL), normalize for direction check
+    dqn_bullish = dqn_value == 1 or (isinstance(dqn_value, float) and dqn_value > 0.55)
+    dqn_bearish = dqn_value == 2 or (isinstance(dqn_value, float) and dqn_value < 0.45 and dqn_value != 0)
+
+    compound_override = False
+    if smc_active and dqn_active:
+        if smc_value > 0.6 and dqn_bullish:
+            results["ensemble_signal"] = "LONG"
+            results["final_direction"] = "LONG"
+            compound_override = True
+            results["dqn_smc_compound"] = True
+            logger.info(f"Ensemble: DQN+SMC compound LONG (smc={smc_value:.2f} dqn={dqn_value})")
+        elif smc_value < 0.4 and dqn_bearish:
+            results["ensemble_signal"] = "SHORT"
+            results["final_direction"] = "SHORT"
+            compound_override = True
+            results["dqn_smc_compound"] = True
+            logger.info(f"Ensemble: DQN+SMC compound SHORT (smc={smc_value:.2f} dqn={dqn_value})")
+
+    if not compound_override and smc_override:
         if smc_value > 0.7:
             results["ensemble_signal"] = "LONG"
             results["final_direction"] = "LONG"
@@ -1073,7 +1100,7 @@ def get_ensemble_prediction(
             results["final_direction"] = "SHORT"
             results["smc_standalone_override"] = True
             logger.info(f"Ensemble: SMC standalone SHORT override (smc_conf={smc_conf:.2f} smc_val={smc_value:.2f})")
-    elif agreement_ratio < 0.45 and available_models >= 3:
+    elif not compound_override and agreement_ratio < 0.45 and available_models >= 3:
         # Threshold lowered 0.60 -> 0.45 (2026-04-16): the old value required
         # 60% of ALL available voters (including neutrals) to take the same
         # side. With 7 voters where XGB/attention routinely sit neutral
