@@ -340,11 +340,13 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         structure_bullish = bos_bullish or choch_bullish
         structure_bearish = bos_bearish or choch_bearish
 
-        # Scalp mode (5m): structure conflict is a RISK SIGNAL, not a hard block.
-        # Small SL ($2-3) limits downside; halving lot further caps it. Slow
-        # TFs (H4/H1/M15) still hard-block because their larger SL makes
-        # fighting structure genuinely expensive.
-        _scalp_soften = str(tf) == "5m" and not _relax
+        # Scalp mode (5m/15m/30m): structure conflict is a RISK SIGNAL, not
+        # a hard block. Replay analyzer (7-day, 2026-04-17) showed 1009
+        # directional_alignment rejects at 60% hypothetical WR — biggest
+        # edge left on the table. On scalp TFs with small SL ($2-15),
+        # halving lot caps downside while capturing the 60% upside.
+        # H1/4h still hard-block (larger SL = genuinely expensive error).
+        _scalp_soften = str(tf) in ("5m", "15m", "30m") and not _relax
         if direction_str == "LONG" and structure_bearish and not structure_bullish:
             if _scalp_soften:
                 logger.warning(f"[MTF] {tf}: LONG vs BOS bearish — SCALP halve risk (soft)")
