@@ -37,34 +37,49 @@ def _model_info(filename: str) -> dict:
     description="Get performance stats for RL, LSTM, and XGBoost models"
 )
 async def get_models_stats():
-    """Get statistics for all ML models"""
+    """Get statistics for all ML models — computed from resolved trades."""
     try:
         rl_info = _model_info("rl_agent.keras")
         lstm_info = _model_info("lstm.keras")
         xgb_info = _model_info("xgb.pkl")
 
+        # Compute REAL win rate from resolved trades only (OPEN excluded).
+        # Previously all values were hardcoded placeholders (0.58/0.62/0.55).
+        from src.core.database import NewsDB
+        db = NewsDB()
+        resolved = db._query(
+            "SELECT COUNT(*), "
+            "SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN profit < 0 THEN 1 ELSE 0 END) "
+            "FROM trades WHERE status IN ('WIN','LOSS','PROFIT','CLOSED') "
+            "AND profit IS NOT NULL"
+        )
+        n_total = int(resolved[0][0] or 0) if resolved else 0
+        n_wins = int(resolved[0][1] or 0) if resolved else 0
+        live_wr = round(n_wins / n_total, 2) if n_total > 0 else None
+
         rl_stats = ModelStats(
             model_name="RL Agent (DQN)",
             accuracy=None,
-            win_rate=0.55,
-            episodes=47,
+            win_rate=live_wr,
+            episodes=n_total,
             epsilon=0.3,
             last_training=rl_info["last_modified"] or datetime.now(timezone.utc),
         )
 
         lstm_stats = ModelStats(
             model_name="LSTM",
-            accuracy=0.58,
-            precision=0.60,
-            recall=0.56,
+            accuracy=live_wr,
+            precision=None,
+            recall=None,
             last_training=lstm_info["last_modified"] or datetime.now(timezone.utc),
         )
 
         xgb_stats = ModelStats(
             model_name="XGBoost",
-            accuracy=0.62,
-            precision=0.64,
-            recall=0.60,
+            accuracy=live_wr,
+            precision=None,
+            recall=None,
             last_training=xgb_info["last_modified"] or datetime.now(timezone.utc),
         )
 
@@ -72,7 +87,7 @@ async def get_models_stats():
             rl_stats=rl_stats,
             lstm_stats=lstm_stats,
             xgb_stats=xgb_stats,
-            ensemble_accuracy=0.58,
+            ensemble_accuracy=live_wr,
             last_update=datetime.now(timezone.utc)
         )
 
