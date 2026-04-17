@@ -53,14 +53,20 @@ enforce_isolation() FIRST** or they'll write to production DB.
 - Grid backtest complete (Stage A+B). **Top configs NOT applied** —
   Sharpe stdev > mean across all top-5, unstable. See
   `memory/grid_backtest_verdict.md`.
-- LSTM sweep winner live since 2026-04-13. **Bimodality detected**
-  (extreme>70%, middle<5%). Dashboard widget monitors it. Rollback
-  backup at `models/_backup_20260413T013619/`. Decision deferred to
-  Return Checklist 2026-04-19.
-- `tp_to_sl_ratio` synced to 3.16 from `target_rr` (was desynced).
-- Scalp-first cascade live; 30m TF added (new).
-- Self-learning fix: future `optimize_parameters()` writes both
-  `target_rr` and `tp_to_sl_ratio`.
+- LSTM sweep winner **muted** (weight=0.05, below MIN_ACTIVE_WEIGHT).
+  Code-level `LSTM_BULLISH_ONLY` filter as defense-in-depth. Bearish
+  predictions 0-14% accuracy, bullish 100% at 1h+ horizons.
+  Rollback backup at `models/_backup_20260413T013619/`.
+- DQN weight boosted 0.12 → 0.25 (78% live accuracy, 81% bullish).
+  DQN+SMC compound signal fires when both agree on direction.
+- Scalp-first cascade with time-exit (4h max hold) + pre-weekend
+  auto-close (Friday 19:30 UTC). 30m TF producing live trades.
+- Telegram bot (`src/main.py`) deleted 2026-04-17. Only API is live.
+  Legacy `scan_market_task` / `resolve_trades_task` removed from
+  scanner.py. Dual-impl drift risk eliminated.
+- Balance milestone alerts: Telegram at ±5%, ±10%, ±20%.
+- Voter accuracy tracking: `data/voter_accuracy_log.jsonl` per
+  watchdog run. Task Scheduler: daily digest 08:00 + watchdog 6h.
 
 ## Rejection reasons in `rejected_setups` table
 `"structure=Stable (no grab/mss)"` (was "chop" — misleading). Stable

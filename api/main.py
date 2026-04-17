@@ -1518,6 +1518,63 @@ async def trades_per_tf():
     }
 
 
+@app.get("/api/trades/recent-streak", tags=["System"])
+async def trades_recent_streak(n: int = 10):
+    """Last N resolved trades as win/loss streak with PnL deltas."""
+    from src.core.database import NewsDB
+    db = NewsDB()
+    rows = db._query(
+        "SELECT id, timestamp, direction, entry, status, profit, pattern "
+        "FROM trades WHERE status IN ('WIN','LOSS','PROFIT','CLOSED') "
+        "AND profit IS NOT NULL ORDER BY id DESC LIMIT ?",
+        (int(n),),
+    )
+    trades = []
+    for r in (rows or []):
+        trades.append({
+            "id": r[0], "timestamp": r[1], "direction": r[2],
+            "entry": r[3], "outcome": "win" if float(r[5] or 0) > 0 else "loss",
+            "profit": r[5], "pattern": r[6],
+        })
+    trades.reverse()
+    streak = 0
+    for t in reversed(trades):
+        if t["outcome"] == ("win" if streak >= 0 else "loss"):
+            streak += 1 if t["outcome"] == "win" else -1
+        else:
+            break
+    return {
+        "trades": trades,
+        "current_streak": streak,
+        "streak_label": f"{abs(streak)}{'W' if streak > 0 else 'L'}" if streak else "0",
+    }
+
+
+@app.get("/api/trades/per-session", tags=["System"])
+async def trades_per_session():
+    """Win rate and P&L breakdown by trading session."""
+    from src.core.database import NewsDB
+    db = NewsDB()
+    rows = db._query("""SELECT
+        COALESCE(session, 'unknown') AS sess,
+        COUNT(*), SUM(CASE WHEN profit>0 THEN 1 ELSE 0 END),
+        SUM(CASE WHEN profit<0 THEN 1 ELSE 0 END),
+        ROUND(SUM(profit), 2), ROUND(AVG(profit), 2)
+    FROM trades WHERE status IN ('WIN','LOSS','PROFIT','CLOSED')
+        AND profit IS NOT NULL
+    GROUP BY sess ORDER BY COUNT(*) DESC""")
+    return {
+        "sessions": [
+            {
+                "session": r[0], "trades": r[1], "wins": r[2], "losses": r[3],
+                "win_rate_pct": round(r[2] / r[1] * 100, 1) if r[1] else 0,
+                "net_pnl": r[4], "avg_pnl": r[5],
+            }
+            for r in (rows or [])
+        ]
+    }
+
+
 @app.get("/api/daily-digest", tags=["System"])
 async def daily_digest_preview(hours: int = 24):
     """Lightweight in-process digest (same content as scripts/daily_digest.py
