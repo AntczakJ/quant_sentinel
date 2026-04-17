@@ -544,6 +544,90 @@ async def _auto_resolve_trades():
                     entry_f = float(entry or 0)
                     sl_f = float(sl or 0)
                     tp_f = float(tp or 0)
+                    lot_f = float(lot or 0.01)
+
+                    # ── Pre-weekend close: close all positions 30min before
+                    #    weekend close (Friday 20:00 UTC / 22:00 CEST) to avoid
+                    #    gap risk. Gold Sunday opens can gap 0.5-2%.
+                    try:
+                        from datetime import datetime as _dt_wk, timezone as _tz_wk
+                        _now_wk = _dt_wk.now(_tz_wk.utc)
+                        # Friday = weekday 4. Close window: Friday 19:30-20:00 UTC
+                        if _now_wk.weekday() == 4 and _now_wk.hour >= 19 and _now_wk.minute >= 30:
+                            OZ_WK = 100.0
+                            lot_wk = float(lot or 0.01)
+                            if direction and "LONG" in str(direction).upper():
+                                pnl_wk = round((current_price - entry_f) * OZ_WK * lot_wk, 2)
+                            else:
+                                pnl_wk = round((entry_f - current_price) * OZ_WK * lot_wk, 2)
+                            status_wk = "WIN" if pnl_wk > 0 else "LOSS"
+                            db._execute(
+                                "UPDATE trades SET status=?, profit=? WHERE id=?",
+                                (status_wk, pnl_wk, trade_id),
+                            )
+                            logger.info(
+                                f"🏁 [Resolver] #{trade_id} PRE-WEEKEND CLOSE "
+                                f"→ {status_wk} {pnl_wk:+.2f} (Friday 19:30+ UTC)"
+                            )
+                            try:
+                                cur_bal = float(db.get_param("portfolio_balance") or 10000)
+                                db.set_param("portfolio_balance", round(cur_bal + pnl_wk, 2))
+                                db.set_param("portfolio_equity", round(cur_bal + pnl_wk, 2))
+                            except Exception:
+                                pass
+                            resolved += 1
+                            continue
+                    except Exception as _wk_err:
+                        logger.debug(f"[Resolver] weekend check skipped: {_wk_err}")
+
+                    # ── Time-based exit: scalp trades (5m/15m/30m) that hold
+                    #    longer than MAX_SCALP_HOLD_HOURS get closed at market.
+                    #    Trade #161 held 13h → LOSS on a "scalp" — capital was
+                    #    locked when it should have exited at breakeven or small
+                    #    loss hours earlier. H1/4h trades get longer leash.
+                    MAX_SCALP_HOLD_HOURS = 4.0
+                    MAX_SWING_HOLD_HOURS = 48.0
+                    try:
+                        from datetime import datetime as _dt_cls, timezone as _tz
+                        trade_row = db._query_one(
+                            "SELECT timestamp, pattern FROM trades WHERE id=?",
+                            (trade_id,),
+                        )
+                        if trade_row and trade_row[0]:
+                            opened = _dt_cls.strptime(trade_row[0], "%Y-%m-%d %H:%M:%S")
+                            opened = opened.replace(tzinfo=_tz.utc)
+                            age_h = (_dt_cls.now(_tz.utc) - opened).total_seconds() / 3600
+                            pat = str(trade_row[1] or "")
+                            is_scalp_tf = any(t in pat for t in ("[M5]", "[M15]", "[M30]"))
+                            max_hold = MAX_SCALP_HOLD_HOURS if is_scalp_tf else MAX_SWING_HOLD_HOURS
+                            if age_h > max_hold:
+                                OZ = 100.0
+                                if direction and "LONG" in str(direction).upper():
+                                    pnl = round((current_price - entry_f) * OZ * lot_f, 2)
+                                else:
+                                    pnl = round((entry_f - current_price) * OZ * lot_f, 2)
+                                status_label = "WIN" if pnl > 0 else "LOSS"
+                                db._execute(
+                                    "UPDATE trades SET status=?, profit=? WHERE id=?",
+                                    (status_label, pnl, trade_id),
+                                )
+                                logger.info(
+                                    f"⏰ [Resolver] #{trade_id} TIME EXIT after {age_h:.1f}h "
+                                    f"(max {max_hold}h for {'scalp' if is_scalp_tf else 'swing'}) "
+                                    f"→ {status_label} {pnl:+.2f}"
+                                )
+                                try:
+                                    cur_bal = float(db.get_param("portfolio_balance") or 10000)
+                                    cur_pnl = float(db.get_param("portfolio_pnl") or 0)
+                                    db.set_param("portfolio_balance", round(cur_bal + pnl, 2))
+                                    db.set_param("portfolio_equity", round(cur_bal + pnl, 2))
+                                    db.set_param("portfolio_pnl", round(cur_pnl + pnl, 2))
+                                except Exception:
+                                    pass
+                                resolved += 1
+                                continue
+                    except Exception as _time_err:
+                        logger.debug(f"[Resolver] time-exit check skipped for #{trade_id}: {_time_err}")
 
                     # ── Price sanity: if entry is >25% from current price,
                     #    the trade was created with stale/wrong data — remove it.

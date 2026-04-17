@@ -44,32 +44,36 @@ async def get_models_stats():
         xgb_info = _model_info("xgb.pkl")
 
         # Compute REAL win rate from resolved trades only (OPEN excluded).
-        # Previously all values were hardcoded placeholders (0.58/0.62/0.55).
+        # Global WR + per-era breakdown so widget reflects current approach.
         from src.core.database import NewsDB
         db = NewsDB()
-        resolved = db._query(
-            "SELECT COUNT(*), "
-            "SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN profit < 0 THEN 1 ELSE 0 END) "
-            "FROM trades WHERE status IN ('WIN','LOSS','PROFIT','CLOSED') "
-            "AND profit IS NOT NULL"
-        )
-        n_total = int(resolved[0][0] or 0) if resolved else 0
-        n_wins = int(resolved[0][1] or 0) if resolved else 0
-        live_wr = round(n_wins / n_total, 2) if n_total > 0 else None
+
+        def _wr(where_extra=""):
+            row = db._query_one(
+                f"SELECT COUNT(*), SUM(CASE WHEN profit>0 THEN 1 ELSE 0 END) "
+                f"FROM trades WHERE status IN ('WIN','LOSS','PROFIT','CLOSED') "
+                f"AND profit IS NOT NULL {where_extra}"
+            )
+            n = int(row[0] or 0) if row else 0
+            w = int(row[1] or 0) if row else 0
+            return (round(w / n, 2) if n > 0 else None), n
+
+        global_wr, global_n = _wr()
+        # Scalp-first era WR (post 2026-04-16 14:00 UTC = when cascade flipped)
+        scalp_wr, scalp_n = _wr("AND timestamp >= '2026-04-16T14:00:00'")
 
         rl_stats = ModelStats(
             model_name="RL Agent (DQN)",
             accuracy=None,
-            win_rate=live_wr,
-            episodes=n_total,
+            win_rate=scalp_wr if scalp_n >= 5 else global_wr,
+            episodes=global_n,
             epsilon=0.3,
             last_training=rl_info["last_modified"] or datetime.now(timezone.utc),
         )
 
         lstm_stats = ModelStats(
             model_name="LSTM",
-            accuracy=live_wr,
+            accuracy=scalp_wr if scalp_n >= 5 else global_wr,
             precision=None,
             recall=None,
             last_training=lstm_info["last_modified"] or datetime.now(timezone.utc),
@@ -77,7 +81,7 @@ async def get_models_stats():
 
         xgb_stats = ModelStats(
             model_name="XGBoost",
-            accuracy=live_wr,
+            accuracy=scalp_wr if scalp_n >= 5 else global_wr,
             precision=None,
             recall=None,
             last_training=xgb_info["last_modified"] or datetime.now(timezone.utc),
@@ -87,8 +91,12 @@ async def get_models_stats():
             rl_stats=rl_stats,
             lstm_stats=lstm_stats,
             xgb_stats=xgb_stats,
-            ensemble_accuracy=live_wr,
-            last_update=datetime.now(timezone.utc)
+            ensemble_accuracy=scalp_wr if scalp_n >= 5 else global_wr,
+            last_update=datetime.now(timezone.utc),
+            scalp_era_wr=scalp_wr,
+            scalp_era_n=scalp_n,
+            global_wr=global_wr,
+            global_n=global_n,
         )
 
     except Exception as e:

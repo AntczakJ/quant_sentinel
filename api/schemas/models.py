@@ -150,6 +150,10 @@ class AllModelsStats(BaseModel):
     xgb_stats: ModelStats
     ensemble_accuracy: Optional[float] = None
     last_update: datetime
+    scalp_era_wr: Optional[float] = None
+    scalp_era_n: Optional[int] = None
+    global_wr: Optional[float] = None
+    global_n: Optional[int] = None
 
 # ============================================================================
 # Training Schemas
