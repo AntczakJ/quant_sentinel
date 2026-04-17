@@ -353,6 +353,19 @@ async def _background_scanner():
                         lot=lot,
                         factors=factors,
                     )
+                    # Backfill setup_grade + score (was always None before)
+                    sq = trade.get('setup_quality')
+                    if sq and sq.get('grade'):
+                        try:
+                            latest = db._query_one(
+                                "SELECT id FROM trades ORDER BY id DESC LIMIT 1"
+                            )
+                            if latest:
+                                db.update_trade_setup_grade(
+                                    latest[0], sq['grade'], sq.get('score', 0)
+                                )
+                        except Exception:
+                            pass
 
                     db.mark_news_as_processed(trade_key)
 
