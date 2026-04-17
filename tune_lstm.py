@@ -110,8 +110,34 @@ def _cache_path(symbol: str, window: str) -> Path:
     return CACHE_DIR / f"{safe}__{window}.pkl"
 
 
+# TwelveData CSV override: set via --data-file CLI or env var.
+# When set, ALL fetch_window calls load from this file instead of yfinance.
+# This ensures training uses the same data source as live inference.
+_TD_DATA_FILE: Optional[str] = os.environ.get("TUNE_LSTM_DATA_FILE")
+
+
 def fetch_window(symbol: str, window: str) -> Optional[pd.DataFrame]:
-    """Fetch OHLCV for (symbol, window) with 12h pickle cache."""
+    """Fetch OHLCV for (symbol, window).
+
+    Priority:
+      1. TwelveData CSV override (_TD_DATA_FILE) — same source as live
+      2. Pickle cache (12h TTL)
+      3. yfinance fallback (legacy, discouraged)
+    """
+    # --- TwelveData CSV path (preferred) ---
+    if _TD_DATA_FILE and Path(_TD_DATA_FILE).exists():
+        try:
+            df = pd.read_csv(_TD_DATA_FILE, parse_dates=["datetime"])
+            df.columns = [c.lower() for c in df.columns]
+            keep = [c for c in ("open", "high", "low", "close", "volume") if c in df.columns]
+            df = df[keep].dropna().reset_index(drop=True)
+            if len(df) >= 200:
+                logger.info(f"[tune_lstm] Loaded {len(df)} bars from TwelveData CSV ({_TD_DATA_FILE})")
+                return df
+        except Exception as e:
+            logger.warning(f"[tune_lstm] TD CSV load failed: {e}")
+
+    # --- Pickle cache ---
     path = _cache_path(symbol, window)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     if path.exists() and (time.time() - path.stat().st_mtime) < 12 * 3600:
@@ -120,6 +146,7 @@ def fetch_window(symbol: str, window: str) -> Optional[pd.DataFrame]:
         except Exception:
             path.unlink(missing_ok=True)
 
+    # --- yfinance fallback (legacy — TwelveData preferred per user rule) ---
     try:
         with contextlib.redirect_stdout(io.StringIO()), \
              contextlib.redirect_stderr(io.StringIO()):
@@ -762,7 +789,15 @@ def main() -> int:
     ap.add_argument("--min-live-stdev", type=float, default=0.03)
     ap.add_argument("--min-val-bal", type=float, default=0.52)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--data-file", default=None,
+                    help="TwelveData CSV to use instead of yfinance (preferred)")
     args = ap.parse_args()
+
+    # Wire TwelveData CSV override
+    global _TD_DATA_FILE
+    if args.data_file:
+        _TD_DATA_FILE = args.data_file
+        os.environ["TUNE_LSTM_DATA_FILE"] = args.data_file
 
     if args.smoke:
         args.n_trials = 2
