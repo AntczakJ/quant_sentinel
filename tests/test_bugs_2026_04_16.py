@@ -165,6 +165,28 @@ class TestTargetRRSync:
         )
 
 
+class TestTimeBasedExit:
+    """Time-exit resolver constants should exist and be sensible."""
+
+    def test_scalp_max_hold_exists(self):
+        """Scalp max hold should be 4h (prevents 13h dead capital)."""
+        import ast
+        src = open("api/main.py", encoding="utf-8").read()
+        assert "MAX_SCALP_HOLD_HOURS" in src
+        # Extract value
+        for line in src.splitlines():
+            if "MAX_SCALP_HOLD_HOURS" in line and "=" in line:
+                val = line.split("=")[1].strip()
+                assert float(val) <= 6.0, f"Scalp hold too long: {val}"
+                break
+
+    def test_pre_weekend_close_exists(self):
+        """Pre-weekend close code path must exist in resolver."""
+        src = open("api/main.py", encoding="utf-8").read()
+        assert "PRE-WEEKEND CLOSE" in src
+        assert "weekday() == 4" in src  # Friday check
+
+
 class TestCooldownTimezone:
     """_check_trade_cooldown must compare UTC to UTC. The pre-fix bug used
     datetime.now() (local, CEST=UTC+2) vs DB UTC strings, adding 2h fake

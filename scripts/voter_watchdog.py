@@ -106,6 +106,33 @@ def send_telegram(text: str) -> None:
     }, timeout=10).raise_for_status()
 
 
+def _log_accuracy_snapshot(data: dict) -> None:
+    """Append voter accuracy snapshot to data/voter_accuracy_log.jsonl for
+    trend tracking over days/weeks."""
+    import json
+    from datetime import datetime, timezone
+    log_path = ROOT / "data" / "voter_accuracy_log.jsonl"
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "verdict": data.get("verdict"),
+        "voters": {
+            name: {
+                "n": v.get("decisive_samples"),
+                "acc": v.get("combined_accuracy_pct"),
+                "bull": v.get("bullish_accuracy_pct"),
+                "bear": v.get("bearish_accuracy_pct"),
+                "status": v.get("status"),
+            }
+            for name, v in data.get("voters", {}).items()
+        },
+    }
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--auto-mute", action="store_true",
@@ -122,6 +149,7 @@ def main() -> int:
         print(f"[ERROR] Could not reach /api/voter-live-accuracy: {e}")
         return 1
 
+    _log_accuracy_snapshot(data)
     flags = flag_anti_signals(data)
 
     if not flags:

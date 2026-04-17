@@ -683,6 +683,26 @@ async def _auto_resolve_trades():
                             db.set_param("portfolio_balance", new_balance)
                             db.set_param("portfolio_equity", new_balance)
                             db.set_param("portfolio_pnl", new_pnl)
+                            # Balance milestone alerts via Telegram
+                            initial_bal = float(db.get_param("portfolio_initial_balance") or 10000)
+                            if initial_bal > 0:
+                                pnl_pct = (new_balance - initial_bal) / initial_bal * 100
+                                milestones = [(-10, "DD -10%"), (-5, "DD -5%"),
+                                              (5, "+5%"), (10, "+10%"), (20, "+20%")]
+                                prev_pct = (cur_balance - initial_bal) / initial_bal * 100
+                                for threshold, label in milestones:
+                                    crossed = (prev_pct < threshold <= pnl_pct) or \
+                                              (prev_pct > threshold >= pnl_pct)
+                                    if crossed:
+                                        try:
+                                            from src.trading.scanner import send_telegram_alert
+                                            send_telegram_alert(
+                                                f"{'🟢' if threshold > 0 else '🔴'} *MILESTONE: {label}*\n"
+                                                f"Balance: ${new_balance:,.2f}\n"
+                                                f"PnL: {pnl_pct:+.1f}% from ${initial_bal:,.0f}"
+                                            )
+                                        except Exception:
+                                            pass
                             # Append to portfolio_history (JSON in param_text).
                             # Keeps last 500 datapoints so the equity curve
                             # widget has real data. Each point = {ts, balance,
@@ -1464,6 +1484,38 @@ async def replay_analyzer_endpoint(hours: int = 24, horizon_bars: int = 24,
     }
     _REPLAY_CACHE[cache_key] = {"ts": now, "payload": payload}
     return payload
+
+
+@app.get("/api/trades/per-tf", tags=["System"])
+async def trades_per_tf():
+    """Win rate and P&L breakdown by timeframe (M5/M15/M30/H1/H4)."""
+    from src.core.database import NewsDB
+    db = NewsDB()
+    rows = db._query("""SELECT
+        CASE
+            WHEN pattern LIKE '[M5]%' THEN 'M5'
+            WHEN pattern LIKE '[M15]%' THEN 'M15'
+            WHEN pattern LIKE '[M30]%' THEN 'M30'
+            WHEN pattern LIKE '[H1]%' THEN 'H1'
+            WHEN pattern LIKE '[H4]%' THEN 'H4'
+            ELSE 'other'
+        END AS tf,
+        COUNT(*), SUM(CASE WHEN profit>0 THEN 1 ELSE 0 END),
+        SUM(CASE WHEN profit<0 THEN 1 ELSE 0 END),
+        ROUND(SUM(profit), 2), ROUND(AVG(profit), 2)
+    FROM trades WHERE status IN ('WIN','LOSS','PROFIT','CLOSED')
+        AND profit IS NOT NULL
+    GROUP BY tf ORDER BY COUNT(*) DESC""")
+    return {
+        "timeframes": [
+            {
+                "tf": r[0], "trades": r[1], "wins": r[2], "losses": r[3],
+                "win_rate_pct": round(r[2] / r[1] * 100, 1) if r[1] else 0,
+                "net_pnl": r[4], "avg_pnl": r[5],
+            }
+            for r in (rows or [])
+        ]
+    }
 
 
 @app.get("/api/daily-digest", tags=["System"])
