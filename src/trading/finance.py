@@ -143,8 +143,11 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     # On H1+ we keep the original conservative floors (4.0 SL, 2.5 RR).
     # Rationale: XAU/USD on 5m has ATR ~$2-4, so forcing $4 SL + 2.5 RR means
     # $10 min TP and swing-based targets usually blow up to $30-80. Scalp mode
-    # relaxes to $2 SL floor + 1.5 RR + TP capped at 3R (kills lottery ticket
+    # relaxes to $4 SL floor + 1.5 RR + TP capped at 3R (kills lottery ticket
     # swing-based TPs while keeping the realistic scalp range on the table).
+    # SL floor raised from 2.0 → 4.0 on 2026-04-19: historical review showed
+    # 8/8 trades at SL<=2.0 were losses (spread-trade pathology — stopout near
+    # certain at typical XAU spreads of $0.20-0.50).
     tf_signal = (analysis_data.get('tf') or '').lower()
     is_scalp = tf_signal in ('5m', '5min', 'm5')
     # Low-TF scalp window: covers 5m/15m/30m for filter decisions (macro
@@ -157,7 +160,7 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     # against slow macro bias is fine if we cut size.
     scalp_risk_halve = False
     if is_scalp:
-        sl_floor = 2.0
+        sl_floor = 4.0
         rr_floor = 1.5
         target_rr_cap = 3.0  # max TP distance as multiple of SL distance
     else:
@@ -356,7 +359,7 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
 
     # --- 2. SL i TP (STRUCTURAL PLACEMENT) ---
     # SL based on market structure (swing levels), not ATR from entry.
-    # Scalp mode (5m): sl_floor = 2.0, rr_floor = 1.5, TP capped at 3R.
+    # Scalp mode (5m): sl_floor = 4.0, rr_floor = 1.5, TP capped at 3R.
     # Swing mode (H1+): sl_floor = DB config (default 4.0), rr_floor = 2.0, no cap.
     sl_min = sl_floor
     sl_max = max(atr * 4.0, 30.0)      # absolute max $30 (or 4x ATR)
