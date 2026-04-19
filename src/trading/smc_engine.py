@@ -1437,12 +1437,25 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
             factors_detail['ob_distance_penalty'] = round(-penalty, 1)
 
     # Penalty: RSI extreme against direction (likely reversal zone)
-    if direction == "LONG" and rsi > 75:
-        score -= 8
-        factors_detail['rsi_extreme_penalty'] = -8
-    elif direction == "SHORT" and rsi < 25:
-        score -= 8
-        factors_detail['rsi_extreme_penalty'] = -8
+    # Thresholds tightened from 75/25 → 70/30 on 2026-04-19. Trade #166
+    # was A+ (score=70) with RSI=71 — just inside the old no-penalty zone.
+    # Entered LONG into overbought, reversed, -$16 loss. 70/30 catches
+    # momentum exhaustion earlier (XAU reversals cluster at RSI 70 on 5m).
+    # Extra mild tier 65-70 / 30-35 for approaching exhaustion.
+    if direction == "LONG":
+        if rsi > 70:
+            score -= 8
+            factors_detail['rsi_extreme_penalty'] = -8
+        elif rsi > 65:
+            score -= 4
+            factors_detail['rsi_approaching_penalty'] = -4
+    elif direction == "SHORT":
+        if rsi < 30:
+            score -= 8
+            factors_detail['rsi_extreme_penalty'] = -8
+        elif rsi < 35:
+            score -= 4
+            factors_detail['rsi_approaching_penalty'] = -4
 
     # Penalty: opposing macro regime (scales with signal count)
     # SKIP on 5m scalp — macro is already handled via finance.py soft-block
