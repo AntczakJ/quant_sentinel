@@ -14,7 +14,10 @@ import numpy as np
 import pandas as pd
 from functools import lru_cache
 from typing import Optional
+from dotenv import load_dotenv
 from src.core.logger import logger
+
+load_dotenv()  # ensure ONNX_FORCE_CPU and similar env vars are available
 
 # ============================================================================
 # GPU / ACCELERATOR DETECTION
@@ -183,7 +186,14 @@ _onnx_sessions: dict = {}  # cache: model_path -> (ort.InferenceSession, mtime)
 
 
 def get_onnx_providers() -> list:
-    """Return best available ONNX execution providers (GPU first)."""
+    """Return best available ONNX execution providers (GPU first).
+
+    Set ONNX_FORCE_CPU=1 to skip GPU providers (workaround for DirectML
+    'device suspended' crashes that reboot doesn't clear).
+    """
+    if os.environ.get('ONNX_FORCE_CPU', '').lower() in ('1', 'true', 'yes'):
+        logger.info("ONNX_FORCE_CPU set — using CPUExecutionProvider only")
+        return ['CPUExecutionProvider']
     info = detect_gpu()
     providers = []
     if info["onnx_directml"]:
