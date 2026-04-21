@@ -76,6 +76,10 @@ data/gpr_cache.pkl
 data/event_reactions_cache.pkl
 data/news_faiss_index.pkl
 
+# Watchdog runtime state (hourly snapshots + cooldown tracker, local only)
+data/api_watchdog_log.jsonl
+data/api_watchdog_state.json
+
 # ── MODELE ML — WSZYSTKIE ŚLEDZONE ────────────────────────────
 # models/lstm.h5, lstm.keras, lstm_scaler.pkl,
 # rl_agent.keras, rl_agent.keras.params, xgb.pkl
