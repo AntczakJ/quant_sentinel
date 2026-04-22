@@ -229,7 +229,51 @@ async def _background_scanner():
     # avg usage on a 55/min budget = well within limits.
     _SCAN_INTERVAL_SEC = 300
 
+    # Kill-switch: file-based pause. Create `data/SCANNER_PAUSED` to halt
+    # trade entries without killing API. Dashboard, data fetches, and
+    # open-trade resolution continue; only new entries are blocked.
+    import os as _os
+    _PAUSE_FLAG = _os.path.join("data", "SCANNER_PAUSED")
+    _STREAK_THRESHOLD = 5   # auto-pause after N consecutive losses
+
     while True:
+        if _os.path.exists(_PAUSE_FLAG):
+            logger.warning(f"📡 [BG Scanner] PAUSED (flag {_PAUSE_FLAG} exists) — skipping cycle")
+            await asyncio.sleep(_SCAN_INTERVAL_SEC)
+            continue
+
+        # --- Streak auto-pause (2026-04-22) ---
+        # Check last N resolved trades; if >= _STREAK_THRESHOLD consecutive
+        # LOSS at the head, create the pause flag + Telegram alert. The
+        # existing CONSEC_LOSS_COOLDOWN (risk_manager) is only a 30min
+        # cooldown with a 2h recency window — it doesn't catch multi-day
+        # bleed like 04-17→22 (17L/19 across 5 days).
+        try:
+            from src.core.database import NewsDB as _StreakDB
+            _sdb = _StreakDB()
+            _recent = _sdb._query(
+                "SELECT id, status FROM trades WHERE status IN ('WIN','LOSS') "
+                "ORDER BY id DESC LIMIT ?",
+                (_STREAK_THRESHOLD,)
+            )
+            if _recent and len(_recent) >= _STREAK_THRESHOLD and all(
+                r[1] == 'LOSS' for r in _recent
+            ):
+                _ids = [r[0] for r in _recent]
+                _reason = f"auto-pause {_STREAK_THRESHOLD}L streak (trades #{_ids[-1]}–{_ids[0]})"
+                with open(_PAUSE_FLAG, 'w') as _pf:
+                    _pf.write(_reason + "\n")
+                logger.error(f"🛑 [BG Scanner] {_reason} — SCANNER_PAUSED flag created")
+                try:
+                    from src.trading.scanner import send_telegram_alert as _tg
+                    _tg(f"🛑 Scanner auto-paused: {_reason}. Unpause by deleting data/SCANNER_PAUSED after reviewing.")
+                except Exception as _tge:
+                    logger.debug(f"Telegram alert on auto-pause failed: {_tge}")
+                await asyncio.sleep(_SCAN_INTERVAL_SEC)
+                continue
+        except Exception as _stk:
+            logger.debug(f"Streak check failed: {_stk}")
+
         # Metrics instrumentation — _background_scanner is the LIVE scanner
         # entry point (legacy scan_market_task is no longer wired in). Without
         # this, scan_count / scan_last_ts / scan_duration stayed at 0 even

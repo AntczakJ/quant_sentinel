@@ -19,7 +19,9 @@ class TestAdaptiveCooldown:
         db = MockDB()
         hours = _get_adaptive_cooldown_hours(db)
         assert isinstance(hours, float)
-        assert hours >= 0.5
+        # Base cooldowns halved 2026-04-14 (scalp-friendly) — london/overlap
+        # can return 0.25h, off-hours 1.0h, weekend 24h. Lower bound: 0.25.
+        assert hours >= 0.25
 
 
 class TestSessionDetection:

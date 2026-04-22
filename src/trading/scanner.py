@@ -273,6 +273,38 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                        rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
 
+    # --- 1b. TOXIC PATTERN BLOCK (2026-04-22) ---
+    # pattern_stats holds the REAL pattern key ([M5] Trend Bull + FVG) matching
+    # trades.pattern; scanner-side `LONG_Stable_bullish` naming was inert because
+    # trades are logged as `[tf_label] {logic}` in api/main.py. Query the real key
+    # directly and block toxic patterns (count>=8 AND WR<30%). During the
+    # 04-17→22 streak [M5] Trend Bull + FVG ran 3W/12L (20%); this block would
+    # have killed 9 of the 17 losses.
+    try:
+        tox_pattern_key = f"[{TF_LABELS.get(tf, tf.upper())}] Trend {'Bull' if current_trend == 'bull' else 'Bear'} + FVG"
+        tox_row = db._query_one(
+            "SELECT count, wins, losses FROM pattern_stats WHERE pattern = ?",
+            (tox_pattern_key,)
+        )
+        if tox_row and tox_row[0] >= 8:
+            tox_wr = tox_row[1] / tox_row[0] if tox_row[0] else 0.5
+            if tox_wr < 0.30:
+                logger.info(
+                    f"[MTF] {tf}: toxic pattern '{tox_pattern_key}' "
+                    f"{tox_row[1]}W/{tox_row[2]}L WR={tox_wr:.0%}<30% (n={tox_row[0]}) — pomijam"
+                )
+                _log_rejection(
+                    db, tf, "LONG" if current_trend == "bull" else "SHORT",
+                    current_price,
+                    f"toxic_pattern:{tox_pattern_key}_WR{tox_wr:.0%}({tox_row[0]})",
+                    "toxic_pattern",
+                    rsi=current_rsi, trend=current_trend,
+                    pattern=tox_pattern_key, atr=current_atr
+                )
+                return None
+    except (AttributeError, TypeError, Exception) as _e:
+        logger.debug(f"Toxic pattern check failed: {_e}")
+
     # --- 2. FILTR WAGI WZORCA (relaxed back: 0.6 → 0.5 on 2026-04-14) ---
     # User reported manually catching $20-30 SHORT moves on gold today that
     # the scanner rejected 8× with "SHORT_Stable_bearish weight=0.50 < 0.6".
@@ -723,6 +755,25 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
             )
             _log_rejection(db, tf, direction, current_price,
                            f"setup_grade=C({setup_quality['score']}/100)", "setup_quality",
+                           confluence_count=confluence_count, rsi=current_rsi,
+                           trend=current_trend, pattern=pattern, atr=current_atr)
+            return None
+
+        # 2026-04-21: B grade (35-54) blocked on scalp TFs after 17-losses-in-19
+        # streak from 04-17 to 04-21 (WR 25%). Losing trades #179-#183 had
+        # scores 26-39 — B grade with low confluence. H1/4h keeps B because
+        # HTF SMC setups are rarer and B on HTF = genuine confluence gap, not
+        # noise. Scalp requires A/A+ only until WR recovers >40%.
+        if grade == "B" and str(tf) in ("5m", "15m", "30m"):
+            factors = setup_quality.get('factors_detail', {})
+            factors_str = ', '.join(f"{k}={v}" for k, v in factors.items()) if factors else '(no factors matched)'
+            logger.info(
+                f"🔍 [MTF] {tf}: Setup grade=B ({setup_quality['score']}/100) — "
+                f"scalp requires A/A+, pomijam | factors: {factors_str}"
+            )
+            _log_rejection(db, tf, direction, current_price,
+                           f"setup_grade=B_scalp_blocked({setup_quality['score']}/100)",
+                           "setup_quality_scalp",
                            confluence_count=confluence_count, rsi=current_rsi,
                            trend=current_trend, pattern=pattern, atr=current_atr)
             return None
