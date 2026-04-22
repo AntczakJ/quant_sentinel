@@ -244,33 +244,57 @@ async def _background_scanner():
 
         # --- Streak auto-pause (2026-04-22) ---
         # Check last N resolved trades; if >= _STREAK_THRESHOLD consecutive
-        # LOSS at the head, create the pause flag + Telegram alert. The
-        # existing CONSEC_LOSS_COOLDOWN (risk_manager) is only a 30min
-        # cooldown with a 2h recency window — it doesn't catch multi-day
-        # bleed like 04-17→22 (17L/19 across 5 days).
+        # LOSS at the head AND the oldest of those losses is within the
+        # recency window, create the pause flag + Telegram alert.
+        #
+        # Recency window avoids re-triggering on stale pre-existing streaks
+        # after a manual pause → unpause cycle. First iteration (no window)
+        # re-paused immediately after unpause because the prior streak's 5
+        # losses were still the newest resolved trades. 6h = intraday bleed
+        # detection; an operator reviewing and unpausing won't be ambushed
+        # by losses that happened before the pause.
+        _STREAK_RECENCY_HOURS = 6
         try:
+            import datetime as _dt
             from src.core.database import NewsDB as _StreakDB
             _sdb = _StreakDB()
             _recent = _sdb._query(
-                "SELECT id, status FROM trades WHERE status IN ('WIN','LOSS') "
+                "SELECT id, status, timestamp FROM trades WHERE status IN ('WIN','LOSS') "
                 "ORDER BY id DESC LIMIT ?",
                 (_STREAK_THRESHOLD,)
             )
             if _recent and len(_recent) >= _STREAK_THRESHOLD and all(
                 r[1] == 'LOSS' for r in _recent
             ):
-                _ids = [r[0] for r in _recent]
-                _reason = f"auto-pause {_STREAK_THRESHOLD}L streak (trades #{_ids[-1]}–{_ids[0]})"
-                with open(_PAUSE_FLAG, 'w') as _pf:
-                    _pf.write(_reason + "\n")
-                logger.error(f"🛑 [BG Scanner] {_reason} — SCANNER_PAUSED flag created")
+                # Check recency: oldest of the 5 losses must be within window
+                _oldest_ts_str = _recent[-1][2]
+                _streak_is_fresh = False
                 try:
-                    from src.trading.scanner import send_telegram_alert as _tg
-                    _tg(f"🛑 Scanner auto-paused: {_reason}. Unpause by deleting data/SCANNER_PAUSED after reviewing.")
-                except Exception as _tge:
-                    logger.debug(f"Telegram alert on auto-pause failed: {_tge}")
-                await asyncio.sleep(_SCAN_INTERVAL_SEC)
-                continue
+                    _oldest_ts = _dt.datetime.strptime(_oldest_ts_str, "%Y-%m-%d %H:%M:%S")
+                    _age_h = (_dt.datetime.now() - _oldest_ts).total_seconds() / 3600
+                    _streak_is_fresh = _age_h <= _STREAK_RECENCY_HOURS
+                except (ValueError, TypeError):
+                    _streak_is_fresh = False
+
+                if _streak_is_fresh:
+                    _ids = [r[0] for r in _recent]
+                    _reason = (f"auto-pause {_STREAK_THRESHOLD}L streak in "
+                               f"{_age_h:.1f}h (trades #{_ids[-1]}–{_ids[0]})")
+                    with open(_PAUSE_FLAG, 'w') as _pf:
+                        _pf.write(_reason + "\n")
+                    logger.error(f"🛑 [BG Scanner] {_reason} — SCANNER_PAUSED flag created")
+                    try:
+                        from src.trading.scanner import send_telegram_alert as _tg
+                        _tg(f"🛑 Scanner auto-paused: {_reason}. Unpause by deleting data/SCANNER_PAUSED after reviewing.")
+                    except Exception as _tge:
+                        logger.debug(f"Telegram alert on auto-pause failed: {_tge}")
+                    await asyncio.sleep(_SCAN_INTERVAL_SEC)
+                    continue
+                else:
+                    logger.info(
+                        f"[BG Scanner] {_STREAK_THRESHOLD}L streak exists but oldest is "
+                        f"{_age_h:.1f}h old (> {_STREAK_RECENCY_HOURS}h window) — treating as stale, not pausing"
+                    )
         except Exception as _stk:
             logger.debug(f"Streak check failed: {_stk}")
 
