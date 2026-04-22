@@ -251,7 +251,8 @@ class MLPredictor:
                            class_weight=class_weight)
         self.lstm = model
         lstm_path = os.path.join(self.model_dir, 'lstm.keras')
-        lstm_tmp = lstm_path + '.tmp'
+        # Keras 3 rejects .tmp suffix on save — keep .keras extension on tmp path
+        lstm_tmp = lstm_path.replace('.keras', '.tmp.keras')
         self.lstm.save(lstm_tmp)
         os.replace(lstm_tmp, lstm_path)
 

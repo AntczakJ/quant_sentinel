@@ -236,7 +236,8 @@ def train_decompose_model(df, model_dir='models', seq_len=60, epochs=80):
 
     # Save model (atomic write)
     model_path = os.path.join(model_dir, 'decompose.keras')
-    model_tmp = model_path + '.tmp'
+    # Keras 3 rejects .tmp suffix on save — keep .keras extension on tmp path
+    model_tmp = model_path.replace('.keras', '.tmp.keras')
     model.save(model_tmp)
     os.replace(model_tmp, model_path)
 

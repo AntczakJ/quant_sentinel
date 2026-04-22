@@ -159,7 +159,8 @@ def train_attention_model(df, model_dir='models', seq_len=60):
 
     # Save (atomic write)
     model_path = os.path.join(model_dir, 'attention.keras')
-    model_tmp = model_path + '.tmp'
+    # Keras 3 rejects .tmp suffix on save — keep .keras extension on tmp path
+    model_tmp = model_path.replace('.keras', '.tmp.keras')
     model.save(model_tmp)
     os.replace(model_tmp, model_path)
 
