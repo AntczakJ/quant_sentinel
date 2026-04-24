@@ -935,6 +935,44 @@ def get_ensemble_prediction(
         regime_weights['lstm'] = regime_weights.get('lstm', 0.25) * 1.4
         regime_weights['dqn'] = regime_weights.get('dqn', 0.2) * 1.3
         regime_weights['xgb'] = regime_weights.get('xgb', 0.2) * 0.7
+
+    # ─── REGIME-ROUTING V2 (2026-04-24) ───
+    # Use the rule-based regime classifier (BBW + ADX + ATR) as a second
+    # gating layer on top of vol-percentile. V2 distinguishes squeeze
+    # (block all), trending_high_vol (trust trend voters), trending_low_vol
+    # (balanced), ranging (trust MR/XGB). Research: regime routing is the
+    # single largest WR lever per the 2026-04-24 audit.
+    try:
+        from src.analysis.regime import classify_regime
+        from src.analysis.compute import compute_features
+        _reg_df = compute_features(df.copy(), use_cache=False) if len(df) >= 50 else None
+        regime_label = classify_regime(_reg_df) if _reg_df is not None else "ranging"
+    except Exception:
+        regime_label = "ranging"
+
+    if regime_label == "squeeze":
+        # Compression → no directional edge. Shrink all active voters; rely
+        # on SMC zone detection (rule-based) + minimum ensemble agreement.
+        for k in ('lstm', 'dqn', 'xgb', 'attention'):
+            if k in regime_weights:
+                regime_weights[k] *= 0.6
+    elif regime_label == "trending_high_vol":
+        # Clean trend + expansion → trust trend-follow voters
+        regime_weights['lstm'] = regime_weights.get('lstm', 0.15) * 1.3
+        regime_weights['dqn'] = regime_weights.get('dqn', 0.12) * 1.2
+        regime_weights['xgb'] = regime_weights.get('xgb', 0.18) * 0.8
+    elif regime_label == "ranging":
+        # Chop → MR-favorable. XGB (usually learns mean-reversion patterns)
+        # gets bonus, LSTM/DQN (momentum-biased) get haircut — this is the
+        # setup that bled during the 04-17→22 streak.
+        regime_weights['xgb'] = regime_weights.get('xgb', 0.18) * 1.25
+        regime_weights['smc'] = regime_weights.get('smc', 0.25) * 1.15
+        regime_weights['lstm'] = regime_weights.get('lstm', 0.15) * 0.75
+        regime_weights['dqn'] = regime_weights.get('dqn', 0.12) * 0.85
+    # trending_low_vol → no additional adjustment beyond vol-percentile
+
+    logger.debug(f"Ensemble regime={regime_label} vol_pctile={vol_pctile:.2f}")
+
     # Normalize
     rw_total = sum(regime_weights.values())
     if rw_total > 0:

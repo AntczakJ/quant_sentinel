@@ -271,6 +271,48 @@ def classify_event_tier(event_text: str) -> str | None:
     return None
 
 
+def get_recent_tier1_events(minutes_window: int = 60) -> list:
+    """Tier 1 events that already happened within the past `minutes_window`.
+
+    Used by the scanner second-rotation entry path: after a tier-1 event,
+    wait for a 15m candle to close in the direction of the move and trade
+    the continuation. Research-backed (post-event reaction window 15-60 min
+    is the highest-edge timing for retail; first 5 min is HFT territory).
+
+    Returns list of events that fired in [now - window, now] sorted newest
+    first. Empty list = no recent tier-1 → no second-rotation opportunity.
+    """
+    out: list = []
+    try:
+        from datetime import datetime, timezone, timedelta
+        events = get_economic_calendar() or []
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(minutes=minutes_window)
+        for ev in events:
+            date_str = ev.get("date", "")
+            if not date_str:
+                continue
+            try:
+                ts = date_str.replace("Z", "+00:00")
+                ev_dt = datetime.fromisoformat(ts)
+                if ev_dt.tzinfo is None:
+                    ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+                ev_dt = ev_dt.astimezone(timezone.utc)
+            except (ValueError, TypeError):
+                continue
+            if not (window_start <= ev_dt <= now):
+                continue
+            tier = classify_event_tier(ev.get("event", ""))
+            if tier == "tier1":
+                ev_with_age = dict(ev)
+                ev_with_age["minutes_ago"] = round((now - ev_dt).total_seconds() / 60, 1)
+                out.append(ev_with_age)
+    except Exception as e:
+        logger.warning(f"get_recent_tier1_events failed: {e}")
+    out.sort(key=lambda e: e.get("minutes_ago", 0))
+    return out
+
+
 def get_imminent_events_by_tier(minutes_window: int = 15) -> dict:
     """Group imminent events by tier1/tier2/tier3.
 

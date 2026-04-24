@@ -620,6 +620,11 @@ FEATURE_COLS = [
     'usdjpy_zscore_20',    # USD strength (z-score vs 20-bar mean)
     'usdjpy_ret_5',         # short-term USD momentum
     'xau_usdjpy_corr_20',  # inter-asset correlation (breaks signal fragility)
+    # NOTE: VWAP features (vwap_distance_atr, vwap_above) are computed in
+    # compute_features() and exposed via the analysis dict for SMC scoring,
+    # but NOT in FEATURE_COLS. Adding them would break currently-deployed
+    # ML models (trained on 34 features, would mismatch on 36). Add to
+    # FEATURE_COLS at the next full ensemble retrain.
 ]
 
 # Feature cache — keyed by content fingerprint, NOT id(df). Python recycles
@@ -820,6 +825,32 @@ def compute_features(df: pd.DataFrame, use_cache: bool = True,
     bull_align = ((ema8 > ema20) & (ema20 > ema50)).astype(float)
     bear_align = ((ema8 < ema20) & (ema20 < ema50)).astype(float)
     df['trend_strength'] = bull_align - bear_align  # +1 strong bull, -1 strong bear, 0 mixed
+
+    # =====================================================================
+    # NEW FEATURES: VWAP anchored to rolling session (2026-04-24)
+    # =====================================================================
+    # Sessioned VWAP — cumulative typical-price weighted by volume over a
+    # rolling window. Gold spot doesn't have true consolidated volume, so
+    # this is tick-volume based; still informative for mean-reversion setups
+    # because institutional algos benchmark to VWAP regardless of source.
+    # Using rolling 48-bar window ≈ 2 sessions on 1h to keep it adaptive
+    # without needing explicit session segmentation.
+    _WINDOW = 48
+    try:
+        typical = (df['high'] + df['low'] + df['close']) / 3
+        if has_volume:
+            num = (typical * df['volume']).rolling(_WINDOW).sum()
+            den = df['volume'].rolling(_WINDOW).sum()
+            vwap = num / (den + 1e-10)
+        else:
+            # No volume → fall back to simple typical-price SMA (equivalent
+            # to equal-weight VWAP), which still gives a valid anchor line.
+            vwap = typical.rolling(_WINDOW).mean()
+        df['vwap_distance_atr'] = ((df['close'] - vwap) / (df['atr'] + 1e-10)).clip(-5, 5).fillna(0)
+        df['vwap_above'] = (df['close'] > vwap).astype(int)
+    except Exception:
+        df['vwap_distance_atr'] = 0.0
+        df['vwap_above'] = 0
 
     # =====================================================================
     # NEW FEATURES: Macro (USD/JPY-based, 2026-04-24)

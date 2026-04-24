@@ -1086,6 +1086,57 @@ def get_smc_analysis(tf: str) -> dict | None:
             orb_asia_low = orb.get('asia_low')
         except Exception as _e:
             logger.debug(f"Asia ORB detection skipped: {_e}")
+
+        # ========== VWAP (session-rolling) ==========
+        # Computed here so score_setup_quality can access via the analysis
+        # dict. Uses 48-bar rolling window, tick-volume proxy (XAU spot has
+        # no consolidated tape). Informative for mean-reversion setups +
+        # trend-continuation confluence.
+        vwap_distance_atr = None
+        vwap_above_val = None
+        try:
+            _WIN = 48
+            _typ = (df['high'] + df['low'] + df['close']) / 3
+            _has_vol = 'volume' in df.columns and df['volume'].sum() > 0
+            if _has_vol:
+                _num = (_typ * df['volume']).rolling(_WIN).sum()
+                _den = df['volume'].rolling(_WIN).sum()
+                _vwap = _num / (_den + 1e-10)
+            else:
+                _vwap = _typ.rolling(_WIN).mean()
+            _cur_vwap = float(_vwap.iloc[-1]) if not pd.isna(_vwap.iloc[-1]) else None
+            if _cur_vwap is not None and atr > 0:
+                vwap_distance_atr = round((price - _cur_vwap) / atr, 2)
+                vwap_above_val = 1 if price > _cur_vwap else 0
+        except Exception as _ve:
+            logger.debug(f"VWAP compute skipped: {_ve}")
+
+        # ========== POST-NEWS BREAK (2026-04-24) ==========
+        # If a tier-1 event fired 15-60 min ago, compute pre-news range
+        # from prior 5 candles (excluding the most recent) and check if
+        # the current close has broken it. score_setup_quality reads
+        # `post_news_break` ∈ {'NONE', 'LONG', 'SHORT'} and adds +20 when
+        # direction matches.
+        post_news_break = 'NONE'
+        try:
+            from src.data.news import get_recent_tier1_events
+            recent_t1 = get_recent_tier1_events(minutes_window=60)
+            eligible = [e for e in recent_t1 if e.get("minutes_ago", 0) >= 15]
+            if eligible and len(df) >= 6:
+                pre_high = float(df['high'].iloc[-6:-1].max())
+                pre_low = float(df['low'].iloc[-6:-1].min())
+                last_close = float(df['close'].iloc[-1])
+                if last_close > pre_high:
+                    post_news_break = 'LONG'
+                elif last_close < pre_low:
+                    post_news_break = 'SHORT'
+                if post_news_break != 'NONE':
+                    logger.debug(
+                        f"Post-news break {post_news_break} after "
+                        f"{eligible[0].get('event')} ({eligible[0].get('minutes_ago')}min ago)"
+                    )
+        except Exception as _pe:
+            logger.debug(f"Post-news break check skipped: {_pe}")
         # ===================================
 
         return {
@@ -1155,6 +1206,16 @@ def get_smc_analysis(tf: str) -> dict | None:
             'orb_reason': orb_reason,
             'orb_asia_high': orb_asia_high,
             'orb_asia_low': orb_asia_low,
+            # VWAP (2026-04-24) — institutional benchmark anchor. Bonus in
+            # score_setup_quality when price is within 1 ATR of VWAP and
+            # direction matches (LONG above VWAP, SHORT below).
+            'vwap_distance_atr': vwap_distance_atr,
+            'vwap_above': vwap_above_val,
+            # Post-news break (2026-04-24) — 'LONG' | 'SHORT' | 'NONE'.
+            # Set when tier-1 event fired 15-60 min ago AND current close
+            # breaks the pre-news range. +20 score bonus in
+            # score_setup_quality when direction matches.
+            'post_news_break': post_news_break,
         }
 
     except Exception as e:
@@ -1398,6 +1459,34 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     if orb_dir != 'NONE' and orb_dir == direction:
         score += 15
         factors_detail['asia_orb'] = 15
+
+    # --- POST-NEWS SECOND ROTATION (2026-04-24, +20 pkt) ---
+    # Research: highest-edge window for retail news trading is 15-60 min
+    # POST tier-1 release. Pre-news range + break direction computed in
+    # get_smc_analysis (has df access); here we only check confirmation.
+    post_news = analysis.get('post_news_break')
+    if post_news in ('LONG', 'SHORT') and post_news == direction:
+        score += 20
+        factors_detail['post_news_2nd_rotation'] = 20
+
+    # --- VWAP PROXIMITY (2026-04-24, +10 pkt) ---
+    # Institutional TWAP/VWAP algos benchmark against VWAP on volume-
+    # bearing instruments. Setups at VWAP tend to get reaction — either
+    # bounce (for MR) or defend (for trend continuation). On XAU spot
+    # volume is tick-based proxy, still informative. Bonus when price
+    # is within 1 ATR of VWAP and the direction matches the regime
+    # (LONG above VWAP = trend up, SHORT below VWAP = trend down).
+    vwap_dist_atr = analysis.get('vwap_distance_atr')
+    vwap_above = analysis.get('vwap_above')
+    if vwap_dist_atr is not None and vwap_above is not None:
+        near_vwap = abs(float(vwap_dist_atr)) <= 1.0  # within 1 ATR
+        direction_matches = (
+            (direction == "LONG" and int(vwap_above) == 1)
+            or (direction == "SHORT" and int(vwap_above) == 0)
+        )
+        if near_vwap and direction_matches:
+            score += 10
+            factors_detail['vwap_confluence'] = 10
 
     # RSI w optymalnej strefie (max 5 pkt)
     rsi = analysis.get('rsi', 50)
