@@ -17,31 +17,22 @@ KEYWORDS = ["gold", "xau", "fed", "inflation", "cpi", "powell", "dollar", "usd",
             "yields", "interest rates", "tariff", "trade war", "recession", "employment",
             "nfp", "fomc", "treasury", "bond", "central bank"]
 
-BULLISH_WORDS = ["surge", "rally", "rise", "gain", "jump", "high", "bullish", "safe haven",
-                 "demand", "buy", "support", "uptick", "soar", "breakout"]
-BEARISH_WORDS = ["drop", "fall", "decline", "loss", "plunge", "low", "bearish", "sell",
-                 "resistance", "downturn", "crash", "slump", "weakness"]
-
-
+# Regex keyword-based sentiment/impact detection REMOVED 2026-04-24.
+# Research (MDPI 1.86M-headline study, Permutable.ai, arXiv) shows headline
+# sentiment via word-counting has "no robust predictive power" for gold
+# next-day moves. Our previous BULLISH_WORDS / BEARISH_WORDS approach was
+# exactly the 2010-era NLP pattern the research dismisses. Example failure:
+# "gold fall(s) to support" → classified BEARISH, but it's actually a
+# neutral/buy-signal headline. News sentiment should come from a calibrated
+# LLM or from event calendar + price confirmation, not keyword counting.
+# See docs/research/2026-04-24_xau_news_research.md for the replacement plan.
 def _detect_sentiment(title: str) -> str:
-    lower = title.lower()
-    bull = sum(1 for w in BULLISH_WORDS if w in lower)
-    bear = sum(1 for w in BEARISH_WORDS if w in lower)
-    if bull > bear:
-        return "bullish"
-    if bear > bull:
-        return "bearish"
+    """Deprecated stub. Returns neutral — rely on economic calendar + LLM instead."""
     return "neutral"
 
 
 def _detect_impact(title: str) -> str:
-    high_impact = ["fed", "fomc", "cpi", "nfp", "powell", "interest rate", "tariff",
-                   "recession", "employment", "gdp", "pce"]
-    lower = title.lower()
-    if any(w in lower for w in high_impact):
-        return "high"
-    if any(w in lower for w in ["gold", "xau", "dollar", "usd", "treasury", "bond"]):
-        return "medium"
+    """Deprecated stub. Returns low — rely on economic calendar + explicit tier mapping instead."""
     return "low"
 
 

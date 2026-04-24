@@ -102,11 +102,30 @@ class RiskManager:
         try:
             from src.core.database import NewsDB
             db = NewsDB()
-            rows = db._query(
-                "SELECT status, profit FROM trades "
-                "WHERE status IN ('WIN', 'LOSS') AND profit IS NOT NULL "
-                "ORDER BY id DESC LIMIT 100"
-            )
+            # 2026-04-24: Kelly reset timestamp — if set, only count trades
+            # AFTER this time. Prevents a contaminated past (e.g. 04-17→22
+            # streak where LSTM anti-signal drove WR to 25%) from permanently
+            # starving Kelly sizing. When fewer than KELLY_MIN_TRADES exist
+            # post-reset, fall back to default_risk instead of extrapolating
+            # from stale data.
+            try:
+                reset_ts = db.get_param("kelly_reset_ts", None)
+            except (AttributeError, TypeError):
+                reset_ts = None
+            if reset_ts:
+                rows = db._query(
+                    "SELECT status, profit FROM trades "
+                    "WHERE status IN ('WIN', 'LOSS') AND profit IS NOT NULL "
+                    "  AND timestamp > ? "
+                    "ORDER BY id DESC LIMIT 100",
+                    (str(reset_ts),)
+                )
+            else:
+                rows = db._query(
+                    "SELECT status, profit FROM trades "
+                    "WHERE status IN ('WIN', 'LOSS') AND profit IS NOT NULL "
+                    "ORDER BY id DESC LIMIT 100"
+                )
             if not rows or len(rows) < KELLY_MIN_TRADES:
                 return default_risk
 

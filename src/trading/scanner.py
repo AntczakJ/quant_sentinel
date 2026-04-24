@@ -310,22 +310,17 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     except (AttributeError, TypeError, Exception) as _e:
         logger.debug(f"Toxic pattern check failed: {_e}")
 
-    # --- 2. FILTR WAGI WZORCA (relaxed back: 0.6 → 0.5 on 2026-04-14) ---
-    # User reported manually catching $20-30 SHORT moves on gold today that
-    # the scanner rejected 8× with "SHORT_Stable_bearish weight=0.50 < 0.6".
-    # The 0.6 threshold was a prior tightening from 0.5; revert it so
-    # moderately-weighted patterns can trade and self-learning accumulates
-    # data. If a pattern truly stops working, update_pattern_weight() will
-    # drag it below 0.5 and auto-block naturally.
+    # --- 2. FILTR WAGI WZORCA — REMOVED 2026-04-24 ---
+    # The pattern name constructed here was `LONG_Stable_bullish` style but
+    # trades are logged to trades.pattern in `[M5] Trend Bull + FVG` format
+    # (via api/main.py:363). `get_pattern_adjustment()` queries trades table
+    # where pattern=<scanner key> → always count<5 → default weight 1.0 →
+    # filter inert. This was a dead filter producing noise in logs but zero
+    # actual blocking. Removed to simplify cascade. The toxic_pattern filter
+    # at step 1b uses the CORRECT `[M5] Trend Bull + FVG` key and handles
+    # the real pattern-based blocking.
     direction_str = "LONG" if current_trend == "bull" else "SHORT"
     pattern = f"{direction_str}_{current_structure}_{current_fvg_type}"
-    weight = get_pattern_adjustment({"pattern": pattern})
-    if weight < 0.5:
-        logger.info(f"[MTF] {tf}: waga wzorca {pattern} = {weight:.2f} za niska (min 0.5) — pomijam")
-        _log_rejection(db, tf, direction_str, current_price,
-                       f"pattern_weight={weight:.2f}<0.5", "pattern_weight",
-                       rsi=current_rsi, trend=current_trend, pattern=pattern, atr=current_atr)
-        return None
 
     # --- 3. SPRAWDZENIE SETUPU SMC: wymagamy silnej konfluencji ---
     has_grab_mss = analysis.get('liquidity_grab') and analysis.get('mss')
