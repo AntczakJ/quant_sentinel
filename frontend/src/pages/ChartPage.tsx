@@ -10,6 +10,7 @@ import { OverviewStrip } from '../components/dashboard/OverviewStrip';
 import { ScannerInsight } from '../components/dashboard/ScannerInsight';
 import { MacroContext } from '../components/dashboard/MacroContext';
 import { WeekendBanner } from '../components/dashboard/WeekendBanner';
+import { OrbStatus } from '../components/dashboard/OrbStatus';
 
 export default function ChartPage() {
   return (
@@ -32,6 +33,11 @@ export default function ChartPage() {
       {/* Macro context strip — USD strength, correlation, regime */}
       <div className="mt-3">
         <MacroContext />
+      </div>
+
+      {/* Asia Session ORB status — H/L + window countdown + live signal */}
+      <div className="mt-2">
+        <OrbStatus />
       </div>
 
       {/* Overview metrics strip */}

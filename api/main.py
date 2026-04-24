@@ -1267,47 +1267,13 @@ async def health_check():
     }
 
 
-@app.get("/api/health/detailed")
-async def health_check_detailed():
-    """
-    Detailed health check — returns uptime, DB status, background task state.
-    Used by frontend ConnectionStatus component.
-    """
-    uptime_seconds = _time.monotonic() - _start_time
-
-    # DB check (compatible with both SQLite and Turso/libsql)
-    db_ok = False
-    db_tables = 0
-    try:
-        from src.core.database import NewsDB
-        db = NewsDB()
-        # Use a known table instead of sqlite_master (Turso-safe)
-        row = db._query_one("SELECT COUNT(*) FROM trades")
-        db_ok = row is not None
-        db_tables = row[0] if row else 0
-    except Exception:
-        pass
-
-    # Format uptime
-    hours, remainder = divmod(int(uptime_seconds), 3600)
-    minutes, seconds = divmod(remainder, 60)
-    uptime_str = f"{hours}h {minutes}m {seconds}s"
-
-    return {
-        "status": "healthy",
-        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "uptime": uptime_str,
-        "uptime_seconds": round(uptime_seconds, 1),
-        "models_loaded": app_state["models_loaded"],
-        "database": {
-            "connected": db_ok,
-            "tables": db_tables,
-        },
-        "websocket_clients": {
-            "prices": connection_manager.get_connection_count("prices"),
-            "signals": connection_manager.get_connection_count("signals"),
-        },
-    }
+# NOTE: a second `/api/health/detailed` definition was registered here
+# (2026-04-24 dead-code audit removed it). FastAPI silently picks the
+# first registration, so the inline version at this location was dead
+# code. The canonical definition at line ~1160 delegates to
+# `src.ops.monitoring.get_system_health()` which is the more
+# comprehensive check. If you need the inline fields (websocket_clients,
+# database table count), add them to `get_system_health()` instead.
 
 
 @app.get("/metrics", tags=["System"], response_class=Response)
@@ -2665,6 +2631,68 @@ async def health_scanner():
         "last_run_seconds_ago": round(seconds_since, 1) if seconds_since is not None else None,
         "data_fetch_failures": data_fetch_failures.value,
     }
+
+
+@app.get("/api/health/orb", tags=["System"])
+async def orb_health():
+    """Asia Session Opening Range Breakout status for the dashboard.
+
+    Returns current Asia window H/L, whether the London-open trading window
+    is active or stale, and any live ORB signal (direction + reason). The
+    widget uses this to show operators whether the ORB voter is in its
+    2-hour firing window right now.
+    """
+    import datetime as _dt
+    try:
+        from src.trading.asia_orb import detect_orb_signal, get_asia_range
+        from src.data.data_sources import get_provider
+        import pandas_ta as _ta
+
+        provider = get_provider()
+        xau_df = provider.get_candles('XAU/USD', '1h', 60)
+        if xau_df is None or len(xau_df) < 10:
+            return {"status": "no_data", "detail": "XAU 1h candles unavailable"}
+
+        # Make sure df has a DatetimeIndex (detect_orb_signal expects it)
+        if not isinstance(xau_df.index, getattr(__import__('pandas'), 'DatetimeIndex', type(None))):
+            if 'timestamp' in xau_df.columns:
+                import pandas as _pd
+                xau_df = xau_df.set_index(_pd.DatetimeIndex(xau_df['timestamp']))
+
+        now_utc = _dt.datetime.now(_dt.timezone.utc)
+        asia = get_asia_range(xau_df, reference_utc=now_utc)
+
+        # HTF EMA200 for filter
+        ema200 = None
+        try:
+            _e = _ta.ema(xau_df['close'], 200)
+            if _e is not None and len(_e) > 0 and _e.iloc[-1] == _e.iloc[-1]:  # not NaN
+                ema200 = float(_e.iloc[-1])
+        except Exception:
+            pass
+
+        signal = detect_orb_signal(xau_df, htf_ema200=ema200, reference_utc=now_utc)
+
+        # Window status: active if we're in 07:00-09:00 UTC, else stale
+        in_window = (now_utc.hour == 7) or (now_utc.hour == 8) or (
+            now_utc.hour == 9 and now_utc.minute == 0
+        )
+        minutes_to_next_open = (
+            (24 - now_utc.hour) * 60 + (60 - now_utc.minute) if now_utc.hour >= 9
+            else (7 - now_utc.hour) * 60 + (0 - now_utc.minute) if now_utc.hour < 7
+            else 0
+        )
+
+        return {
+            "status": "ok",
+            "asia": asia,
+            "window_active": bool(in_window),
+            "minutes_to_next_london_open": max(0, minutes_to_next_open),
+            "ema200_filter": ema200,
+            "signal": signal,
+        }
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
 
 
 @app.get("/api/macro/context", tags=["System"])

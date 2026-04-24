@@ -40,4 +40,5 @@ export { TradeAnalytics } from './TradeAnalytics';
 export { ScannerInsight } from './ScannerInsight';
 export { MacroContext } from './MacroContext';
 export { WeekendBanner } from './WeekendBanner';
+export { OrbStatus } from './OrbStatus';
 

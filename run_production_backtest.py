@@ -642,8 +642,16 @@ async def _run_backtest(args) -> dict:
     # Override is_market_open to always return True in backtest.
     # Original signature: is_market_open(dt_cet=None) — accept optional arg.
     smc_engine.is_market_open = lambda dt_cet=None: True  # type: ignore[assignment]
-    # Skip cooldown in backtest (we simulate time, not wall-clock)
-    scanner_mod._check_trade_cooldown = lambda db, min_hours=None: True  # type: ignore[assignment]
+
+    # DO NOT monkey-patch _check_trade_cooldown to always-True (fixed 2026-04-24).
+    # The old patch caused identical setups to fire 5× in 75 min (backtest
+    # trades #823-827 all at LONG $4790.40 → -$477 net, ~55% of total
+    # backtest loss). Rationale for the old patch was "we simulate time, not
+    # wall-clock" — but db.log_trade writes `datetime.now()` for the
+    # timestamp, so `_check_trade_cooldown` comparing wall-clock now against
+    # wall-clock last-trade-ts correctly blocks rapid-fire duplicates even
+    # in a simulated-bar loop. Leaving the real cooldown in makes the
+    # backtest representative of live behavior.
     # Unlimited API credits in backtest — data is local, no external rate limit
     try:
         from src import api_optimizer
