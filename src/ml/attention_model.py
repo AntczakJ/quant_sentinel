@@ -58,13 +58,14 @@ def build_attention_model(seq_len: int, n_features: int):
     return model
 
 
-def train_attention_model(df, model_dir='models', seq_len=60):
+def train_attention_model(df, model_dir='models', seq_len=60, usdjpy_df=None):
     """Train TFT-lite model on OHLCV data.
 
     Uses same features and target as LSTM (from compute.py).
     Returns (model, accuracy) or (None, 0).
     """
     from src.analysis.compute import compute_features, compute_target, FEATURE_COLS, get_tf_batch_size
+    # Accept usdjpy_df so training picks up macro features if provided by caller
     from tensorflow.keras.callbacks import EarlyStopping
     from tensorflow.keras.optimizers import Adam
 
@@ -72,7 +73,7 @@ def train_attention_model(df, model_dir='models', seq_len=60):
         logger.warning(f"Za malo danych do trenowania Attention: {len(df)}")
         return None, 0
 
-    features = compute_features(df)
+    features = compute_features(df, usdjpy_df=usdjpy_df)
     features = features.copy()
     features['direction'] = compute_target(features)
     features.dropna(inplace=True)
@@ -182,8 +183,12 @@ def train_attention_model(df, model_dir='models', seq_len=60):
     return model, wf_acc
 
 
-def predict_attention(df, model_dir='models', seq_len=60):
-    """Predict direction using TFT-lite model. Returns probability (0-1) or None."""
+def predict_attention(df, model_dir='models', seq_len=60, usdjpy_df=None):
+    """Predict direction using TFT-lite model. Returns probability (0-1) or None.
+
+    usdjpy_df: optional live USDJPY for macro features. If None, caller should
+    fetch via _fetch_live_usdjpy() in ensemble_models.py (or features default to 0).
+    """
     from src.analysis.compute import compute_features, FEATURE_COLS
 
     model_path = os.path.join(model_dir, 'attention.keras')
@@ -213,7 +218,7 @@ def predict_attention(df, model_dir='models', seq_len=60):
     except Exception:
         session = None
 
-    features = compute_features(df)
+    features = compute_features(df, usdjpy_df=usdjpy_df)
     if len(features) < seq_len:
         return None
 

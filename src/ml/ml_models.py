@@ -38,10 +38,13 @@ class MLPredictor:
         self._feature_cache_id = None   # id(df) of cached features
         self._feature_cache = None      # cached result
 
-    def _features(self, df):
+    def _features(self, df, usdjpy_df=None):
         """Compute ML features. Delegates to centralized compute_features().
-        Cached: repeated calls on same df return instantly."""
-        return compute_features(df)
+        Cached: repeated calls on same df return instantly.
+
+        usdjpy_df: optional macro proxy aligned to df (see compute_features docs).
+        """
+        return compute_features(df, usdjpy_df=usdjpy_df)
 
     def train_xgb(self, df, precomputed_features=None):
         """Trenowanie XGBoost z walk-forward validation.

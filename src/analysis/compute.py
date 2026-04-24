@@ -613,6 +613,13 @@ FEATURE_COLS = [
     'volatility_percentile', 'atr_expansion',
     # Trend Strength (NEW)
     'adx', 'trend_strength',
+    # MACRO — USDJPY as primary USD proxy (2026-04-24)
+    # Gold's biggest driver is USD strength; USDJPY is our cleanest
+    # per-bar-historical proxy (UUP/TLT/VIXY only available as live
+    # snapshots via TwelveData ETF poll, no historical intraday).
+    'usdjpy_zscore_20',    # USD strength (z-score vs 20-bar mean)
+    'usdjpy_ret_5',         # short-term USD momentum
+    'xau_usdjpy_corr_20',  # inter-asset correlation (breaks signal fragility)
 ]
 
 # Feature cache — keyed by content fingerprint, NOT id(df). Python recycles
@@ -636,15 +643,30 @@ def _feature_cache_key(df: pd.DataFrame):
         return None
 
 
-def compute_features(df: pd.DataFrame, use_cache: bool = True) -> pd.DataFrame:
+def compute_features(df: pd.DataFrame, use_cache: bool = True,
+                     usdjpy_df: pd.DataFrame = None) -> pd.DataFrame:
     """Compute all ML features from OHLCV data. Single source of truth.
 
     Used by: ml_models.py (train/predict), ensemble_models.py (predict).
     Cached by content fingerprint to avoid recomputation.
+
+    Args:
+        df: XAU/USD OHLCV dataframe (required).
+        use_cache: whether to use feature cache.
+        usdjpy_df: optional USD/JPY OHLCV aligned to same index as df.
+            If provided, adds macro features (usdjpy_zscore_20, usdjpy_ret_5,
+            xau_usdjpy_corr_20) computed per-bar. If missing, macro features
+            default to 0.0 so old callers/models see the columns (graceful
+            degradation — new models trained on macro will still work on
+            inference, but predictions won't have the USDJPY signal).
     """
     import pandas_ta as ta
 
+    # Cache key includes usdjpy presence so we don't serve usdjpy-less
+    # cached result when usdjpy is provided (or vice versa).
     cache_key = _feature_cache_key(df) if use_cache else None
+    if cache_key is not None:
+        cache_key = (cache_key, usdjpy_df is not None and len(usdjpy_df) > 0)
     if use_cache and cache_key is not None and _feature_cache["key"] == cache_key and _feature_cache["result"] is not None:
         return _feature_cache["result"].copy()
 
@@ -798,6 +820,37 @@ def compute_features(df: pd.DataFrame, use_cache: bool = True) -> pd.DataFrame:
     bull_align = ((ema8 > ema20) & (ema20 > ema50)).astype(float)
     bear_align = ((ema8 < ema20) & (ema20 < ema50)).astype(float)
     df['trend_strength'] = bull_align - bear_align  # +1 strong bull, -1 strong bear, 0 mixed
+
+    # =====================================================================
+    # NEW FEATURES: Macro (USD/JPY-based, 2026-04-24)
+    # =====================================================================
+    # Gold's biggest structural driver is USD strength. USDJPY is our
+    # per-bar-historical proxy. If usdjpy_df not provided, features stay 0
+    # (graceful degradation — keeps inference working when macro feed is
+    # briefly unavailable; the model learned non-zero signal so degraded
+    # features reduce but don't break predictions).
+    if usdjpy_df is not None and len(usdjpy_df) >= 20 and 'close' in usdjpy_df.columns:
+        # Reindex usdjpy to match df (forward-fill small gaps from session diff).
+        try:
+            uj = usdjpy_df['close'].reindex(df.index, method='ffill')
+            # 20-bar Z-score — how stretched is USD vs recent mean
+            uj_mean = uj.rolling(20).mean()
+            uj_std = uj.rolling(20).std()
+            df['usdjpy_zscore_20'] = ((uj - uj_mean) / (uj_std + 1e-10)).fillna(0).clip(-5, 5)
+            # 5-bar momentum — short-term USD direction
+            df['usdjpy_ret_5'] = uj.pct_change(5).fillna(0).clip(-0.1, 0.1)
+            # 20-bar rolling correlation XAU vs USDJPY
+            # Normal: negative (inverse). Near-zero/positive = broken regime.
+            df['xau_usdjpy_corr_20'] = df['close'].rolling(20).corr(uj).fillna(0)
+        except Exception:
+            # On any alignment failure, default to 0 rather than crash
+            df['usdjpy_zscore_20'] = 0.0
+            df['usdjpy_ret_5'] = 0.0
+            df['xau_usdjpy_corr_20'] = 0.0
+    else:
+        df['usdjpy_zscore_20'] = 0.0
+        df['usdjpy_ret_5'] = 0.0
+        df['xau_usdjpy_corr_20'] = 0.0
 
     df.dropna(inplace=True)
 

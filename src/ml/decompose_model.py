@@ -117,7 +117,7 @@ def build_decompose_model(seq_len: int, n_features: int):
     return model
 
 
-def train_decompose_model(df, model_dir='models', seq_len=60, epochs=80):
+def train_decompose_model(df, model_dir='models', seq_len=60, epochs=80, usdjpy_df=None):
     """
     Train DPformer-lite on OHLCV data.
 
@@ -138,7 +138,7 @@ def train_decompose_model(df, model_dir='models', seq_len=60, epochs=80):
         logger.warning(f"Insufficient data for DPformer: {len(df)}")
         return None, 0
 
-    features = compute_features(df)
+    features = compute_features(df, usdjpy_df=usdjpy_df)
     features = features.copy()
     features['direction'] = compute_target(features)
     features.dropna(inplace=True)

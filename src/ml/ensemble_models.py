@@ -247,10 +247,31 @@ def _fallback_ensemble_result() -> Dict[str, Any]:
 # SHARED FEATURE COMPUTATION (delegates to centralized compute module)
 # ============================================================================
 
+def _fetch_live_usdjpy(limit: int = 200) -> Optional[pd.DataFrame]:
+    """Fetch recent USDJPY OHLC for macro features during live inference.
+
+    Returns None on any failure — compute_features handles None by zeroing
+    the usdjpy_* features (graceful degradation: model trained with macro
+    will still produce a prediction without it, just with reduced signal).
+    """
+    try:
+        from src.data.data_sources import get_provider
+        provider = get_provider()
+        # Same API used elsewhere for XAU (get_candles, not get_historical_data)
+        uj_df = provider.get_candles('USD/JPY', '1h', limit)
+        if uj_df is None or len(uj_df) < 20:
+            return None
+        return uj_df
+    except Exception:
+        return None
+
+
 def _compute_ensemble_features(df: pd.DataFrame) -> pd.DataFrame:
     """Compute all prediction features ONCE — delegates to compute.compute_features().
-    Single source of truth for feature computation across all models."""
-    return compute_features(df)
+    Single source of truth for feature computation across all models.
+    Fetches live USDJPY for macro features; zeros-out macro on any failure."""
+    usdjpy_df = _fetch_live_usdjpy()
+    return compute_features(df, usdjpy_df=usdjpy_df)
 
 
 # ============================================================================
@@ -721,7 +742,8 @@ def get_ensemble_prediction(
     # --- 2. Attention (TFT-lite) Prediction ---
     try:
         from src.ml.attention_model import predict_attention
-        attn_pred = predict_attention(df)
+        # Pass live USDJPY so attention sees same macro features as trained on
+        attn_pred = predict_attention(df, usdjpy_df=_fetch_live_usdjpy())
         if attn_pred is not None:
             # Attention empirical range on XAU is 0.35-0.63 (±0.13 from 0.5).
             # Naive |p-0.5|*2 caps at ~0.26, never clearing conviction gate.

@@ -174,6 +174,36 @@ def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
     return best_df
 
 
+def fetch_usdjpy_aligned(xau_df: pd.DataFrame, interval: str = "1h") -> pd.DataFrame:
+    """Fetch USDJPY historical aligned to the training XAU dataframe.
+
+    USDJPY is the primary USD-strength proxy for gold — gold's single
+    most important macro driver. We don't have DXY access so USDJPY
+    carries the macro signal. Returns a dataframe with 'close' column
+    indexed compatibly with xau_df so compute_features can merge.
+
+    Returns empty DataFrame on fetch failure (compute_features handles
+    None/empty gracefully by zeroing the macro features).
+    """
+    import yfinance as yf
+    from src.core.logger import logger
+
+    # Map xau interval → yfinance period window
+    # (USDJPY has same availability windows as most FX on yfinance)
+    period = "2y" if interval == "1h" else ("60d" if interval == "15m" else "10y")
+    try:
+        uj = yf.Ticker("JPY=X").history(period=period, interval=interval)
+        if uj is None or len(uj) < 100:
+            logger.warning(f"USDJPY fetch returned empty for {interval}/{period}")
+            return pd.DataFrame()
+        uj = _normalize_df(uj)
+        logger.info(f"USDJPY: {len(uj)} bars ({interval}/{period})")
+        return uj
+    except Exception as e:
+        logger.warning(f"USDJPY fetch failed: {e}")
+        return pd.DataFrame()
+
+
 def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     """Normalizuj DataFrame z yfinance do standardowego formatu."""
     df = df.reset_index()
@@ -549,11 +579,22 @@ def main():
     df = fetch_training_data(args.symbol)
     train_df, val_df, holdout_df = split_data(df)
 
+    # ---- 1a. Fetch USDJPY aligned (macro proxy for USD strength) ----
+    # Gold's main driver is USD; USDJPY is our per-bar-historical proxy
+    # (DXY not accessible, UUP/TLT/VIXY have no good intraday history).
+    # Graceful degradation — compute_features zeros macro if df is empty.
+    print("\n📈 Fetching USDJPY (macro proxy)...")
+    usdjpy_df = fetch_usdjpy_aligned(df, interval="1h")
+    if len(usdjpy_df) > 0:
+        print(f"   ✅ {len(usdjpy_df)} USDJPY bars aligned")
+    else:
+        print("   ⚠️  USDJPY fetch failed — training WITHOUT macro features")
+
     # ---- 1b. Pre-compute features ONCE (reused by XGBoost + LSTM) ----
     print("\n⚙️  Pre-computing features...")
-    from src.ml.ml_models import ml
+    from src.analysis.compute import compute_features
     t_feat = time.time()
-    precomputed = ml._features(train_df)
+    precomputed = compute_features(train_df, usdjpy_df=usdjpy_df if len(usdjpy_df) else None)
     print(f"   ✅ {len(precomputed)} rows, {len(precomputed.columns)} features ({time.time()-t_feat:.1f}s)")
 
     # ---- 2. XGBoost ----
@@ -569,7 +610,7 @@ def main():
         print("=" * 60)
         from src.ml.attention_model import train_attention_model
         t0 = time.time()
-        attn_model, attn_acc = train_attention_model(train_df)
+        attn_model, attn_acc = train_attention_model(train_df, usdjpy_df=usdjpy_df if len(usdjpy_df) else None)
         elapsed = time.time() - t0
         if attn_model:
             print(f"   Walk-forward accuracy: {attn_acc:.1%}")
@@ -588,7 +629,8 @@ def main():
         print("=" * 60)
         from src.ml.decompose_model import train_decompose_model
         t0 = time.time()
-        dp_model, dp_acc = train_decompose_model(train_df, epochs=args.epochs)
+        dp_model, dp_acc = train_decompose_model(train_df, epochs=args.epochs,
+                                                 usdjpy_df=usdjpy_df if len(usdjpy_df) else None)
         elapsed = time.time() - t0
         if dp_model:
             print(f"   Walk-forward accuracy: {dp_acc:.1%}")
