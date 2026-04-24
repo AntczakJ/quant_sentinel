@@ -985,14 +985,24 @@ def get_smc_analysis(tf: str) -> dict | None:
         # 11. DBR/RBD
         dbr_rbd = detect_dbr_rbd(df)
 
-        # 12. SMT DIVERGENCE (uproszczone)
+        # 12. SMT DIVERGENCE — magnitude-gated (2026-04-24)
+        # Original: any USDJPY move in same direction as gold trend over 10 bars
+        # triggered a hard veto in scanner.py — fired 167+ times per session,
+        # blocking legitimate setups in regimes where USDJPY+gold are merely
+        # drifting together. Now require a meaningful USDJPY move (>= 0.15%)
+        # before flagging divergence — sub-0.15% moves are noise, not real
+        # smart-money signal. Threshold picked from typical 10-bar USDJPY
+        # range on M5/M15: median ~0.1%, so 0.15% is roughly 1.5x median = real.
         smt_warning = "Brak"
+        SMT_MIN_PCT = 0.0015  # 0.15% threshold for meaningful divergence
         if usdjpy_prices and len(usdjpy_prices) >= 10:
             usdjpy_recent = usdjpy_prices[-10:]
-            if trend == "bull" and usdjpy_recent[-1] > usdjpy_recent[0]:
-                smt_warning = "⚠️ SMT Divergence (Dolar rośnie ze złotem!)"
-            elif trend == "bear" and usdjpy_recent[-1] < usdjpy_recent[0]:
-                smt_warning = "⚠️ SMT Divergence (Dolar spada ze złotem!)"
+            base = usdjpy_recent[0]
+            change_pct = (usdjpy_recent[-1] - base) / base if base else 0.0
+            if trend == "bull" and change_pct >= SMT_MIN_PCT:
+                smt_warning = f"⚠️ SMT Divergence (Dolar rośnie ze złotem! +{change_pct*100:.2f}%)"
+            elif trend == "bear" and change_pct <= -SMT_MIN_PCT:
+                smt_warning = f"⚠️ SMT Divergence (Dolar spada ze złotem! {change_pct*100:.2f}%)"
 
         # 13. OKREŚLENIE STRUKTURY (dla czytelności)
         if grab and mss:
