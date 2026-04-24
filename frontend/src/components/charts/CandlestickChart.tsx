@@ -190,12 +190,30 @@ const OHLCVLegend = memo(function OHLCVLegend({ data, interval, visibleIndicator
         <span className={`ml-1 ${col} font-medium`}>{data.change >= 0 ? '+' : ''}{data.change.toFixed(2)}%</span>
         {data.v > 0 && <span className="text-[var(--chart-text)] ml-1">Vol {data.v.toLocaleString()}</span>}
       </div>
-      {/* Row 2: Overlay indicators (EMA + BB) */}
+      {/* Row 2: Overlay indicators (EMA + BB + RSI-on-chart) */}
       <div className="flex items-center gap-3 text-[10px]">
         <IndVal label="EMA(21)" value={data.ema21} color="text-[#f0b90b]" />
         <IndVal label="BB▲" value={data.bbUpper} color="text-[#2196f3]" />
         <IndVal label="BB▬" value={data.bbMiddle} color="text-[#2196f3]" />
         <IndVal label="BB▼" value={data.bbLower} color="text-[#2196f3]" />
+        {/* RSI inline on main chart — color-coded overbought/oversold.
+            Sub-chart is hidden by default (2026-04-24 preference). */}
+        {data.rsi !== null && data.rsi !== undefined && (
+          <span className="flex items-center gap-0.5">
+            <span className="text-[var(--chart-text)]">RSI(14)</span>
+            <span
+              className={`font-mono font-medium ${
+                data.rsi > 70
+                  ? 'text-[#ef5350]'
+                  : data.rsi < 30
+                    ? 'text-[#26a69a]'
+                    : 'text-[#7e57c2]'
+              }`}
+            >
+              {data.rsi.toFixed(1)}
+            </span>
+          </span>
+        )}
         {visibleIndicators.atr && <IndVal label="ATR(14)" value={data.atr} color="text-[#ff9800]" />}
       </div>
     </div>
@@ -445,8 +463,13 @@ export function CandlestickChart() {
   });
 
   // Visible sub-chart indicators
+  // RSI shown as colored value in the OHLCVLegend (on main chart) rather
+  // than a separate sub-pane. Operator preference 2026-04-24 — the sub-chart
+  // below the price was adding clutter without adding signal. The value
+  // is still computed and available via the dropdown toggle if a full
+  // RSI line view is needed, but default is off.
   const [visibleIndicators, setVisibleIndicators] = useState<VisibleIndicators>({
-    rsi: true, macd: false, atr: false, stoch: false,
+    rsi: false, macd: false, atr: false, stoch: false,
   });
 
   // Price alerts + browser notifications + sound
@@ -526,9 +549,12 @@ export function CandlestickChart() {
       fontFamily: "'Trebuchet MS', 'Roboto', sans-serif",
     };
 
+    // 2026-04-24: grid lines disabled per operator preference — the
+    // hatched background reduced chart readability at small bar spacings.
+    // Kept structure in case a preference toggle is added later.
     const commonGrid = {
-      vertLines: { color: COLORS.gridLines, style: 4 as const },
-      horzLines: { color: COLORS.gridLines, style: 4 as const },
+      vertLines: { visible: false },
+      horzLines: { visible: false },
     };
 
     const commonTimeScale = {
@@ -1116,7 +1142,22 @@ export function CandlestickChart() {
 
       // ── SMC Zones overlay ──
       if (smcVisible && smcOverlayRef.current) {
-        const smcResult = detectAllSmcZones(candleSd as Array<{ time: number; open: number; high: number; low: number; close: number }>);
+        // Filter SMC zones to those relevant to the current price action.
+        // 2026-04-24: operator preference — show only confluences the live
+        // setup is using, not every detected pattern in the window.
+        const lastBar = candleSd[candleSd.length - 1];
+        const currentPrice = lastBar ? (lastBar.close as number) : undefined;
+        // indicatorDataRef.current.atr is `(number | null)[]` — last value
+        // is the current-bar ATR. Used to derive a proximity band for
+        // SMC zone filtering.
+        const atrArr = indicatorDataRef.current?.atr;
+        const atrEstimate = (atrArr && atrArr.length > 0)
+          ? (atrArr[atrArr.length - 1] ?? undefined)
+          : undefined;
+        const smcResult = detectAllSmcZones(
+          candleSd as Array<{ time: number; open: number; high: number; low: number; close: number }>,
+          { currentPrice, atr: atrEstimate, proximityAtrMult: 3 }
+        );
 
         // Equilibrium price line
         if (smcResult.eqLevel !== null && candleSeriesRef.current) {
@@ -1354,9 +1395,10 @@ export function CandlestickChart() {
     const timer = setTimeout(() => {
       const c = getChartColors();
       const layout = { background: { color: c.bg }, textColor: c.text };
+      // Grid disabled 2026-04-24 — match initial chart setup
       const grid = {
-        vertLines: { color: c.gridLines, style: 4 as const },
-        horzLines: { color: c.gridLines, style: 4 as const },
+        vertLines: { visible: false },
+        horzLines: { visible: false },
       };
       const crosshair = {
         vertLine: { color: c.crosshair, labelBackgroundColor: c.bg },

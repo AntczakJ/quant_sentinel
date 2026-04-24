@@ -291,15 +291,44 @@ export interface SmcResult {
   eqLevel: number | null;
 }
 
-export function detectAllSmcZones(candles: OhlcBar[]): SmcResult {
-  const fvgs = detectFVGs(candles, 5);
-  const obs = detectOrderBlocks(candles, 3);
-  const sd = detectSupplyDemand(candles);
+/** Filter options to keep only zones relevant to the current setup. */
+export interface SmcFilterOptions {
+  /** If set, only keep zones whose price range is within ±proximityAtrMult × atr of currentPrice. */
+  currentPrice?: number;
+  atr?: number;
+  proximityAtrMult?: number;  // default 3 — zones beyond this are "not live"
+  maxFvgs?: number;           // default 3 (was 5)
+  maxObs?: number;            // default 2 (was 3)
+  maxSd?: number;             // default 1 — S/D zones are noisy, keep strongest
+}
+
+export function detectAllSmcZones(candles: OhlcBar[], opts: SmcFilterOptions = {}): SmcResult {
+  const maxFvgs = opts.maxFvgs ?? 3;
+  const maxObs = opts.maxObs ?? 2;
+  const maxSd = opts.maxSd ?? 1;
+
+  const fvgs = detectFVGs(candles, maxFvgs);
+  const obs = detectOrderBlocks(candles, maxObs);
+  const sdAll = detectSupplyDemand(candles);
+  const sd = sdAll.slice(0, maxSd);
   const eqLevel = calcEquilibrium(candles);
 
-  return {
-    zones: [...fvgs, ...obs, ...sd],
-    eqLevel,
-  };
+  let zones: SmcZone[] = [...fvgs, ...obs, ...sd];
+
+  // Proximity filter — zones far from current price aren't live setup
+  // confluences, just chart noise. Keep only zones whose range is within
+  // a few ATR of current price. This matches the operator's "only show
+  // what the current trade actually uses" ask.
+  if (opts.currentPrice !== undefined && opts.atr !== undefined && opts.atr > 0) {
+    const mult = opts.proximityAtrMult ?? 3;
+    const lo = opts.currentPrice - mult * opts.atr;
+    const hi = opts.currentPrice + mult * opts.atr;
+    zones = zones.filter(z =>
+      // zone range overlaps with [lo, hi]
+      z.upper >= lo && z.lower <= hi
+    );
+  }
+
+  return { zones, eqLevel };
 }
 
