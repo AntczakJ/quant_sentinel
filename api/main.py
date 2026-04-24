@@ -2667,6 +2667,174 @@ async def health_scanner():
     }
 
 
+@app.get("/api/macro/context", tags=["System"])
+async def macro_context():
+    """Compact macro context for the chart overview strip.
+
+    Returns USDJPY spot + z-score (USD strength signal), XAU-USDJPY
+    rolling correlation (regime health — should be negative), and the
+    current macro_regime flag from get_macro_regime() which aggregates
+    UUP/TLT/VIXY/USDJPY/ATR signals into zielony/czerwony/neutralny.
+
+    Frontend uses this in MacroContext widget for at-a-glance regime view.
+    """
+    try:
+        from src.trading.smc_engine import get_smc_analysis
+        # 1h SMC analysis carries the live macro snapshot already
+        analysis = get_smc_analysis("1h")
+        if not analysis:
+            return {
+                "usdjpy": None,
+                "usdjpy_zscore": None,
+                "xau_usdjpy_corr": None,
+                "macro_regime": None,
+                "uup": None, "tlt": None, "vixy": None,
+            }
+        return {
+            "usdjpy": analysis.get("usdjpy"),
+            "usdjpy_zscore": analysis.get("usdjpy_zscore"),
+            "xau_usdjpy_corr": analysis.get("xau_usdjpy_corr"),
+            "macro_regime": analysis.get("macro_regime"),
+            "uup": analysis.get("uup"),
+            "tlt": analysis.get("tlt"),
+            "vixy": analysis.get("vixy"),
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "usdjpy": None, "usdjpy_zscore": None, "xau_usdjpy_corr": None,
+            "macro_regime": None, "uup": None, "tlt": None, "vixy": None,
+        }
+
+
+@app.get("/api/scanner/insight", tags=["System"])
+async def scanner_insight(hours: int = 24):
+    """Scanner insight panel data — explains why scanner is/isn't trading.
+
+    Returns:
+      - rejections: top 10 filter_name counts last N hours + total
+      - toxic_patterns: current pattern_stats with block status vs threshold n>=20
+      - streak: current consecutive-loss count + age of oldest in streak
+      - kelly: reset_ts + post-reset trade count + current default risk
+      - pause_flag: SCANNER_PAUSED file existence + reason string
+    """
+    from src.core.database import NewsDB
+    import os as _os
+    from collections import Counter
+    db = NewsDB()
+
+    since = f"-{int(hours)} hours"
+
+    # 1. Rejection breakdown
+    reject_rows = db._query(
+        "SELECT filter_name FROM rejected_setups WHERE timestamp >= datetime('now', ?)",
+        (since,),
+    )
+    reject_counter = Counter(r[0] for r in reject_rows if r[0])
+    rejections_top = [
+        {"filter": name, "count": n}
+        for name, n in reject_counter.most_common(10)
+    ]
+    rejections_total = sum(reject_counter.values())
+
+    # 2. Toxic pattern status
+    pattern_rows = db._query(
+        "SELECT pattern, count, wins, losses, win_rate FROM pattern_stats "
+        "WHERE count > 0 ORDER BY count DESC"
+    )
+    TOXIC_N_THRESHOLD = 20
+    TOXIC_WR_THRESHOLD = 0.30
+    toxic_patterns = []
+    for p, n, w, l, wr in pattern_rows:
+        blocked = bool(n >= TOXIC_N_THRESHOLD and wr < TOXIC_WR_THRESHOLD)
+        will_block = n >= TOXIC_N_THRESHOLD  # threshold reached but may be above WR cut
+        toxic_patterns.append({
+            "pattern": p,
+            "n": int(n),
+            "wins": int(w),
+            "losses": int(l),
+            "win_rate": round(float(wr or 0), 3),
+            "n_threshold": TOXIC_N_THRESHOLD,
+            "wr_threshold": TOXIC_WR_THRESHOLD,
+            "blocked": blocked,
+            "until_re_evaluate": max(0, TOXIC_N_THRESHOLD - int(n)),
+        })
+
+    # 3. Streak
+    streak_rows = db._query(
+        "SELECT id, status, timestamp FROM trades "
+        "WHERE status IN ('WIN', 'LOSS') ORDER BY id DESC LIMIT 10"
+    )
+    consecutive_losses = 0
+    oldest_loss_ts = None
+    for r in streak_rows:
+        if r[1] == 'LOSS':
+            consecutive_losses += 1
+            oldest_loss_ts = r[2]
+        else:
+            break
+    oldest_age_hours = None
+    if oldest_loss_ts:
+        try:
+            import datetime as _dt
+            ts = _dt.datetime.strptime(str(oldest_loss_ts), "%Y-%m-%d %H:%M:%S")
+            oldest_age_hours = round((_dt.datetime.now() - ts).total_seconds() / 3600, 1)
+        except (ValueError, TypeError):
+            pass
+
+    # 4. Kelly state
+    kelly_reset_row = db._query_one(
+        "SELECT param_text FROM dynamic_params WHERE param_name = 'kelly_reset_ts'"
+    )
+    kelly_reset_ts = kelly_reset_row[0] if kelly_reset_row else None
+    post_reset_n = 0
+    if kelly_reset_ts:
+        post_reset_row = db._query_one(
+            "SELECT COUNT(*) FROM trades WHERE status IN ('WIN','LOSS') AND timestamp > ?",
+            (str(kelly_reset_ts),)
+        )
+        post_reset_n = int(post_reset_row[0]) if post_reset_row else 0
+
+    # 5. Pause flag
+    pause_flag_path = _os.path.join("data", "SCANNER_PAUSED")
+    pause_reason = None
+    is_paused = _os.path.exists(pause_flag_path)
+    if is_paused:
+        try:
+            with open(pause_flag_path, 'r') as _f:
+                pause_reason = _f.read().strip()
+        except (OSError, IOError):
+            pause_reason = "(could not read flag)"
+
+    return {
+        "hours_window": hours,
+        "rejections": {
+            "total": rejections_total,
+            "top": rejections_top,
+        },
+        "toxic_patterns": toxic_patterns,
+        "streak": {
+            "consecutive_losses": consecutive_losses,
+            "threshold": 5,
+            "recency_hours": 6,
+            "oldest_loss_age_hours": oldest_age_hours,
+            "would_auto_pause": (
+                consecutive_losses >= 5
+                and oldest_age_hours is not None
+                and oldest_age_hours <= 6
+            ),
+        },
+        "kelly": {
+            "reset_ts": kelly_reset_ts,
+            "post_reset_trades": post_reset_n,
+            "min_sample": 20,  # KELLY_MIN_TRADES
+            "using_default_risk": post_reset_n < 20,
+        },
+        "paused": is_paused,
+        "pause_reason": pause_reason,
+    }
+
+
 # ── Serve frontend static files (production: built SPA from frontend/dist) ──
 _frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
 if os.path.isdir(_frontend_dist):

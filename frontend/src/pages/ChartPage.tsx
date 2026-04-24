@@ -7,10 +7,18 @@ import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { SignalPanel } from '../components/dashboard/SignalPanel';
 import { PortfolioStats } from '../components/dashboard/PortfolioStats';
 import { OverviewStrip } from '../components/dashboard/OverviewStrip';
+import { ScannerInsight } from '../components/dashboard/ScannerInsight';
+import { MacroContext } from '../components/dashboard/MacroContext';
+import { WeekendBanner } from '../components/dashboard/WeekendBanner';
 
 export default function ChartPage() {
   return (
     <div className="space-y-0">
+      {/* Weekend banner (only renders Sat/Sun when XAU is closed) */}
+      <div className="mb-3">
+        <WeekendBanner />
+      </div>
+
       {/* Chart: full-width, break out of container padding */}
       <div className="-mx-4 lg:-mx-6 -mt-4 lg:-mt-6">
         <div
@@ -21,8 +29,13 @@ export default function ChartPage() {
         </div>
       </div>
 
+      {/* Macro context strip — USD strength, correlation, regime */}
+      <div className="mt-3">
+        <MacroContext />
+      </div>
+
       {/* Overview metrics strip */}
-      <div className="-mx-4 lg:-mx-6">
+      <div className="-mx-4 lg:-mx-6 mt-2">
         <OverviewStrip />
       </div>
 
@@ -42,6 +55,11 @@ export default function ChartPage() {
           </div>
           <PortfolioStats />
         </div>
+      </div>
+
+      {/* Scanner insight — why scanner is (not) trading */}
+      <div className="pt-4">
+        <ScannerInsight />
       </div>
     </div>
   );

@@ -1212,5 +1212,53 @@ export const riskAPI = {
   },
 };
 
+// ============================================================================
+// SCANNER INSIGHT — Why is scanner (not) trading?
+// ============================================================================
+
+export interface ScannerInsightResponse {
+  hours_window: number;
+  rejections: {
+    total: number;
+    top: Array<{ filter: string; count: number }>;
+  };
+  toxic_patterns: Array<{
+    pattern: string;
+    n: number;
+    wins: number;
+    losses: number;
+    win_rate: number;
+    n_threshold: number;
+    wr_threshold: number;
+    blocked: boolean;
+    until_re_evaluate: number;
+  }>;
+  streak: {
+    consecutive_losses: number;
+    threshold: number;
+    recency_hours: number;
+    oldest_loss_age_hours: number | null;
+    would_auto_pause: boolean;
+  };
+  kelly: {
+    reset_ts: string | null;
+    post_reset_trades: number;
+    min_sample: number;
+    using_default_risk: boolean;
+  };
+  paused: boolean;
+  pause_reason: string | null;
+}
+
+export const scannerAPI = {
+  /** Explain why scanner is (not) trading — rejection breakdown, toxic patterns, streak, kelly state, pause */
+  getInsight: async (hours: number = 24): Promise<ScannerInsightResponse> => {
+    const response = await client.get<ScannerInsightResponse>('/scanner/insight', {
+      params: { hours },
+    });
+    return response.data;
+  },
+};
+
 export default client;
 
