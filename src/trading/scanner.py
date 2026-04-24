@@ -273,20 +273,25 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                        rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
 
-    # --- 1b. TOXIC PATTERN BLOCK (2026-04-22) ---
+    # --- 1b. TOXIC PATTERN BLOCK (2026-04-22, threshold bumped 2026-04-24) ---
     # pattern_stats holds the REAL pattern key ([M5] Trend Bull + FVG) matching
     # trades.pattern; scanner-side `LONG_Stable_bullish` naming was inert because
     # trades are logged as `[tf_label] {logic}` in api/main.py. Query the real key
-    # directly and block toxic patterns (count>=8 AND WR<30%). During the
-    # 04-17→22 streak [M5] Trend Bull + FVG ran 3W/12L (20%); this block would
-    # have killed 9 of the 17 losses.
+    # directly and block toxic patterns.
+    #
+    # 2026-04-24: Raised n threshold 8 → 20. The 04-17 streak injected 8
+    # clustered losses on [M5] Trend Bull + FVG in ~1h (#166-171), dominating
+    # the n=15 sample. Pre-streak WR was 43%; during streak 0%; post-streak
+    # 0 trades (filter self-locked). Requiring n>=20 lets the pattern re-enter
+    # the sample after ~5 more trades, revalidating against current regime.
+    # If it truly remains toxic, filter re-engages automatically.
     try:
         tox_pattern_key = f"[{TF_LABELS.get(tf, tf.upper())}] Trend {'Bull' if current_trend == 'bull' else 'Bear'} + FVG"
         tox_row = db._query_one(
             "SELECT count, wins, losses FROM pattern_stats WHERE pattern = ?",
             (tox_pattern_key,)
         )
-        if tox_row and tox_row[0] >= 8:
+        if tox_row and tox_row[0] >= 20:
             tox_wr = tox_row[1] / tox_row[0] if tox_row[0] else 0.5
             if tox_wr < 0.30:
                 logger.info(
