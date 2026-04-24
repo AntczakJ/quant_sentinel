@@ -49,24 +49,112 @@ isolation.py:enforce_isolation()` swaps DATABASE_URL before any
 `src.*` import. **Grid and backtest scripts must call
 enforce_isolation() FIRST** or they'll write to production DB.
 
-## Recent state (as of 2026-04-16)
-- Grid backtest complete (Stage A+B). **Top configs NOT applied** —
-  Sharpe stdev > mean across all top-5, unstable. See
-  `memory/grid_backtest_verdict.md`.
-- LSTM sweep winner **muted** (weight=0.05, below MIN_ACTIVE_WEIGHT).
-  Code-level `LSTM_BULLISH_ONLY` filter as defense-in-depth. Bearish
-  predictions 0-14% accuracy, bullish 100% at 1h+ horizons.
-  Rollback backup at `models/_backup_20260413T013619/`.
-- DQN weight boosted 0.12 → 0.25 (78% live accuracy, 81% bullish).
-  DQN+SMC compound signal fires when both agree on direction.
-- Scalp-first cascade with time-exit (4h max hold) + pre-weekend
-  auto-close (Friday 19:30 UTC). 30m TF producing live trades.
-- Telegram bot (`src/main.py`) deleted 2026-04-17. Only API is live.
-  Legacy `scan_market_task` / `resolve_trades_task` removed from
-  scanner.py. Dual-impl drift risk eliminated.
-- Balance milestone alerts: Telegram at ±5%, ±10%, ±20%.
-- Voter accuracy tracking: `data/voter_accuracy_log.jsonl` per
-  watchdog run. Task Scheduler: daily digest 08:00 + watchdog 6h.
+## Recent state (as of 2026-04-24 — after loss streak #165-186 audit)
+
+### Live trading defense stack (added 2026-04-22 → 24)
+- **Pause flag kill-switch**: create `data/SCANNER_PAUSED` file → BG scanner
+  skips cycles without killing API. Delete to resume.
+- **Streak auto-pause**: 5 consecutive LOSS within 6h → auto-create pause
+  flag + Telegram alert. Stale streaks (oldest > 6h) are ignored.
+- **Toxic pattern filter**: queries `pattern_stats` for the real
+  `[tf] Trend Bull|Bear + FVG` key. Blocks when `n≥20 AND WR<30%`.
+  Currently `[M5] Trend Bull + FVG` at 3W/12L=20% but only n=15 — not
+  yet triggering (needs 5 more trades to re-evaluate).
+- **B-grade scalp soften**: B (score 25-44) allowed on 5m/15m/30m only
+  when `≥5 non-penalty factors AND score ≥35`. Otherwise blocked.
+- **SMT magnitude threshold**: USDJPY divergence only fires when
+  |10-bar change| ≥ 0.15%. Removes 167×/session noise vetos.
+- **Spread-aware vol-spike filter**: block when ATR expansion > 2×
+  20-bar baseline (catches unscheduled flash moves; scheduled news
+  already handled by event_guard).
+- **Tier-aware event guard**:
+  - Tier 1 (NFP/CPI/FOMC/PCE) → hard block ±15 min
+  - Tier 2 (PPI/ADP/Retail/Jobless/GDP) → halve risk scalp / block HTF ±10 min
+  - Tier 3 (Fed speakers, ECB/BoJ) → normal + warning log
+- **Kelly feedback break**: `kelly_reset_ts` param in `dynamic_params`;
+  Kelly sizing ignores pre-reset trades. When fewer than KELLY_MIN_TRADES
+  post-reset, returns default_risk (1.0%) instead of extrapolating from
+  contaminated streak.
+
+### Macro feature integration (Phase B — 2026-04-24)
+- **ML ensemble now macro-aware**: FEATURE_COLS extended 31→34 with
+  `usdjpy_zscore_20`, `usdjpy_ret_5`, `xau_usdjpy_corr_20`.
+- `compute_features(df, usdjpy_df=None)` — pass USDJPY alongside XAU for
+  inference. Graceful degrade: macro features default to 0 if fetch fails.
+- Training pipeline (`train_all.py`) fetches yfinance USDJPY JPY=X
+  parallel to XAU, passes to compute_features + all voter training.
+- Inference: `ensemble_models._fetch_live_usdjpy()` pulls USD/JPY via
+  existing TwelveData provider.
+- **No DXY access** — USDJPY is our primary USD-strength proxy. UUP/TLT/
+  VIXY polled live for `macro_regime` flag (zielony/czerwony/neutralny)
+  but not in ML feature set (TwelveData has no good intraday history
+  for them).
+- Feature importance post-macro: xau_usdjpy_corr_20 ranks #13/34 (top
+  third) in XGB, usdjpy_ret_5 #20, usdjpy_zscore_20 #22.
+
+### Regime classifier (V1 — 2026-04-24)
+- `src/analysis/regime.py::classify_regime()` returns one of
+  `squeeze | trending_high_vol | trending_low_vol | ranging`
+  from BBW compression + ADX + ATR ratio.
+- Exposed via `/api/macro/context` and `MacroContext` widget.
+- **Not yet routing strategy per-regime** — V1 is classification only.
+  Phase V2 will gate voter weighting / MR vs trend-follow per regime.
+
+### Asia Session ORB voter (2026-04-24)
+- `src/trading/asia_orb.py::detect_orb_signal()` — marks Asia range
+  (00:00-07:00 UTC) and detects break of H/L in first 2h post-London-open
+  (07:00-09:00 UTC). Requires 200-EMA HTF filter to agree.
+- Wired into `smc_engine.score_setup_quality` as +15 bonus when ORB
+  direction matches setup direction (`factors_detail['asia_orb']`).
+- Research: +411%/yr backtested on gold futures (TradeThatSwing).
+
+### Dead code cleanup (2026-04-24)
+- Regex sentiment (`_detect_sentiment`/`BULLISH_WORDS`) — stubbed to
+  return neutral. Research-debunked; will be replaced by LLM-based
+  classification in future phase.
+- Inert pattern_weight filter (scanner.py:276) — removed. Name mismatch
+  made it a no-op.
+- dpformer/decompose model — training and inference disabled (weight=0
+  already, but training burned 12 min per cycle; suspected data leak at
+  78.8% val acc).
+- Stale tables wiped: `news_sentiment` (3 rows from 04-16),
+  `loss_patterns` (3 rows from 04-09).
+
+### Frontend additions (2026-04-24)
+- **ScannerInsight** panel — rejection breakdown, toxic pattern watch,
+  streak counter, Kelly state. Answers "why no trades?"
+- **MacroContext** strip — USDJPY z-score + XAU-USDJPY correlation +
+  macro regime + market regime (BBW/ADX).
+- **WeekendBanner** — auto-shows when XAU is closed (Fri 21:00 UTC →
+  Sun 21:00 UTC).
+
+### Known strategic gaps (planned)
+- Regime-based voter weight routing (Phase V2).
+- News calendar: keyword-based tier mapping (OK for V1) but no
+  second-rotation trading logic yet.
+- VWAP + anchored VWAP family — research-backed edge, not implemented.
+- GPR (Geopolitical Risk) index for multi-day bias tilt.
+- Models page frontend consolidation — 20+ widgets on one page, ripe
+  for tabbed view refactor.
+
+### Earlier context (2026-04-16 baseline, still relevant)
+- Grid backtest (Stage A+B) produced 15-decimal-precision Bayesian
+  params in `dynamic_params` (min_score, risk_percent, target_rr,
+  tp_to_sl_ratio, sl_atr_multiplier). CLAUDE.md flagged "top configs
+  NOT applied (Sharpe unstable)" but timestamps show they ARE applied
+  — suspect of overfitting; rollback to round numbers deferred until
+  after Phase B+C stabilizes (don't rerun grid on broken foundation).
+- LSTM sweep winner was muted to 0.05 weight after anti-signal
+  detection (bull acc 32%, bear 67%). Retrain 04-22 with macro
+  features did NOT flip bull asymmetry in watchdog yet — observe 48h.
+- DQN weight 0.25, healthy at 66-80% live accuracy. Only voter not
+  retrained today (--skip-rl).
+- Scalp-first cascade 5m→15m→30m→1h→4h, time-exit 4h, Fri 19:30 UTC
+  pre-weekend close.
+- Telegram bot deleted 2026-04-17; only API is live.
+- `data/voter_accuracy_log.jsonl` updated by scripts/voter_watchdog.py
+  every 6h. model_monitor is NOT scheduled (only runs on-demand via
+  /api/models/monitoring endpoint) — known gap.
 
 ## Rejection reasons in `rejected_setups` table
 `"structure=Stable (no grab/mss)"` (was "chop" — misleading). Stable
