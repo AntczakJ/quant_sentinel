@@ -1,386 +1,530 @@
-/* Self-hosted fonts */
+/* ═══════════════════════════════════════════════════════════════════
+   QUANT SENTINEL — Design System v3 (2026-04-25)
+
+   "Quantum Editorial" — Apple Music × Revolut × Linear inspiration.
+   - Editorial typography (Inter Display class scaled bold)
+   - Navy depths (not pure black) → warm off-white surfaces
+   - SINGLE accent (electric indigo with gradient extension)
+   - Generous spatial system (8/12/16/24/32/48/64/96)
+   - Soft elevation through inner glow + backdrop blur, never hard borders
+   - Spring physics throughout — every interactive surface has tap feel
+   - Page-level hero motion + FLIP layouts
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Self-hosted fonts — Inter for body, JetBrains Mono for numerics */
 @import '@fontsource/inter/400.css';
 @import '@fontsource/inter/500.css';
 @import '@fontsource/inter/600.css';
 @import '@fontsource/inter/700.css';
+@import '@fontsource/inter/800.css';
 @import '@fontsource/jetbrains-mono/400.css';
 @import '@fontsource/jetbrains-mono/500.css';
 @import '@fontsource/jetbrains-mono/600.css';
 
 @import "tailwindcss";
 
-/* ───────────────────────────────────────────────────────────────────
- * Tailwind 4 theme — custom colors/fonts/shadows via @theme block.
- * All colors reference CSS vars in :root (defined below) so the
- * dark/light theme toggle still works by swapping those vars.
- * ─────────────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════
+   TAILWIND THEME — token bridge
+   All Tailwind utilities (bg-dark-bg, text-th-primary, etc.) point at
+   CSS custom properties so theme switch is a single var swap.
+   ═══════════════════════════════════════════════════════════════════ */
 @theme {
-  /* Theme-aware surface colors */
+  /* Surfaces */
   --color-dark-bg: rgb(var(--c-bg));
   --color-dark-surface: rgb(var(--c-surface));
   --color-dark-secondary: rgb(var(--c-secondary));
   --color-dark-tertiary: rgb(var(--c-raised));
 
-  /* Theme-aware accent colors */
+  /* Accent — single hue, gradient extension */
+  --color-accent: rgb(var(--c-accent));
+  --color-accent-2: rgb(var(--c-accent-2));
   --color-accent-green: rgb(var(--c-green));
   --color-accent-red: rgb(var(--c-red));
-  --color-accent-blue: rgb(var(--c-blue));
-  --color-accent-cyan: rgb(var(--c-cyan));
-  --color-accent-purple: rgb(var(--c-purple));
-  --color-accent-orange: rgb(var(--c-orange));
-  --color-accent: rgb(var(--c-accent));
+  --color-accent-blue: rgb(var(--c-accent));
+  --color-accent-cyan: rgb(var(--c-accent-2));
+  --color-accent-purple: rgb(var(--c-accent));
+  --color-accent-orange: rgb(var(--c-warn));
 
-  /* Theme-aware text */
+  /* Text scale */
   --color-th: rgb(var(--c-text-1));
   --color-th-secondary: rgb(var(--c-text-2));
   --color-th-muted: rgb(var(--c-text-3));
   --color-th-dim: rgb(var(--c-text-4));
 
-  /* Theme-aware border */
+  /* Borders */
   --color-th-border: rgb(var(--c-border));
   --color-th-border-h: rgb(var(--c-border-h));
   --color-th-hover: rgb(var(--c-hover));
 
-  /* Fonts */
-  --font-mono: 'JetBrains Mono', monospace;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-display: 'Inter', sans-serif;
+  /* Type — Inter for editorial, JetBrains for numerics */
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
 
-  /* Border radius extensions */
-  --radius-xl: 0.875rem;
-  --radius-2xl: 1rem;
-
-  /* Shadows — glows + panel */
-  --shadow-glow: 0 0 8px rgb(var(--c-green) / 0.15);
-  --shadow-glow-red: 0 0 8px rgb(var(--c-red) / 0.15);
-  --shadow-glow-blue: 0 0 8px rgb(var(--c-blue) / 0.15);
-  --shadow-panel: 0 4px 24px rgba(0, 0, 0, 0.2);
+  /* Radius — generous, Apple-like */
+  --radius-xl: 1rem;        /* 16px */
+  --radius-2xl: 1.25rem;    /* 20px */
+  --radius-3xl: 1.5rem;     /* 24px */
+  --radius-4xl: 2rem;       /* 32px — hero cards */
 }
 
-/* ── Accessibility: focus-visible outlines ─────────────────────── */
-@layer base {
-  *:focus-visible {
-    outline: 2px solid rgb(var(--c-accent));
-    outline-offset: 2px;
-    border-radius: 4px;
-  }
-}
-
-/* ── Micro-interactions & global animations ──────────────────── */
-@layer utilities {
-  .hover-lift {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-  .hover-lift:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(168, 85, 247, 0.08);
-  }
-  .animate-slide-in-left {
-    animation: slideInLeft 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .animate-slide-in-up {
-    animation: slideInUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .animate-fade-in {
-    animation: fadeIn 0.2s ease-out;
-  }
-  .animate-scale-in {
-    animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .glow-accent {
-    box-shadow: 0 0 20px rgba(168, 85, 247, 0.15), 0 0 40px rgba(168, 85, 247, 0.05);
-  }
-}
-
-@keyframes slideInLeft {
-  from { transform: translateX(-100%); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
-}
-@keyframes slideInUp {
-  from { transform: translateY(8px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes scaleIn {
-  from { transform: scale(0.95); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   THEME SYSTEM — RGB channel architecture
-   Dark (default) + Light mode via .light class on <html>
-
-   RGB channels (--c-*) feed Tailwind's alpha support:
-     bg-accent-green/20  →  rgb(var(--c-green) / 0.2)
-   Resolved colors (--color-*) are for inline styles:
-     style={{ color: 'var(--color-accent-green)' }}
-   ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   CORE PALETTE — Navy depths, single accent, restrained semantic
+   ═══════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Dark Theme — Revolut × Apple aesthetic (rev. 2026-04-24) ─
-     Pure neutrals, single accent, restrained semantic colors,
-     minimal chrome. Surface uses elevation through opacity, not
-     saturation. Borders barely visible. Generous spacing tokens. */
+  /* ── DARK THEME ───────────────────────────────────────────────
+     Navy depths instead of pure black. Surfaces step up via
+     opacity, not random gray values. */
 
-  /* RGB channels for Tailwind alpha */
-  --c-bg:          6 6 9;       /* near-black, slight blue tint */
-  --c-surface:     12 12 16;    /* card surface */
-  --c-raised:      18 18 24;    /* elevated card */
-  --c-secondary:   24 24 30;    /* muted backdrop */
-  --c-border:      28 28 36;    /* whisper border */
-  --c-border-h:    44 44 56;    /* hover border */
-  --c-hover:       20 20 28;    /* hover bg */
+  --c-bg:          11 14 26;       /* deep navy — not black */
+  --c-surface:     17 21 38;       /* card surface */
+  --c-raised:      24 30 50;       /* elevated card */
+  --c-secondary:   30 36 58;       /* muted backdrop */
+  --c-border:      35 42 68;       /* whisper border */
+  --c-border-h:    58 68 100;      /* hover border */
+  --c-hover:       26 32 52;       /* hover bg */
 
-  --c-text-1:      245 246 250; /* primary — almost white */
-  --c-text-2:      148 152 168; /* secondary — refined gray */
-  --c-text-3:      100 104 120; /* muted */
-  --c-text-4:      62 66 80;    /* dim */
+  --c-text-1:      245 247 255;    /* primary — near white with cool tint */
+  --c-text-2:      155 162 192;    /* secondary — refined slate */
+  --c-text-3:      105 112 142;    /* muted */
+  --c-text-4:      62 70 100;      /* dim */
 
-  /* Semantic colors — restrained saturation, used sparingly */
-  --c-green:       34 197 94;   /* P/L green — muted vs old 52 211 153 */
-  --c-red:         239 68 68;   /* P/L red — muted vs old 251 113 133 */
-  --c-blue:        99 102 241;  /* info blue — Revolut indigo */
-  --c-cyan:        14 165 233;  /* sparing — chart highlights */
-  --c-purple:      139 92 246;  /* sparing — special accents */
-  --c-orange:      234 179 8;   /* warn — gold-leaning */
-  --c-accent:      99 102 241;  /* SINGLE accent — Revolut indigo, used everywhere CTA */
+  /* SINGLE accent — electric indigo, gradient pair for extension */
+  --c-accent:      99 102 241;     /* primary accent (indigo-500) */
+  --c-accent-2:    139 92 246;     /* accent extension (violet-500) for gradients */
 
-  /* Resolved colors for var() in inline styles */
+  /* Restrained semantic — used ONLY where unambiguous (P/L) */
+  --c-green:       52 211 153;     /* P/L positive */
+  --c-red:         248 113 113;    /* P/L negative */
+  --c-warn:        251 191 36;     /* warnings only */
+
+  /* Elevation — soft, layered shadows */
+  --shadow-card:    0 1px 3px rgba(0,0,0,0.18), 0 0 0 1px rgba(255,255,255,0.04);
+  --shadow-raised:  0 4px 12px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.05);
+  --shadow-hero:    0 20px 60px -10px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06);
+  --shadow-glow:    0 0 64px rgb(var(--c-accent) / 0.15);
+
+  /* Glass — Apple HIG vibrancy */
+  --glass-bg:       rgba(17, 21, 38, 0.72);
+  --glass-border:   rgba(255, 255, 255, 0.05);
+  --glass-blur:     24px;
+
+  /* Chart */
+  --chart-bg:       rgb(var(--c-bg));
+  --chart-grid:     rgba(255, 255, 255, 0.02);
+  --chart-text:     rgb(var(--c-text-3));
+  --chart-border:   rgba(255, 255, 255, 0.04);
+  --chart-crosshair: rgba(255, 255, 255, 0.2);
+
+  /* Easing — spring physics */
+  --ease-spring:    cubic-bezier(0.34, 1.56, 0.64, 1);    /* overshoot */
+  --ease-out:       cubic-bezier(0.16, 1, 0.3, 1);        /* premium decel */
+  --ease-snap:      cubic-bezier(0.4, 0, 0.2, 1);         /* material */
+  --ease-apple:     cubic-bezier(0.25, 0.46, 0.45, 0.94); /* SF default */
+
+  /* Spatial — 4pt baseline, generous progressions */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  24px;
+  --space-6:  32px;
+  --space-7:  48px;
+  --space-8:  64px;
+  --space-9:  96px;
+
+  /* Resolved colors for inline style usage */
   --color-bg:              rgb(var(--c-bg));
   --color-surface:         rgb(var(--c-surface));
   --color-surface-raised:  rgb(var(--c-raised));
   --color-secondary:       rgb(var(--c-secondary));
   --color-border:          rgb(var(--c-border));
   --color-border-hover:    rgb(var(--c-border-h));
-
   --color-text-primary:    rgb(var(--c-text-1));
   --color-text-secondary:  rgb(var(--c-text-2));
   --color-text-muted:      rgb(var(--c-text-3));
   --color-text-dim:        rgb(var(--c-text-4));
-
-  --color-accent-green:    rgb(var(--c-green));
-  --color-accent-red:      rgb(var(--c-red));
-  --color-accent-blue:     rgb(var(--c-blue));
-  --color-accent-cyan:     rgb(var(--c-cyan));
-  --color-accent-purple:   rgb(var(--c-purple));
-  --color-accent-orange:   rgb(var(--c-orange));
-  --color-accent:          rgb(var(--c-accent));
-
-  --color-scrollbar:       rgb(var(--c-border));
-  --color-scrollbar-hover: rgb(var(--c-border-h));
-
-  --shadow-card:     0 0 0 1px rgba(255,255,255,0.025), 0 1px 2px rgba(0,0,0,0.4);
-  --shadow-elevated: 0 0 0 1px rgba(255,255,255,0.04), 0 12px 48px -8px rgba(0,0,0,0.6);
-  --shadow-glow:     0 0 48px rgba(99,102,241,0.05);
-
-  /* Glass — refined: less blur, less opacity for cleaner look */
-  --glass-bg:        rgba(12, 12, 16, 0.78);
-  --glass-border:    rgba(255, 255, 255, 0.04);
-  --glass-blur:      18px;
-
-  /* Chart */
-  --chart-bg:        rgb(var(--c-bg));
-  --chart-grid:      rgba(255, 255, 255, 0.03);
-  --chart-text:      rgb(var(--c-text-3));
-  --chart-border:    rgb(var(--c-border));
-  --chart-crosshair: rgb(var(--c-text-4));
+  --color-scrollbar:       rgba(255,255,255,0.06);
+  --color-scrollbar-hover: rgba(255,255,255,0.12);
 }
 
-/* ── Light Theme — Revolut × Apple aesthetic (rev. 2026-04-24) ───
-   Warm white surfaces, hairline borders, single indigo accent,
-   ultra-subtle elevation through shadow not lines.                */
+/* ── LIGHT THEME ───────────────────────────────────────────────
+   Warm off-white (not stark white). Lavender hints in surfaces. */
 :root.light {
-  --c-bg:          252 252 254;  /* warm white, slight cool tint */
-  --c-surface:     255 255 255;  /* pure white card */
-  --c-raised:      248 249 252;
-  --c-secondary:   244 245 248;
-  --c-border:      232 234 240;  /* hairline */
-  --c-border-h:    214 217 226;
-  --c-hover:       246 247 250;
+  --c-bg:          250 251 254;     /* warm off-white */
+  --c-surface:     255 255 255;     /* pure white card */
+  --c-raised:      247 248 252;
+  --c-secondary:   241 243 248;
+  --c-border:      228 231 240;
+  --c-border-h:    195 200 215;
+  --c-hover:       243 245 250;
 
-  --c-text-1:      14 16 26;     /* near-black */
-  --c-text-2:      82 86 102;    /* secondary */
-  --c-text-3:      130 134 150;
-  --c-text-4:      176 180 196;
+  --c-text-1:      14 18 32;        /* near-black */
+  --c-text-2:      82 90 110;
+  --c-text-3:      130 138 158;
+  --c-text-4:      178 184 200;
 
-  --c-green:       22 163 74;    /* P/L green — restrained */
-  --c-red:         220 38 38;    /* P/L red — restrained */
-  --c-blue:        79 70 229;    /* indigo deeper for light bg */
-  --c-cyan:        6 182 212;
-  --c-purple:      124 58 237;
-  --c-orange:      217 119 6;
-  --c-accent:      79 70 229;    /* SAME indigo, deeper for light */
+  --c-accent:      79 70 229;       /* indigo-600 — deeper for light bg */
+  --c-accent-2:    124 58 237;      /* violet-600 */
 
-  --shadow-card:     0 0 0 1px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.04);
-  --shadow-elevated: 0 0 0 1px rgba(0,0,0,0.06), 0 12px 32px -8px rgba(0,0,0,0.08);
-  --shadow-glow:     0 0 48px rgba(79,70,229,0.04);
+  --c-green:       22 163 74;
+  --c-red:         220 38 38;
+  --c-warn:        217 119 6;
 
-  --glass-bg:        rgba(255, 255, 255, 0.82);
-  --glass-border:    rgba(0, 0, 0, 0.05);
-  --glass-blur:      18px;
+  --shadow-card:    0 1px 3px rgba(20,30,60,0.06), 0 0 0 1px rgba(20,30,60,0.04);
+  --shadow-raised:  0 4px 12px rgba(20,30,60,0.08), 0 0 0 1px rgba(20,30,60,0.05);
+  --shadow-hero:    0 20px 60px -15px rgba(20,30,60,0.15), 0 0 0 1px rgba(20,30,60,0.06);
+  --shadow-glow:    0 0 64px rgb(var(--c-accent) / 0.08);
+
+  --glass-bg:       rgba(255, 255, 255, 0.78);
+  --glass-border:   rgba(20, 30, 60, 0.06);
+  --glass-blur:     24px;
+
+  --chart-grid:     rgba(20, 30, 60, 0.025);
+  --chart-border:   rgba(20, 30, 60, 0.04);
+  --chart-crosshair: rgba(20, 30, 60, 0.2);
+
+  --color-scrollbar:       rgba(20,30,60,0.08);
+  --color-scrollbar-hover: rgba(20,30,60,0.18);
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   BASE STYLES
-   ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   GLOBAL RESET + BASE
+   ═══════════════════════════════════════════════════════════════════ */
 
 * { box-sizing: border-box; }
 
-body {
+html, body {
   margin: 0;
   padding: 0;
   min-height: 100vh;
   min-width: 320px;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 0.875rem;
-  line-height: 1.6;
-  font-weight: 400;
-  letter-spacing: -0.01em;
-  color: var(--color-text-primary);
-  background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  transition: background-color 0.4s var(--ease-out), color 0.4s var(--ease-out);
 }
 
-/* Smooth theme switching for ALL surface/text/border elements that use
-   theme tokens. Doesn't affect transforms/animations — only color-class
-   props transition for the cross-fade feel when toggling light/dark. */
-*, *::before, *::after {
-  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
-  transition-duration: 0.35s;
-  transition-timing-function: var(--ease-out);
-}
-/* Opt-out for elements that have their own transform/scroll animations
-   — overriding this base would cause jank in heavy charts/lists. */
-[data-no-theme-transition] * {
-  transition-property: none !important;
+body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  font-weight: 400;
+  letter-spacing: -0.011em;
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+  transition: background-color 0.5s var(--ease-out), color 0.5s var(--ease-out);
 }
 
 :root:not(.light) body { color-scheme: dark; }
 :root.light body { color-scheme: light; }
 
-/* Background — single restrained gradient, Apple-style. Was: 3-blob
-   colored mesh which felt busy. Now one accent tint top-left + soft
-   accent bottom-right. Saturation kept very low. */
+#root { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   AMBIENT BACKGROUND — animated mesh gradient (slow, subtle)
+   ═══════════════════════════════════════════════════════════════════ */
+
 body::before {
+  content: '';
+  position: fixed;
+  inset: -10%;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 50% 60% at 15% 20%, rgb(var(--c-accent) / 0.10) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 50% at 85% 80%, rgb(var(--c-accent-2) / 0.08) 0%, transparent 55%),
+    radial-gradient(ellipse 30% 40% at 50% 50%, rgb(var(--c-accent) / 0.04) 0%, transparent 50%);
+  animation: meshDrift 30s ease-in-out infinite;
+}
+:root.light body::before {
+  background:
+    radial-gradient(ellipse 50% 60% at 15% 20%, rgb(var(--c-accent) / 0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 50% at 85% 80%, rgb(var(--c-accent-2) / 0.04) 0%, transparent 55%);
+}
+
+@keyframes meshDrift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(-2%, 1%) scale(1.04); }
+  66% { transform: translate(2%, -1%) scale(0.98); }
+}
+
+/* Grain overlay — subtle film noise for depth */
+body::after {
   content: '';
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background:
-    radial-gradient(ellipse 70% 50% at 0% 0%, rgb(var(--c-accent) / 0.05) 0%, transparent 55%),
-    radial-gradient(ellipse 60% 40% at 100% 100%, rgb(var(--c-accent) / 0.03) 0%, transparent 50%);
-  transition: background 0.6s var(--ease-out);
-}
-:root.light body::before {
-  background:
-    radial-gradient(ellipse 70% 50% at 0% 0%, rgb(var(--c-accent) / 0.025) 0%, transparent 55%),
-    radial-gradient(ellipse 60% 40% at 100% 100%, rgb(var(--c-accent) / 0.018) 0%, transparent 50%);
+  opacity: 0.025;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-#root {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
+/* ═══════════════════════════════════════════════════════════════════
+   SCROLLBARS — invisible until hover
+   ═══════════════════════════════════════════════════════════════════ */
 
-/* Scrollbar — ultra thin, invisible until hover */
-::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
-:root.light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); }
-:root.light ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
+::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar);
+  border-radius: 8px;
+  transition: background 0.2s var(--ease-out);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-scrollbar-hover); }
 
 ::selection {
-  background-color: rgb(var(--c-accent) / 0.25);
+  background: rgb(var(--c-accent) / 0.3);
   color: var(--color-text-primary);
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   SIGNAL COLORS
-   ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   TYPOGRAPHY SCALE — editorial display
+   Use these classes instead of inline text-XL etc. for consistent
+   vertical rhythm across pages.
+   ═══════════════════════════════════════════════════════════════════ */
 
-.signal-strong-buy {
-  background: rgb(var(--c-green) / 0.12);
-  color: var(--color-accent-green);
+.t-display {
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.035em;
 }
-.signal-buy { color: var(--color-accent-green); }
-.signal-hold { color: var(--color-accent-blue); }
-.signal-sell { color: var(--color-accent-red); }
-.signal-strong-sell {
-  background: rgb(var(--c-red) / 0.12);
-  color: var(--color-accent-red);
+.t-h1 {
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
 }
+.t-h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+.t-h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+}
+.t-body { font-size: 0.9375rem; line-height: 1.55; }
+.t-caption {
+  font-size: 0.75rem;
+  letter-spacing: 0.01em;
+  color: var(--color-text-muted);
+}
+.t-eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+.t-mono { font-family: var(--font-mono); font-feature-settings: 'tnum', 'cv11'; }
 
-/* ═══════════════════════════════════════════════════════════════
-   CARD SYSTEM
-   ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   CARDS — soft elevation, no hard borders, generous radius
+   ═══════════════════════════════════════════════════════════════════ */
 
-/* Spring easing — used throughout for a "physical" feel à la Apple HIG */
-:root {
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-snap:   cubic-bezier(0.4, 0, 0.2, 1);
+.surface {
+  background: var(--color-surface);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-card);
 }
 
 .card {
-  @apply rounded-2xl p-5;
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
-  border: 1px solid var(--glass-border);
+  position: relative;
+  background: var(--color-surface);
+  border-radius: var(--radius-2xl);
+  padding: var(--space-5);
   box-shadow: var(--shadow-card);
-  transition: transform 0.35s var(--ease-spring),
-              box-shadow 0.35s var(--ease-out),
-              border-color 0.35s var(--ease-out);
-}
-.card:hover {
-  box-shadow: var(--shadow-elevated), var(--shadow-glow);
-  border-color: rgb(var(--c-accent) / 0.18);
-  transform: translateY(-1px);
+  transition: transform 0.4s var(--ease-spring),
+              box-shadow 0.4s var(--ease-out);
+  overflow: hidden;
 }
 
 .card-elevated {
-  @apply rounded-2xl p-6;
+  position: relative;
+  background: var(--color-surface);
+  border-radius: var(--radius-3xl);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-raised);
+  transition: transform 0.4s var(--ease-spring),
+              box-shadow 0.4s var(--ease-out);
+  overflow: hidden;
+}
+
+/* Hover lift + accent gradient halo */
+.card:hover, .card-elevated:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hero);
+}
+
+/* Glass card — backdrop vibrancy */
+.glass {
+  position: relative;
   background: var(--glass-bg);
   backdrop-filter: blur(var(--glass-blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border-radius: var(--radius-2xl);
   border: 1px solid var(--glass-border);
-  box-shadow: var(--shadow-elevated);
-  transition: transform 0.35s var(--ease-spring),
-              box-shadow 0.35s var(--ease-out),
-              border-color 0.35s var(--ease-out);
 }
-.card-elevated:hover {
-  box-shadow: var(--shadow-elevated), var(--shadow-glow);
-  border-color: rgb(var(--c-accent) / 0.20);
+
+/* Hero card — page-level showcase surface with gradient border */
+.hero-card {
+  position: relative;
+  background: var(--color-surface);
+  border-radius: var(--radius-4xl);
+  padding: var(--space-7);
+  box-shadow: var(--shadow-hero);
+  overflow: hidden;
+}
+.hero-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgb(var(--c-accent) / 0.4) 0%,
+    rgb(var(--c-accent-2) / 0.2) 50%,
+    transparent 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BUTTONS — Apple-style with spring tap
+   ═══════════════════════════════════════════════════════════════════ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 10px 20px;
+  border-radius: var(--radius-xl);
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  border: 0;
+  position: relative;
+  transition: transform 0.2s var(--ease-spring),
+              background 0.25s var(--ease-out),
+              box-shadow 0.25s var(--ease-out),
+              color 0.25s var(--ease-out);
+  will-change: transform;
+}
+.btn:active { transform: scale(0.96); }
+
+/* Primary — gradient accent */
+.btn-primary {
+  background: linear-gradient(135deg, rgb(var(--c-accent)) 0%, rgb(var(--c-accent-2)) 100%);
+  color: white;
+  box-shadow: 0 4px 14px rgb(var(--c-accent) / 0.35);
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgb(var(--c-accent) / 0.45);
+}
+
+/* Secondary — subtle surface */
+.btn-secondary {
+  background: var(--color-secondary);
+  color: var(--color-text-primary);
+}
+.btn-secondary:hover {
+  background: var(--color-hover);
   transform: translateY(-1px);
 }
 
-/* Magnetic hover — gentle scale on interactive surfaces */
-.magnetic {
-  transition: transform 0.45s var(--ease-spring);
+/* Ghost — text-only with hover bg */
+.btn-ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 8px 12px;
 }
-.magnetic:hover {
-  transform: scale(1.015);
-}
-.magnetic:active {
-  transform: scale(0.985);
-  transition-duration: 0.15s;
+.btn-ghost:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
 }
 
-/* Reveal stagger — wrapper applies to children sequentially */
+/* ═══════════════════════════════════════════════════════════════════
+   INTERACTIVE UTILITIES
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Magnetic hover — gentle scale */
+.magnetic {
+  transition: transform 0.45s var(--ease-spring);
+  will-change: transform;
+}
+.magnetic:hover { transform: scale(1.02); }
+.magnetic:active { transform: scale(0.97); transition-duration: 0.15s; }
+
+/* Pill — round chip for tags/badges */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--color-secondary);
+  color: var(--color-text-secondary);
+}
+.pill-accent {
+  background: rgb(var(--c-accent) / 0.15);
+  color: rgb(var(--c-accent));
+}
+.pill-good {
+  background: rgb(var(--c-green) / 0.15);
+  color: rgb(var(--c-green));
+}
+.pill-bad {
+  background: rgb(var(--c-red) / 0.15);
+  color: rgb(var(--c-red));
+}
+.pill-warn {
+  background: rgb(var(--c-warn) / 0.15);
+  color: rgb(var(--c-warn));
+}
+
+/* Divider — barely visible */
+.divider {
+  height: 1px;
+  background: var(--color-border);
+  border: 0;
+  margin: var(--space-5) 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ANIMATIONS — entry, reveal, number flip
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Hero entry — page mount */
+@keyframes heroIn {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.hero-in { animation: heroIn 0.6s var(--ease-out); }
+
+/* Stagger reveal */
+@keyframes revealUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .reveal-stagger > * {
   opacity: 0;
-  transform: translateY(8px);
-  animation: revealUp 0.5s var(--ease-out) forwards;
+  animation: revealUp 0.55s var(--ease-out) forwards;
 }
 .reveal-stagger > *:nth-child(1) { animation-delay: 0.04s; }
 .reveal-stagger > *:nth-child(2) { animation-delay: 0.08s; }
@@ -388,336 +532,164 @@ body::before {
 .reveal-stagger > *:nth-child(4) { animation-delay: 0.16s; }
 .reveal-stagger > *:nth-child(5) { animation-delay: 0.20s; }
 .reveal-stagger > *:nth-child(6) { animation-delay: 0.24s; }
-.reveal-stagger > *:nth-child(n+7) { animation-delay: 0.28s; }
+.reveal-stagger > *:nth-child(7) { animation-delay: 0.28s; }
+.reveal-stagger > *:nth-child(8) { animation-delay: 0.32s; }
+.reveal-stagger > *:nth-child(n+9) { animation-delay: 0.36s; }
 
-@keyframes revealUp {
-  to { opacity: 1; transform: translateY(0); }
+/* Shimmer — loading skeleton */
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-secondary) 0%,
+    var(--color-hover) 50%,
+    var(--color-secondary) 100%
+  );
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite linear;
+  border-radius: var(--radius-xl);
 }
 
-/* Animated number — for live price updates */
-@keyframes numTick {
-  0% { transform: translateY(-100%); opacity: 0; }
-  100% { transform: translateY(0); opacity: 1; }
+/* Pulse — live indicator */
+@keyframes pulseAccent {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--c-accent) / 0.5); }
+  50% { box-shadow: 0 0 0 8px rgb(var(--c-accent) / 0); }
 }
-.num-tick { animation: numTick 0.4s var(--ease-spring); }
+.pulse-live {
+  animation: pulseAccent 1.8s var(--ease-snap) infinite;
+}
 
-/* ═══════════════════════════════════════════════════════════════
-   TYPOGRAPHY & UTILITIES
-   ═══════════════════════════════════════════════════════════════ */
+/* Number flip — for changing prices */
+@keyframes numFlip {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.num-flip { animation: numFlip 0.4s var(--ease-spring); }
+
+/* Glow text — accent emphasis */
+.glow-text {
+  background: linear-gradient(135deg, rgb(var(--c-accent)) 0%, rgb(var(--c-accent-2)) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   FOCUS — accessibility
+   ═══════════════════════════════════════════════════════════════════ */
+
+@layer base {
+  *:focus-visible {
+    outline: 2px solid rgb(var(--c-accent));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SIGNAL COLORS — only places we use semantic
+   ═══════════════════════════════════════════════════════════════════ */
+
+.signal-buy, .signal-strong-buy { color: rgb(var(--c-green)); }
+.signal-sell, .signal-strong-sell { color: rgb(var(--c-red)); }
+.signal-hold { color: rgb(var(--c-text-2)); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   GLOBAL THEME TRANSITION — smooth cross-fade light/dark
+   Restricted to color/background only so transforms stay snappy.
+   ═══════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: 0.4s;
+  transition-timing-function: var(--ease-out);
+}
+[data-no-theme-transition] * {
+  transition-property: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   REDUCED MOTION
+   ═══════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  body::before { animation: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   LEGACY COMPAT — old utility classes kept so the 47 components don't
+   need individual rewrites. Just point them at the new tokens.
+   ═══════════════════════════════════════════════════════════════════ */
 
 .section-title {
-  @apply text-[10px] font-medium uppercase tracking-[0.15em];
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   color: var(--color-text-dim);
-  letter-spacing: 0.15em;
-}
-
-/* Buttons — Apple-style with spring tap */
-.btn {
-  @apply px-4 py-2 rounded-lg font-medium text-sm;
-  transition: transform 0.2s var(--ease-spring),
-              background 0.2s var(--ease-out),
-              filter 0.2s ease,
-              box-shadow 0.2s ease;
-  will-change: transform;
-}
-.btn:active { transform: scale(0.96); }
-
-.btn-primary {
-  background: var(--color-accent);
-  color: white;
-  box-shadow: 0 2px 12px rgb(var(--c-accent) / 0.25);
-}
-.btn-primary:hover {
-  filter: brightness(1.08);
-  box-shadow: 0 4px 16px rgb(var(--c-accent) / 0.35);
-  transform: translateY(-1px);
-}
-.btn-secondary {
-  background: var(--color-secondary);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--glass-border);
-}
-.btn-secondary:hover {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
-  transform: translateY(-1px);
-}
-:root.light .btn-secondary:hover {
-  filter: none;
 }
 
 .price-display {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 1.75rem;
+  font-family: var(--font-mono);
+  font-size: 2rem;
   font-weight: 600;
+  letter-spacing: -0.02em;
   color: var(--color-text-primary);
 }
 
-.glow-text { color: var(--color-accent-green); }
-.glow-text-red { color: var(--color-accent-red); }
-.glow-text-blue { color: var(--color-accent-blue); }
-
-.divider {
-  height: 1px;
-  background: var(--color-border);
-}
+.glow-text-red { color: rgb(var(--c-red)); }
+.glow-text-blue { color: rgb(var(--c-accent)); }
 
 .chart-container {
   background: var(--color-bg);
-  border-radius: 8px;
+  border-radius: var(--radius-2xl);
   overflow: hidden;
-}
-:root.light .chart-container {
-  background: var(--color-surface);
 }
 
 .stats-grid {
   display: grid;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 @media (min-width: 768px) {
   .stats-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 }
 
-/* Status badge */
 .status-connected {
-  @apply flex items-center gap-2;
-  color: var(--color-accent-green);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: rgb(var(--c-green));
 }
 .status-connected::before {
   content: '';
-  width: 6px; height: 6px;
-  background: var(--color-accent-green);
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  box-shadow: 0 0 6px rgb(var(--c-green) / 0.4);
-}
-.status-disconnected {
-  @apply flex items-center gap-2;
-  color: var(--color-accent-red);
-}
-.status-disconnected::before {
-  content: '';
-  width: 6px; height: 6px;
-  background: var(--color-accent-red);
-  border-radius: 50%;
-  box-shadow: 0 0 6px rgb(var(--c-red) / 0.4);
+  background: rgb(var(--c-green));
+  animation: pulseAccent 2s infinite;
 }
 
-.dashboard-grid { display: grid; gap: 1rem; grid-template-columns: 1fr; }
-@media (min-width: 1024px) { .dashboard-grid { grid-template-columns: 2fr 1fr; } }
-@media (min-width: 1536px) { .dashboard-grid { grid-template-columns: 3fr 1fr; } }
-
-.text-gradient {
-  background: linear-gradient(135deg, var(--color-accent-green) 0%, var(--color-accent-blue) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+/* Old hover-lift class — keep working */
+.hover-lift {
+  transition: transform 0.3s var(--ease-spring), box-shadow 0.3s var(--ease-out);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-raised);
 }
 
-code {
-  @apply px-1.5 py-0.5 rounded text-xs;
-  background: var(--color-secondary);
-  color: var(--color-accent-cyan);
-  font-family: 'JetBrains Mono', monospace;
+.animate-slide-in-left {
+  animation: slideInLeft 0.4s var(--ease-out);
 }
-
-a {
-  color: var(--color-accent-blue);
-  text-decoration: none;
-  transition: color 0.15s ease;
-}
-a:hover { text-decoration: underline; filter: brightness(1.2); }
-
-.scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
-.scrollbar-none::-webkit-scrollbar { display: none; }
-
-/* ═══════════════════════════════════════════════════════════════
-   PANEL ITEMS
-   ═══════════════════════════════════════════════════════════════ */
-
-.stat-item {
-  @apply rounded-xl p-3.5;
-  background: rgba(255,255,255,0.02);
-  border: 1px solid rgba(255,255,255,0.04);
-  transition: all 0.2s ease;
-}
-:root.light .stat-item {
-  background: rgba(0,0,0,0.015);
-  border-color: rgba(0,0,0,0.05);
-}
-.stat-item:hover {
-  background: rgba(255,255,255,0.04);
-  border-color: rgba(168,85,247,0.08);
-}
-:root.light .stat-item:hover {
-  background: rgba(0,0,0,0.03);
-  border-color: rgba(147,51,234,0.1);
-}
-
-.model-card {
-  @apply rounded-lg p-3;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  transition: all 0.15s ease;
-}
-:root.light .model-card {
-  background: var(--color-surface-raised);
-}
-.model-card:hover {
-  border-color: var(--color-border-hover);
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   THEME TRANSITION — smooth color changes on toggle
-   ═══════════════════════════════════════════════════════════════ */
-
-*, *::before, *::after {
-  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
-  transition-duration: 0s;
-  transition-timing-function: ease;
-}
-
-html.transitioning *,
-html.transitioning *::before,
-html.transitioning *::after {
-  transition-duration: 0.25s !important;
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   TOAST ANIMATION
-   ═══════════════════════════════════════════════════════════════ */
-
-@keyframes slide-in {
-  from { transform: translateX(100%); opacity: 0; }
-  to   { transform: translateX(0); opacity: 1; }
-}
-.animate-slide-in {
-  animation: slide-in 0.25s ease-out;
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   LOADING BAR
-   ═══════════════════════════════════════════════════════════════ */
-
-@keyframes loading-bar {
-  0%   { width: 0%; left: 0; }
-  50%  { width: 60%; left: 20%; }
-  100% { width: 0%; left: 100%; }
-}
-.loading-bar-animate {
-  animation: loading-bar 1.5s ease-in-out infinite;
-  position: relative;
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   ACCESSIBILITY
-   ═══════════════════════════════════════════════════════════════ */
-
-/* Focus ring — visible only on keyboard navigation (not mouse clicks) */
-:focus-visible {
-  outline: 2px solid var(--color-accent-blue);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-/* Screen reader only */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   PAGE TRANSITIONS
-   ═══════════════════════════════════════════════════════════════ */
-
-@keyframes page-fade-in {
-  from { opacity: 0; transform: translateY(8px) scale(0.995); filter: blur(2px); }
-  to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
-}
-.page-transition {
-  animation: page-fade-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   SKELETON SHIMMER
-   ═══════════════════════════════════════════════════════════════ */
-
-.skeleton-shimmer {
-  position: relative;
-  overflow: hidden;
-  background: var(--color-secondary);
-}
-.skeleton-shimmer::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255,255,255,0.04) 40%,
-    rgba(255,255,255,0.08) 50%,
-    rgba(255,255,255,0.04) 60%,
-    transparent 100%
-  );
-  animation: shimmer 1.8s infinite;
-}
-:root.light .skeleton-shimmer::after {
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(0,0,0,0.03) 40%,
-    rgba(0,0,0,0.06) 50%,
-    rgba(0,0,0,0.03) 60%,
-    transparent 100%
-  );
-}
-@keyframes shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-
-/* ═══════════════════════════════════════════════════════════════
-   MOBILE RESPONSIVE
-   ═══════════════════════════════════════════════════════════════ */
-
-/* Cards: tighter padding on mobile */
-@media (max-width: 767px) {
-  .card {
-    @apply p-3;
-  }
-  .section-title {
-    @apply text-xs;
-  }
-  .stat-item {
-    @apply p-2;
-  }
-}
-
-/* Fullscreen chart background */
-div:fullscreen {
-  background: var(--color-bg);
-}
-
-/* react-grid-layout: style overrides */
-.react-grid-item.react-grid-placeholder {
-  background: var(--color-accent-blue) !important;
-  opacity: 0.12 !important;
-  border-radius: 0.75rem;
-}
-.react-grid-item > .react-resizable-handle::after {
-  border-color: var(--color-text-muted) !important;
-}
-
-/* Safe area for bottom nav on iOS */
-@supports (padding-bottom: env(safe-area-inset-bottom)) {
-  .pb-safe {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
 }
