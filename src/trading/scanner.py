@@ -759,24 +759,46 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                            trend=current_trend, pattern=pattern, atr=current_atr)
             return None
 
-        # 2026-04-21: B grade (35-54) blocked on scalp TFs after 17-losses-in-19
-        # streak from 04-17 to 04-21 (WR 25%). Losing trades #179-#183 had
-        # scores 26-39 — B grade with low confluence. H1/4h keeps B because
-        # HTF SMC setups are rarer and B on HTF = genuine confluence gap, not
-        # noise. Scalp requires A/A+ only until WR recovers >40%.
+        # 2026-04-21: B grade (25-44) on scalp TFs after 17-losses-in-19 streak
+        # 04-17→21 (WR 25%). Losing trades #179-#183 had scores 26-39 — B grade
+        # with LOW confluence (3-4 noise factors). H1/4h keeps B unconditionally
+        # (HTF setups are rarer, B on HTF = genuine confluence gap).
+        #
+        # 2026-04-24: Softened — blanket scalp B-block was over-blocking real
+        # confluence. Found B(42.8) with 6 SMC factors (bos+fvg+ob+ichimoku+
+        # macro+macro_aligned) being rejected — score reduced by penalties
+        # (ob_distance_penalty), not by missing structure. Now: block scalp B
+        # only when fewer than 5 non-penalty factors fired. 5+ factors = real
+        # confluence even if penalties drag the score, so allow at 0.5x risk.
         if grade == "B" and str(tf) in ("5m", "15m", "30m"):
             factors = setup_quality.get('factors_detail', {})
-            factors_str = ', '.join(f"{k}={v}" for k, v in factors.items()) if factors else '(no factors matched)'
-            logger.info(
-                f"🔍 [MTF] {tf}: Setup grade=B ({setup_quality['score']}/100) — "
-                f"scalp requires A/A+, pomijam | factors: {factors_str}"
+            non_penalty_factor_count = sum(
+                1 for k in factors.keys() if not k.endswith('_penalty')
             )
-            _log_rejection(db, tf, direction, current_price,
-                           f"setup_grade=B_scalp_blocked({setup_quality['score']}/100)",
-                           "setup_quality_scalp",
-                           confluence_count=confluence_count, rsi=current_rsi,
-                           trend=current_trend, pattern=pattern, atr=current_atr)
-            return None
+            # Allow B only when BOTH conditions met: real confluence (5+ factors)
+            # AND score not in the streak's noise zone (>=35). Streak losses
+            # #179-186 had scores 26-39 — keep the lower band blocked even if
+            # they have factor counts, because those were precisely the
+            # patterns that bled. The 35 threshold lets through B(37.9) /
+            # B(42.8) penalty-reduced setups that DO have real structure.
+            b_allow = non_penalty_factor_count >= 5 and setup_quality['score'] >= 35
+            if not b_allow:
+                factors_str = ', '.join(f"{k}={v}" for k, v in factors.items()) if factors else '(no factors matched)'
+                logger.info(
+                    f"🔍 [MTF] {tf}: Setup grade=B ({setup_quality['score']}/100) "
+                    f"factors={non_penalty_factor_count} — block (need 5+ factors AND score>=35) | factors: {factors_str}"
+                )
+                _log_rejection(db, tf, direction, current_price,
+                               f"setup_grade=B_low({setup_quality['score']}/100,n={non_penalty_factor_count})",
+                               "setup_quality_scalp",
+                               confluence_count=confluence_count, rsi=current_rsi,
+                               trend=current_trend, pattern=pattern, atr=current_atr)
+                return None
+            # Else: B with 5+ factors AND score>=35 — real confluence at 0.5x risk
+            logger.info(
+                f"📊 [MTF] {tf}: Setup grade=B ({setup_quality['score']}/100) "
+                f"with {non_penalty_factor_count} SMC factors — allowing (real confluence, 0.5x size)"
+            )
 
         logger.info(
             f"📊 [MTF] {tf}: Setup {grade} ({setup_quality['score']}/100) | "
