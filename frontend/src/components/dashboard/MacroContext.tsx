@@ -22,6 +22,28 @@ interface MacroData {
   uup: number | null;
   tlt: number | null;
   vixy: number | null;
+  market_regime: 'squeeze' | 'trending_high_vol' | 'trending_low_vol' | 'ranging' | null;
+  regime_diag?: {
+    regime: string;
+    bbw_compression_ratio?: number;
+    adx?: number | null;
+    atr_expansion?: number | null;
+  } | null;
+}
+
+function marketRegimeTag(r: string | null) {
+  switch (r) {
+    case 'trending_high_vol':
+      return { text: 'TREND ↑VOL', tone: 'good' as const };
+    case 'trending_low_vol':
+      return { text: 'TREND ↓VOL', tone: 'good' as const };
+    case 'squeeze':
+      return { text: 'SQUEEZE', tone: 'warn' as const };
+    case 'ranging':
+      return { text: 'RANGING', tone: 'neutral' as const };
+    default:
+      return { text: '—', tone: 'neutral' as const };
+  }
 }
 
 function regimeLabel(regime: string | null) {
@@ -148,9 +170,9 @@ function MacroContextInner() {
 
       <span className="text-dark-secondary">|</span>
 
-      {/* Regime */}
+      {/* Macro regime (from UUP/TLT/VIXY/USDJPY aggregate) */}
       <div className="flex items-center gap-1">
-        <span className="text-th-muted">regime</span>
+        <span className="text-th-muted">macro</span>
         <span
           className={`font-mono font-semibold text-[11px] px-1.5 py-0.5 rounded ${
             regime.tone === 'good'
@@ -162,6 +184,34 @@ function MacroContextInner() {
         >
           {regime.text}
         </span>
+      </div>
+
+      <span className="text-dark-secondary">|</span>
+
+      {/* Market regime (rule-based: BBW+ADX+ATR) */}
+      <div className="flex items-center gap-1">
+        <span className="text-th-muted">market</span>
+        {(() => {
+          const mr = marketRegimeTag(data.market_regime);
+          return (
+            <span
+              className={`font-mono font-semibold text-[11px] px-1.5 py-0.5 rounded ${
+                mr.tone === 'good'
+                  ? 'bg-accent-blue/15 text-accent-blue'
+                  : mr.tone === 'warn'
+                    ? 'bg-accent-orange/15 text-accent-orange'
+                    : 'bg-dark-secondary text-th-primary'
+              }`}
+              title={
+                data.regime_diag
+                  ? `BBW compression: ${data.regime_diag.bbw_compression_ratio ?? '—'}  ADX: ${data.regime_diag.adx ?? '—'}  ATR ratio: ${data.regime_diag.atr_expansion ?? '—'}`
+                  : undefined
+              }
+            >
+              {mr.text}
+            </span>
+          );
+        })()}
       </div>
     </div>
   );

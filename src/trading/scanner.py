@@ -180,32 +180,50 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     from src.trading.finance import calculate_position
     from src.learning.self_learning import get_pattern_adjustment
 
-    # ─── EVENT GUARD: tiered (2026-04-16) ───
-    # Gold moves 2-3% in 30 sec on NFP/CPI/FOMC. Old behavior: flat 15-min
-    # block. New tiered:
-    #   0-5 min before: full block (imminent, SL almost guaranteed hit)
-    #   5-15 min before: halve risk on low-TF scalp, full block on H1+
-    #     (small stops on 5m can ride a ~30min news reaction; H1+ cares
-    #      about post-news trend which is inherently uncertain)
-    # Event guard is a data-availability check — if feed fails, don't block.
+    # ─── EVENT GUARD: tier-aware (2026-04-24, upgraded from binary high-impact) ───
+    # Research-backed tier mapping (docs/research/2026-04-24_xau_news_research.md):
+    #   Tier 1 (NFP/CPI/FOMC/PCE): flat ±15 min; trade only second rotation
+    #     after 15-min candle confirm. These move gold 200-1000 pips.
+    #   Tier 2 (PPI/ADP/Retail/Jobless/GDP): halve risk ±10 min.
+    #   Tier 3 (Fed speakers, ECB/BoJ/SNB): normal + warning log.
+    # Legacy behavior (±5min hard / ±15min halve) preserved as fallback path
+    # when tier classifier doesn't recognize the event.
     event_halve_risk = False
     try:
-        from src.data.news import get_imminent_high_impact_events
-        imminent_hard = get_imminent_high_impact_events(minutes_window=5)
-        imminent_soft = get_imminent_high_impact_events(minutes_window=15)
-        if imminent_hard:
-            titles = ", ".join(e.get("event", "?") for e in imminent_hard[:2])
-            logger.info(f"⏸️ [EVENT GUARD] {tf}: hard block — event w <5min: {titles}")
+        from src.data.news import get_imminent_events_by_tier, get_imminent_high_impact_events
+        tiered = get_imminent_events_by_tier(minutes_window=15)
+        tier1_soon = tiered.get("tier1", [])
+        tier2_soon = tiered.get("tier2", [])
+        tier3_soon = tiered.get("tier3", [])
+
+        # Tier 1: hard block ±15 min (everything)
+        if tier1_soon:
+            titles = ", ".join(e.get("event", "?") for e in tier1_soon[:2])
+            logger.info(f"⏸️ [EVENT GUARD] {tf}: TIER 1 block ±15min — {titles}")
             return None
-        if imminent_soft:
+
+        # Tier 2: halve risk on scalp TFs, block on H1+
+        if tier2_soon:
             is_low_tf = str(tf) in ("5m", "15m", "30m")
-            titles = ", ".join(e.get("event", "?") for e in imminent_soft[:2])
+            titles = ", ".join(e.get("event", "?") for e in tier2_soon[:2])
             if is_low_tf:
-                logger.warning(f"🟡 [EVENT GUARD] {tf}: soft block — event w <15min, halve risk: {titles}")
+                logger.warning(f"🟡 [EVENT GUARD] {tf}: TIER 2 — halve risk, {titles}")
                 event_halve_risk = True
             else:
-                logger.info(f"⏸️ [EVENT GUARD] {tf}: block (H1+) — event w <15min: {titles}")
+                logger.info(f"⏸️ [EVENT GUARD] {tf}: TIER 2 block (H1+) — {titles}")
                 return None
+
+        # Tier 3: log only, trade normally
+        if tier3_soon:
+            titles = ", ".join(e.get("event", "?") for e in tier3_soon[:2])
+            logger.info(f"📢 [EVENT GUARD] {tf}: TIER 3 speaker — trading normal, watch: {titles}")
+
+        # Legacy fallback: catch high-impact events our tier keywords miss
+        imminent_hard = get_imminent_high_impact_events(minutes_window=5)
+        if imminent_hard and not tier1_soon and not tier2_soon:
+            titles = ", ".join(e.get("event", "?") for e in imminent_hard[:2])
+            logger.info(f"⏸️ [EVENT GUARD] {tf}: high-impact ±5min (untiered): {titles}")
+            return None
     except Exception as _e:
         logger.debug(f"Event guard check failed: {_e}")  # soft-fail, don't block trading
 
@@ -249,6 +267,31 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         logger.info(f"🔍 [MTF] {tf}: ATR={current_atr:.2f} za niski (min 2.0) — zbyt mała zmienność")
         _log_rejection(db, tf, "LONG" if current_trend == "bull" else "SHORT",
                        current_price, f"ATR={current_atr:.2f}<2.0", "atr_filter",
+                       rsi=current_rsi, trend=current_trend, atr=current_atr)
+        return None
+
+    # --- 0b2. SPREAD-AWARE FILTER (2026-04-24) ---
+    # Block entries when ATR has expanded dramatically vs its 20-bar baseline.
+    # Research: on XAU, spreads widen from 2-4 USD (normal) to 20-40 USD during
+    # vol spikes (unscheduled news, flash moves). Stops get hunted by spread
+    # widening alone, not real price action. Event guard catches scheduled
+    # tier-1 events; this catches the rest (breaking news, central-bank
+    # surprises, geopolitical). Threshold 2.0 = 2× baseline vol; 1.5 would
+    # over-block since gold runs hot in normal trending sessions.
+    atr_expansion = analysis.get('atr_expansion')
+    if atr_expansion is None:
+        # Derive if not already in analysis — use atr_mean if present
+        atr_mean = analysis.get('atr_mean') or current_atr
+        atr_expansion = current_atr / atr_mean if atr_mean > 0 else 1.0
+    SPREAD_EXPANSION_CAP = 2.0
+    if atr_expansion > SPREAD_EXPANSION_CAP:
+        logger.info(
+            f"🔍 [MTF] {tf}: ATR expansion {atr_expansion:.2f}× > {SPREAD_EXPANSION_CAP}× baseline "
+            f"— vol spike (spread likely wide), pomijam"
+        )
+        _log_rejection(db, tf, "LONG" if current_trend == "bull" else "SHORT",
+                       current_price, f"atr_exp={atr_expansion:.2f}>{SPREAD_EXPANSION_CAP}",
+                       "spread_vol_spike",
                        rsi=current_rsi, trend=current_trend, atr=current_atr)
         return None
 

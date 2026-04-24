@@ -223,6 +223,90 @@ def get_economic_calendar() -> List[Dict]:
     return events[:_MAX_EVENTS]
 
 
+# Event tier mapping (2026-04-24 — from research synthesis).
+# Tier 1: flat ±15 min, trade second rotation only.
+# Tier 2: risk halve ±10 min.
+# Tier 3: trade normally; log warning.
+# Keywords match the `event` field (case-insensitive substring).
+EVENT_TIERS = {
+    "tier1": [
+        "non-farm payrolls", "nfp",  # US Employment Situation
+        "cpi", "core cpi",           # Consumer Price Index
+        "fomc", "federal funds",      # Fed rate decision / statement
+        "fomc statement", "fomc minutes",
+        "pce", "core pce",            # Personal Consumption Expenditures (Fed's preferred)
+    ],
+    "tier2": [
+        "ppi", "producer prices",
+        "adp", "nonfarm employment change",
+        "retail sales",
+        "jobless claims", "initial jobless",
+        "gdp",                        # Advance/revision
+        "unemployment rate",
+    ],
+    "tier3": [
+        "powell", "fed chair",
+        "ecb", "draghi", "lagarde",
+        "boj", "bank of japan",
+        "snb", "swiss",
+        "fed speaker",                # generic catch for Williams, Waller, etc.
+    ],
+}
+
+
+def classify_event_tier(event_text: str) -> str | None:
+    """Classify an economic event into tier1/tier2/tier3 or None.
+
+    Used by the scanner event guard to apply differential handling:
+      tier1 → hard block ±15 min, trade only post-15m-candle-close confirm
+      tier2 → halve risk ±10 min
+      tier3 → normal with warning log
+    """
+    if not event_text:
+        return None
+    s = event_text.lower()
+    for tier, keywords in EVENT_TIERS.items():
+        if any(k in s for k in keywords):
+            return tier
+    return None
+
+
+def get_imminent_events_by_tier(minutes_window: int = 15) -> dict:
+    """Group imminent events by tier1/tier2/tier3.
+
+    Returns {'tier1': [ev,...], 'tier2': [...], 'tier3': [...]}.
+    Drop-in helper for scanner event_guard which wants tier-aware handling.
+    """
+    out: dict = {"tier1": [], "tier2": [], "tier3": []}
+    try:
+        from datetime import datetime, timezone, timedelta
+        events = get_economic_calendar() or []
+        now = datetime.now(timezone.utc)
+        window_end = now + timedelta(minutes=minutes_window)
+        for ev in events:
+            date_str = ev.get("date", "")
+            if not date_str:
+                continue
+            try:
+                ts = date_str.replace("Z", "+00:00")
+                ev_dt = datetime.fromisoformat(ts)
+                if ev_dt.tzinfo is None:
+                    ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+                ev_dt = ev_dt.astimezone(timezone.utc)
+            except (ValueError, TypeError):
+                continue
+            if not (now <= ev_dt <= window_end):
+                continue
+            tier = classify_event_tier(ev.get("event", ""))
+            if tier in out:
+                out[tier].append(ev)
+    except Exception as e:
+        logger.warning(f"get_imminent_events_by_tier: fail-close with error {e}")
+        # Fail closed — signal tier1 so scanner blocks
+        out["tier1"] = [{"event": "CALENDAR_ERROR", "impact": "high", "_synthetic": True}]
+    return out
+
+
 def requires_clear_calendar(minutes_window: int = 15, impacts: tuple = ("high",)):
     """Decorator: skip a trade-open function if a high-impact event is imminent.
 

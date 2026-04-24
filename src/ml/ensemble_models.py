@@ -790,26 +790,14 @@ def get_ensemble_prediction(
         }
 
     # --- 2b. DPformer (Decomposition + LSTM + Attention Fusion) ---
-    try:
-        from src.ml.decompose_model import predict_decompose
-        dp_pred = predict_decompose(df)
-        if dp_pred is not None:
-            results["predictions"]["dpformer"] = {
-                "value": dp_pred,
-                "direction": "LONG" if dp_pred > 0.5 else "SHORT",
-                "confidence": abs(dp_pred - 0.5) * 2
-            }
-        else:
-            results["predictions"]["dpformer"] = {
-                "value": 0.5, "direction": "NEUTRAL",
-                "confidence": 0.0, "status": "unavailable"
-            }
-    except Exception as e:
-        logger.debug(f"DPformer skipped: {e}")
-        results["predictions"]["dpformer"] = {
-            "value": 0.5, "direction": "NEUTRAL",
-            "confidence": 0.0, "status": "unavailable"
-        }
+    # Skipped 2026-04-24: weight=0.0 + suspected data leak (val_acc 78-80%
+    # outlier vs LSTM 62%, XGB 57%, Attention 60%). Still surfaces a
+    # neutral entry for frontend/DB schema compatibility; predict call
+    # itself costs ~100ms on CPU which is dead weight when weight=0.
+    results["predictions"]["dpformer"] = {
+        "value": 0.5, "direction": "NEUTRAL",
+        "confidence": 0.0, "status": "disabled"
+    }
 
     # --- Calibrator (Platt Scaling) ---
     try:

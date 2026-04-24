@@ -2671,40 +2671,57 @@ async def health_scanner():
 async def macro_context():
     """Compact macro context for the chart overview strip.
 
-    Returns USDJPY spot + z-score (USD strength signal), XAU-USDJPY
-    rolling correlation (regime health — should be negative), and the
-    current macro_regime flag from get_macro_regime() which aggregates
-    UUP/TLT/VIXY/USDJPY/ATR signals into zielony/czerwony/neutralny.
-
-    Frontend uses this in MacroContext widget for at-a-glance regime view.
+    Returns:
+      - USDJPY spot + z-score (USD strength signal)
+      - XAU-USDJPY rolling correlation (regime health — should be negative)
+      - macro_regime flag (zielony/czerwony/neutralny — aggregates
+        UUP/TLT/VIXY/USDJPY/ATR)
+      - market_regime (2026-04-24) — rule-based regime from BBW+ADX+ATR:
+        squeeze / trending_high_vol / trending_low_vol / ranging
     """
+    result = {
+        "usdjpy": None, "usdjpy_zscore": None, "xau_usdjpy_corr": None,
+        "macro_regime": None, "uup": None, "tlt": None, "vixy": None,
+        "market_regime": None, "regime_diag": None,
+    }
     try:
         from src.trading.smc_engine import get_smc_analysis
-        # 1h SMC analysis carries the live macro snapshot already
         analysis = get_smc_analysis("1h")
-        if not analysis:
-            return {
-                "usdjpy": None,
-                "usdjpy_zscore": None,
-                "xau_usdjpy_corr": None,
-                "macro_regime": None,
-                "uup": None, "tlt": None, "vixy": None,
-            }
-        return {
-            "usdjpy": analysis.get("usdjpy"),
-            "usdjpy_zscore": analysis.get("usdjpy_zscore"),
-            "xau_usdjpy_corr": analysis.get("xau_usdjpy_corr"),
-            "macro_regime": analysis.get("macro_regime"),
-            "uup": analysis.get("uup"),
-            "tlt": analysis.get("tlt"),
-            "vixy": analysis.get("vixy"),
-        }
+        if analysis:
+            result.update({
+                "usdjpy": analysis.get("usdjpy"),
+                "usdjpy_zscore": analysis.get("usdjpy_zscore"),
+                "xau_usdjpy_corr": analysis.get("xau_usdjpy_corr"),
+                "macro_regime": analysis.get("macro_regime"),
+                "uup": analysis.get("uup"),
+                "tlt": analysis.get("tlt"),
+                "vixy": analysis.get("vixy"),
+            })
     except Exception as e:
-        return {
-            "error": str(e),
-            "usdjpy": None, "usdjpy_zscore": None, "xau_usdjpy_corr": None,
-            "macro_regime": None, "uup": None, "tlt": None, "vixy": None,
-        }
+        result["error"] = str(e)
+
+    # Market regime classification — independent of SMC analysis, reads
+    # XAU candles directly.
+    try:
+        from src.analysis.regime import regime_diagnostics
+        from src.data.data_sources import get_provider
+        import pandas as _pd
+        provider = get_provider()
+        xau_df = provider.get_candles('XAU/USD', '1h', 100)
+        if xau_df is not None and len(xau_df) >= 50:
+            # compute_features adds atr/adx which regime_diagnostics uses
+            try:
+                from src.analysis.compute import compute_features
+                feat = compute_features(xau_df.copy(), use_cache=False)
+                diag = regime_diagnostics(feat)
+            except Exception:
+                diag = regime_diagnostics(xau_df)
+            result["market_regime"] = diag.get("regime")
+            result["regime_diag"] = diag
+    except Exception as e:
+        result["regime_error"] = str(e)
+
+    return result
 
 
 @app.get("/api/scanner/insight", tags=["System"])

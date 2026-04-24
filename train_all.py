@@ -623,24 +623,13 @@ def main():
         results['attention'] = {"error": str(e)}
 
     # ---- 3c. DPformer-lite (Decomposition + LSTM + Attention Fusion) ----
-    try:
-        print("\n" + "=" * 60)
-        print("  DPFORMER-LITE (Decompose + LSTM + Attention)")
-        print("=" * 60)
-        from src.ml.decompose_model import train_decompose_model
-        t0 = time.time()
-        dp_model, dp_acc = train_decompose_model(train_df, epochs=args.epochs,
-                                                 usdjpy_df=usdjpy_df if len(usdjpy_df) else None)
-        elapsed = time.time() - t0
-        if dp_model:
-            print(f"   Walk-forward accuracy: {dp_acc:.1%}")
-            print(f"   Time: {elapsed:.1f}s")
-        else:
-            print("   Failed (insufficient data?)")
-        results['dpformer'] = {"accuracy": dp_acc, "time": elapsed}
-    except Exception as e:
-        print(f"   DPformer skipped: {e}")
-        results['dpformer'] = {"error": str(e)}
+    # DISABLED 2026-04-24: Val accuracy 78-80% was flagged as likely data
+    # leakage during the audit (docs/research/2026-04-24_SYNTHESIS_audit_report.md).
+    # ensemble_weight_dpformer is already 0.0 so it contributes nothing live,
+    # but train_all.py still burned ~12 min retraining it. Re-enable only
+    # after investigating the leak and confirming holdout Sharpe > 0.
+    print("\n⏭️  DPformer-lite skipped (suspected data leak, weight=0.0)")
+    results['dpformer'] = {"skipped": True, "reason": "leak_investigation_pending"}
 
     # ---- 4. DQN ----
     if not args.skip_rl:
