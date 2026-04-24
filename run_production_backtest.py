@@ -504,7 +504,12 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
             bar_low = float(bar["low"])
 
             # 1. Update trailing SL based on excursion
-            if r_dist > 0:
+            # 2026-04-24: Set BACKTEST_DISABLE_TRAILING=1 to skip trailing
+            # entirely (lets winners run to TP, lets losers hit full SL).
+            # A/B test for "wins are cut short" hypothesis (current PF 0.83
+            # with WR 47% suggests avg_win ≈ avg_loss instead of 2× target).
+            _disable_trailing = os.environ.get("BACKTEST_DISABLE_TRAILING") == "1"
+            if r_dist > 0 and not _disable_trailing:
                 if is_long:
                     excursion_r = (bar_high - entry) / r_dist
                     # Partial close at 1R (half position, locked profit)
