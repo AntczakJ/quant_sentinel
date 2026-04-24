@@ -93,7 +93,15 @@ export function Header() {
 
   return (
     <>
-    <header className={`sticky top-0 z-50 transition-transform duration-300 ${scrollDir === 'down' ? '-translate-y-full' : 'translate-y-0'}`} style={{ background: 'var(--glass-bg)', backdropFilter: `blur(${('var(--glass-blur)')})`, WebkitBackdropFilter: `blur(var(--glass-blur))`, borderBottom: '1px solid var(--glass-border)' }}>
+    <header
+      className={`sticky top-0 z-50 transition-transform duration-300 ${scrollDir === 'down' ? '-translate-y-full' : 'translate-y-0'}`}
+      style={{
+        background: 'var(--glass-bg)',
+        backdropFilter: 'blur(var(--glass-blur)) saturate(180%)',
+        WebkitBackdropFilter: 'blur(var(--glass-blur)) saturate(180%)',
+        borderBottom: '1px solid var(--glass-border)',
+      }}
+    >
       <div className="px-5 lg:px-8 py-2.5 flex items-center gap-4">
         {/* Burger + Logo */}
         <button

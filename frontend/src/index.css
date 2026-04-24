@@ -120,30 +120,33 @@
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Dark Theme — inspired by Linear, Apple, Revolut ───────
-     Deep blacks, frosted glass, gradient accents              */
+  /* ── Dark Theme — Revolut × Apple aesthetic (rev. 2026-04-24) ─
+     Pure neutrals, single accent, restrained semantic colors,
+     minimal chrome. Surface uses elevation through opacity, not
+     saturation. Borders barely visible. Generous spacing tokens. */
 
   /* RGB channels for Tailwind alpha */
-  --c-bg:          8 8 12;
-  --c-surface:     14 14 20;
-  --c-raised:      22 22 30;
-  --c-secondary:   28 28 38;
-  --c-border:      36 36 48;
-  --c-border-h:    50 50 65;
-  --c-hover:       32 32 44;
+  --c-bg:          6 6 9;       /* near-black, slight blue tint */
+  --c-surface:     12 12 16;    /* card surface */
+  --c-raised:      18 18 24;    /* elevated card */
+  --c-secondary:   24 24 30;    /* muted backdrop */
+  --c-border:      28 28 36;    /* whisper border */
+  --c-border-h:    44 44 56;    /* hover border */
+  --c-hover:       20 20 28;    /* hover bg */
 
-  --c-text-1:      248 248 252;
-  --c-text-2:      160 160 176;
-  --c-text-3:      110 110 128;
-  --c-text-4:      72 72 88;
+  --c-text-1:      245 246 250; /* primary — almost white */
+  --c-text-2:      148 152 168; /* secondary — refined gray */
+  --c-text-3:      100 104 120; /* muted */
+  --c-text-4:      62 66 80;    /* dim */
 
-  --c-green:       52 211 153;
-  --c-red:         251 113 133;
-  --c-blue:        96 165 250;
-  --c-cyan:        34 211 238;
-  --c-purple:      167 139 250;
-  --c-orange:      251 191 36;
-  --c-accent:      168 85 247;
+  /* Semantic colors — restrained saturation, used sparingly */
+  --c-green:       34 197 94;   /* P/L green — muted vs old 52 211 153 */
+  --c-red:         239 68 68;   /* P/L red — muted vs old 251 113 133 */
+  --c-blue:        99 102 241;  /* info blue — Revolut indigo */
+  --c-cyan:        14 165 233;  /* sparing — chart highlights */
+  --c-purple:      139 92 246;  /* sparing — special accents */
+  --c-orange:      234 179 8;   /* warn — gold-leaning */
+  --c-accent:      99 102 241;  /* SINGLE accent — Revolut indigo, used everywhere CTA */
 
   /* Resolved colors for var() in inline styles */
   --color-bg:              rgb(var(--c-bg));
@@ -169,14 +172,14 @@
   --color-scrollbar:       rgb(var(--c-border));
   --color-scrollbar-hover: rgb(var(--c-border-h));
 
-  --shadow-card:     0 0 0 1px rgba(255,255,255,0.03), 0 2px 8px rgba(0,0,0,0.3);
-  --shadow-elevated: 0 0 0 1px rgba(255,255,255,0.05), 0 8px 40px rgba(0,0,0,0.5);
-  --shadow-glow:     0 0 40px rgba(168,85,247,0.06);
+  --shadow-card:     0 0 0 1px rgba(255,255,255,0.025), 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-elevated: 0 0 0 1px rgba(255,255,255,0.04), 0 12px 48px -8px rgba(0,0,0,0.6);
+  --shadow-glow:     0 0 48px rgba(99,102,241,0.05);
 
-  /* Glass */
-  --glass-bg:        rgba(14, 14, 20, 0.7);
-  --glass-border:    rgba(255, 255, 255, 0.06);
-  --glass-blur:      12px;
+  /* Glass — refined: less blur, less opacity for cleaner look */
+  --glass-bg:        rgba(12, 12, 16, 0.78);
+  --glass-border:    rgba(255, 255, 255, 0.04);
+  --glass-blur:      18px;
 
   /* Chart */
   --chart-bg:        rgb(var(--c-bg));
@@ -186,37 +189,38 @@
   --chart-crosshair: rgb(var(--c-text-4));
 }
 
-/* ── Light Theme — inspired by Stripe, Apple, Notion ─────────
-   Warm whites, subtle depth, clean typography                */
+/* ── Light Theme — Revolut × Apple aesthetic (rev. 2026-04-24) ───
+   Warm white surfaces, hairline borders, single indigo accent,
+   ultra-subtle elevation through shadow not lines.                */
 :root.light {
-  --c-bg:          250 250 252;
-  --c-surface:     255 255 255;
-  --c-raised:      246 246 249;
-  --c-secondary:   240 240 244;
-  --c-border:      228 228 235;
-  --c-border-h:    210 210 220;
-  --c-hover:       244 244 248;
+  --c-bg:          252 252 254;  /* warm white, slight cool tint */
+  --c-surface:     255 255 255;  /* pure white card */
+  --c-raised:      248 249 252;
+  --c-secondary:   244 245 248;
+  --c-border:      232 234 240;  /* hairline */
+  --c-border-h:    214 217 226;
+  --c-hover:       246 247 250;
 
-  --c-text-1:      10 10 20;
-  --c-text-2:      60 60 75;
-  --c-text-3:      115 115 130;
-  --c-text-4:      165 165 178;
+  --c-text-1:      14 16 26;     /* near-black */
+  --c-text-2:      82 86 102;    /* secondary */
+  --c-text-3:      130 134 150;
+  --c-text-4:      176 180 196;
 
-  --c-green:       16 185 129;
-  --c-red:         239 68 68;
-  --c-blue:        59 130 246;
+  --c-green:       22 163 74;    /* P/L green — restrained */
+  --c-red:         220 38 38;    /* P/L red — restrained */
+  --c-blue:        79 70 229;    /* indigo deeper for light bg */
   --c-cyan:        6 182 212;
-  --c-purple:      139 92 246;
-  --c-orange:      245 158 11;
-  --c-accent:      147 51 234;
+  --c-purple:      124 58 237;
+  --c-orange:      217 119 6;
+  --c-accent:      79 70 229;    /* SAME indigo, deeper for light */
 
-  --shadow-card:     0 0 0 1px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
-  --shadow-elevated: 0 0 0 1px rgba(0,0,0,0.06), 0 4px 24px rgba(0,0,0,0.08);
-  --shadow-glow:     0 0 40px rgba(147,51,234,0.04);
+  --shadow-card:     0 0 0 1px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-elevated: 0 0 0 1px rgba(0,0,0,0.06), 0 12px 32px -8px rgba(0,0,0,0.08);
+  --shadow-glow:     0 0 48px rgba(79,70,229,0.04);
 
-  --glass-bg:        rgba(255, 255, 255, 0.75);
-  --glass-border:    rgba(0, 0, 0, 0.06);
-  --glass-blur:      12px;
+  --glass-bg:        rgba(255, 255, 255, 0.82);
+  --glass-border:    rgba(0, 0, 0, 0.05);
+  --glass-blur:      18px;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -240,13 +244,29 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition: background-color 0.4s var(--ease-out), color 0.4s var(--ease-out);
+}
+
+/* Smooth theme switching for ALL surface/text/border elements that use
+   theme tokens. Doesn't affect transforms/animations — only color-class
+   props transition for the cross-fade feel when toggling light/dark. */
+*, *::before, *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: 0.35s;
+  transition-timing-function: var(--ease-out);
+}
+/* Opt-out for elements that have their own transform/scroll animations
+   — overriding this base would cause jank in heavy charts/lists. */
+[data-no-theme-transition] * {
+  transition-property: none !important;
 }
 
 :root:not(.light) body { color-scheme: dark; }
 :root.light body { color-scheme: light; }
 
-/* Subtle gradient mesh background — inspired by Stripe/Linear */
+/* Background — single restrained gradient, Apple-style. Was: 3-blob
+   colored mesh which felt busy. Now one accent tint top-left + soft
+   accent bottom-right. Saturation kept very low. */
 body::before {
   content: '';
   position: fixed;
@@ -254,14 +274,14 @@ body::before {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 80% 60% at 10% 20%, rgba(168,85,247,0.04) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 50% at 90% 80%, rgba(59,130,246,0.03) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(52,211,153,0.02) 0%, transparent 40%);
+    radial-gradient(ellipse 70% 50% at 0% 0%, rgb(var(--c-accent) / 0.05) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgb(var(--c-accent) / 0.03) 0%, transparent 50%);
+  transition: background 0.6s var(--ease-out);
 }
 :root.light body::before {
   background:
-    radial-gradient(ellipse 80% 60% at 10% 20%, rgba(147,51,234,0.03) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 50% at 90% 80%, rgba(59,130,246,0.02) 0%, transparent 50%);
+    radial-gradient(ellipse 70% 50% at 0% 0%, rgb(var(--c-accent) / 0.025) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgb(var(--c-accent) / 0.018) 0%, transparent 50%);
 }
 
 #root {
@@ -303,39 +323,83 @@ body::before {
    CARD SYSTEM
    ═══════════════════════════════════════════════════════════════ */
 
+/* Spring easing — used throughout for a "physical" feel à la Apple HIG */
+:root {
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-snap:   cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 .card {
   @apply rounded-2xl p-5;
   background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
   border: 1px solid var(--glass-border);
   box-shadow: var(--shadow-card);
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.25s ease,
-              border-color 0.25s ease;
+  transition: transform 0.35s var(--ease-spring),
+              box-shadow 0.35s var(--ease-out),
+              border-color 0.35s var(--ease-out);
 }
 .card:hover {
   box-shadow: var(--shadow-elevated), var(--shadow-glow);
-  border-color: rgba(168,85,247,0.1);
-  transform: translateY(-2px);
+  border-color: rgb(var(--c-accent) / 0.18);
+  transform: translateY(-1px);
 }
 
 .card-elevated {
   @apply rounded-2xl p-6;
   background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
   border: 1px solid var(--glass-border);
   box-shadow: var(--shadow-elevated);
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.25s ease,
-              border-color 0.25s ease;
+  transition: transform 0.35s var(--ease-spring),
+              box-shadow 0.35s var(--ease-out),
+              border-color 0.35s var(--ease-out);
 }
 .card-elevated:hover {
   box-shadow: var(--shadow-elevated), var(--shadow-glow);
-  border-color: rgba(168,85,247,0.12);
-  transform: translateY(-2px);
+  border-color: rgb(var(--c-accent) / 0.20);
+  transform: translateY(-1px);
 }
+
+/* Magnetic hover — gentle scale on interactive surfaces */
+.magnetic {
+  transition: transform 0.45s var(--ease-spring);
+}
+.magnetic:hover {
+  transform: scale(1.015);
+}
+.magnetic:active {
+  transform: scale(0.985);
+  transition-duration: 0.15s;
+}
+
+/* Reveal stagger — wrapper applies to children sequentially */
+.reveal-stagger > * {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: revealUp 0.5s var(--ease-out) forwards;
+}
+.reveal-stagger > *:nth-child(1) { animation-delay: 0.04s; }
+.reveal-stagger > *:nth-child(2) { animation-delay: 0.08s; }
+.reveal-stagger > *:nth-child(3) { animation-delay: 0.12s; }
+.reveal-stagger > *:nth-child(4) { animation-delay: 0.16s; }
+.reveal-stagger > *:nth-child(5) { animation-delay: 0.20s; }
+.reveal-stagger > *:nth-child(6) { animation-delay: 0.24s; }
+.reveal-stagger > *:nth-child(n+7) { animation-delay: 0.28s; }
+
+@keyframes revealUp {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Animated number — for live price updates */
+@keyframes numTick {
+  0% { transform: translateY(-100%); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.num-tick { animation: numTick 0.4s var(--ease-spring); }
 
 /* ═══════════════════════════════════════════════════════════════
    TYPOGRAPHY & UTILITIES
@@ -347,25 +411,39 @@ body::before {
   letter-spacing: 0.15em;
 }
 
+/* Buttons — Apple-style with spring tap */
 .btn {
-  @apply px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200;
+  @apply px-4 py-2 rounded-lg font-medium text-sm;
+  transition: transform 0.2s var(--ease-spring),
+              background 0.2s var(--ease-out),
+              filter 0.2s ease,
+              box-shadow 0.2s ease;
+  will-change: transform;
 }
+.btn:active { transform: scale(0.96); }
+
 .btn-primary {
-  background: var(--color-accent-green);
-  @apply text-white;
+  background: var(--color-accent);
+  color: white;
+  box-shadow: 0 2px 12px rgb(var(--c-accent) / 0.25);
 }
 .btn-primary:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.08);
+  box-shadow: 0 4px 16px rgb(var(--c-accent) / 0.35);
+  transform: translateY(-1px);
 }
 .btn-secondary {
   background: var(--color-secondary);
   color: var(--color-text-secondary);
+  border: 1px solid var(--glass-border);
 }
 .btn-secondary:hover {
-  filter: brightness(1.1);
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  transform: translateY(-1px);
 }
 :root.light .btn-secondary:hover {
-  filter: brightness(0.95);
+  filter: none;
 }
 
 .price-display {

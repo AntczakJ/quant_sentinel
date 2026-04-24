@@ -108,6 +108,50 @@ export const pageTransition = {
   transition: { duration: 0.22, ease: EASE_OUT },
 } as const;
 
+// ── Mind-blowing presets (rev. 2026-04-24) ─────────────────────────────
+
+/** Tap-spring — the tactile "press" that defines Apple's HIG. */
+export const TAP_SPRING = { type: 'spring', stiffness: 500, damping: 28 } as const;
+
+/** Bouncy spring — overshoot for delight micro-interactions. Use sparingly. */
+export const SPRING_BOUNCY = { type: 'spring', stiffness: 320, damping: 18 } as const;
+
+/** Hero entry — large UI elements arriving with momentum. */
+export const heroEnter = {
+  initial: { opacity: 0, y: 24, scale: 0.96 },
+  animate: { opacity: 1, y: 0, scale: 1 },
+  transition: { type: 'spring', stiffness: 260, damping: 26 },
+} as const;
+
+/** Card lift — subtle elevation on mount. */
+export const cardLift = {
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.4, ease: EASE_OUT },
+} as const;
+
+/** Magnetic hover — gentle scale up, snap-back on press. */
+export const magneticHover = {
+  whileHover: { scale: 1.015 },
+  whileTap: { scale: 0.985 },
+  transition: TAP_SPRING,
+} as const;
+
+/** Number-flip variant — for animated price/stat counter. */
+export const numFlip = {
+  initial: { opacity: 0, y: '100%' },
+  animate: { opacity: 1, y: '0%' },
+  exit: { opacity: 0, y: '-100%' },
+  transition: { duration: 0.32, ease: EASE_APPLE },
+} as const;
+
+/** Glass morphism panel — appears with subtle blur ramp. */
+export const glassPanelEnter = {
+  initial: { opacity: 0, backdropFilter: 'blur(0px)' },
+  animate: { opacity: 1, backdropFilter: 'blur(18px)' },
+  transition: { duration: 0.5, ease: EASE_OUT },
+} as const;
+
 // ── Reduced-motion helper ───────────────────────────────────────────────
 
 /**
