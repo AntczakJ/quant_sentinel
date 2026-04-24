@@ -620,11 +620,11 @@ FEATURE_COLS = [
     'usdjpy_zscore_20',    # USD strength (z-score vs 20-bar mean)
     'usdjpy_ret_5',         # short-term USD momentum
     'xau_usdjpy_corr_20',  # inter-asset correlation (breaks signal fragility)
-    # NOTE: VWAP features (vwap_distance_atr, vwap_above) are computed in
-    # compute_features() and exposed via the analysis dict for SMC scoring,
-    # but NOT in FEATURE_COLS. Adding them would break currently-deployed
-    # ML models (trained on 34 features, would mismatch on 36). Add to
-    # FEATURE_COLS at the next full ensemble retrain.
+    # VWAP family (2026-04-24, ML-enabled 2026-04-24) — volume-weighted
+    # anchor. Institutional TWAP/VWAP algos benchmark to VWAP, so setups
+    # at VWAP get reaction. 48-bar rolling window with tick-volume proxy.
+    'vwap_distance_atr',  # (close - vwap) / atr (clipped ±5)
+    'vwap_above',          # 1 if close > vwap else 0
 ]
 
 # Feature cache — keyed by content fingerprint, NOT id(df). Python recycles

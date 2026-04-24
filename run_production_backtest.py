@@ -643,15 +643,36 @@ async def _run_backtest(args) -> dict:
     # Original signature: is_market_open(dt_cet=None) — accept optional arg.
     smc_engine.is_market_open = lambda dt_cet=None: True  # type: ignore[assignment]
 
-    # DO NOT monkey-patch _check_trade_cooldown to always-True (fixed 2026-04-24).
-    # The old patch caused identical setups to fire 5× in 75 min (backtest
-    # trades #823-827 all at LONG $4790.40 → -$477 net, ~55% of total
-    # backtest loss). Rationale for the old patch was "we simulate time, not
-    # wall-clock" — but db.log_trade writes `datetime.now()` for the
-    # timestamp, so `_check_trade_cooldown` comparing wall-clock now against
-    # wall-clock last-trade-ts correctly blocks rapid-fire duplicates even
-    # in a simulated-bar loop. Leaving the real cooldown in makes the
-    # backtest representative of live behavior.
+    # SIMULATED-TIME COOLDOWN (2026-04-24 v2).
+    # Earlier analysis assumed wall-clock would be enough, but backtest
+    # OVERWRITES trade.timestamp to simulated time AFTER insert
+    # (`UPDATE trades SET timestamp=<sim_ts>` a few lines below). Production
+    # `_check_trade_cooldown` then queries `last_trade_timestamp` from DB
+    # (simulated) and subtracts `datetime.now()` (real wall-clock) — e.g.
+    # 2026-04-24 now minus 2026-04-10 sim last-trade = 14 days > any
+    # cooldown threshold → always passes. Result: 6× LONG @$4790.40
+    # clustered in 75 min with $572 total loss.
+    #
+    # Fix: replace cooldown with simulated-time-aware check that tracks
+    # the last simulated trade timestamp itself.
+    _sim_last_trade_ts = [None]  # mutable; main loop updates on insert
+    _sim_current_ts = [None]     # main loop updates per cycle
+
+    def _simulated_cooldown_check(_db, min_hours=None):
+        if _sim_last_trade_ts[0] is None or _sim_current_ts[0] is None:
+            return True  # first trade or no time set yet
+        if min_hours is None:
+            try:
+                min_hours = scanner_mod._get_adaptive_cooldown_hours(_db)
+            except Exception:
+                min_hours = 0.25  # default 15 min
+        elapsed = (_sim_current_ts[0] - _sim_last_trade_ts[0]).total_seconds() / 3600
+        return elapsed >= min_hours
+
+    scanner_mod._check_trade_cooldown = _simulated_cooldown_check
+    # Expose the cells to the main loop so it can update them.
+    scanner_mod._SIM_LAST_TRADE_TS = _sim_last_trade_ts
+    scanner_mod._SIM_CURRENT_TS = _sim_current_ts
     # Unlimited API credits in backtest — data is local, no external rate limit
     try:
         from src import api_optimizer
@@ -720,6 +741,8 @@ async def _run_backtest(args) -> dict:
     skipped_no_setup = 0
     for i, ts in enumerate(timestamps):
         provider.set_simulated_now(ts)
+        # Update simulated-current-ts for the cooldown check to read
+        scanner_mod._SIM_CURRENT_TS[0] = ts.to_pydatetime() if hasattr(ts, 'to_pydatetime') else ts
 
         # Weekend skip — gold market closed Fri 22:00 UTC -> Sun 23:00 UTC.
         # Matches production is_market_open() which we bypassed globally.
@@ -781,6 +804,10 @@ async def _run_backtest(args) -> dict:
                     "UPDATE trades SET timestamp=? WHERE id=(SELECT MAX(id) FROM trades)",
                     (sim_ts,)
                 )
+                # Update sim-last-trade-ts so cooldown check blocks the next
+                # rapid-fire duplicate (fixes 2026-04-24 cluster bug where
+                # same setup fired 6× at 15-min intervals).
+                scanner_mod._SIM_LAST_TRADE_TS[0] = ts.to_pydatetime() if hasattr(ts, 'to_pydatetime') else ts
             except Exception as e:
                 logger.debug(f"[backtest] log_trade failed: {e}")
 
