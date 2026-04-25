@@ -249,6 +249,29 @@ Trade-off: ~2x wolniej (~10 min vs 5 min na 3-day). Use dla A/B compare.
 bars) + Strategy B (3x sample weight for winning shorts). Zapisuje do
 `models/v2/xau_short_xgb_v2_per_regime.json`. Best CV MSE 14.92.
 
+### LSTM architecture revision (4. zaplanowany task) — NEGATYWNY WYNIK
+
+`scripts/train_lstm_v2_arch.py` — testowane 3 alternatywne architektury:
+shallow LSTM(32), GRU(64+32), Conv1D(64+32). Wszystkie z robust scaler,
+AdamW, cosine LR, sample weighting wysokich-magnitude bars.
+
+Wyniki (LONG val MSE):
+| arch | val_mse | val_mae |
+|---|---|---|
+| shallow LSTM | 61.27 | 1.94 |
+| GRU | 61.26 | 1.98 |
+| Conv1D | 11541 (blown) | 2.62 |
+| base LSTM (orig) | 53.84 | — |
+| **XGB** | **21.61** | — |
+
+**Wniosek: XGB jest strukturalnie lepszy dla tabular financial features.**
+Żadna LSTM/GRU/Conv1D nie pobiła base LSTM, a base LSTM było ~2.5x gorsze
+od XGB. Decyzja: **v2 ensemble pozostaje XGB-only**. LSTM nie wnosi value.
+
+To sfinalizuje "LSTM revision" task — odpowiedź NEGATYWNA jest też wynikiem.
+Można w przyszłej sesji eksperymentować z transformerami (PatchTST, Informer)
+ale to większy effort i prawdopodobnie też nie pomoże dla tabular data.
+
 ## Niedociągnięcia / TODO na potem
 
 1. **Determinizm backtestu — CZĘŚCIOWO** (empirycznie potwierdzone):
