@@ -1,0 +1,37 @@
+{
+  "args": {
+    "tf": "5min",
+    "years": 3,
+    "train_pct": 0.85,
+    "threshold": 1.5,
+    "cooldown_bars": 5
+  },
+  "result": {
+    "n_trades": 1842,
+    "wins": 952,
+    "losses": 890,
+    "wr_pct": 51.68295331161781,
+    "sum_r": 555.0458512703806,
+    "avg_r": 0.30132782370813277,
+    "profit_factor": 1.9955199455462374,
+    "max_dd_R": -14.0,
+    "per_direction": {
+      "LONG": {
+        "n": 1842,
+        "wr": 51.68295331161781,
+        "sum_r": 555.0458512703806,
+        "avg_r": 0.30132782370813277
+      },
+      "SHORT": {
+        "n": 0
+      }
+    },
+    "outcome_counts": {
+      "TIME": 846,
+      "TP": 513,
+      "SL": 483
+    }
+  },
+  "train_n": 196635,
+  "test_n": 34701
+}

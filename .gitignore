@@ -216,3 +216,4 @@ reports/
 # Master plan v2 outputs (large + reproducible)
 data/historical/
 models/v2/
+models/v2_lstm_alt/
