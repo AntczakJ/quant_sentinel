@@ -429,11 +429,14 @@ def predict_v2_xgb_direction(df: pd.DataFrame) -> Optional[float]:
         long_r = float(cache["long"].predict(x)[0])
         short_r = float(cache["short"].predict(x)[0])
 
-        # Convert R predictions to 0-1 bias
-        if long_r >= 0.3 and long_r > -short_r:
+        # Convert R predictions to 0-1 bias.
+        # CONVENTION fix 2026-04-25: r_multiple_labels(direction='short')
+        # returns POSITIVE R when SHORT wins. So SHORT signal = positive
+        # short_r (not negative).
+        if long_r >= 0.3 and long_r > short_r:
             value = 0.5 + min(long_r / 3.0, 0.4)
-        elif short_r <= -0.3 and -short_r > long_r:
-            value = 0.5 - min(-short_r / 3.0, 0.4)
+        elif short_r >= 0.3 and short_r > long_r:
+            value = 0.5 - min(short_r / 3.0, 0.4)
         else:
             value = 0.5
         return float(value)

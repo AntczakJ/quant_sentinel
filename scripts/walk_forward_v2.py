@@ -93,9 +93,12 @@ def simulate_trades(
         long_r = long_preds[i]
         short_r = short_preds[i]
 
-        if long_r >= threshold and long_r > -short_r:
+        # CONVENTION fix 2026-04-25: r_multiple_labels(direction='short')
+        # returns POSITIVE R when SHORT wins (internal sign flip).
+        # SHORT entry = positive short_r prediction (NOT <= -threshold).
+        if long_r >= threshold and long_r > short_r:
             direction = "LONG"
-        elif short_r <= -threshold and -short_r > long_r:
+        elif short_r >= threshold and short_r > long_r:
             direction = "SHORT"
         else:
             continue

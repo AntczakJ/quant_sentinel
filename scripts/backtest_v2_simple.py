@@ -52,7 +52,11 @@ def load_models():
     long_m = xgb.XGBRegressor()
     long_m.load_model(str(MODELS_V2 / "xau_long_xgb_v2.json"))
     short_m = xgb.XGBRegressor()
-    short_m.load_model(str(MODELS_V2 / "xau_short_xgb_v2.json"))
+    # Prefer per-regime SHORT if available (better for bull-regime XAU)
+    short_per_regime = MODELS_V2 / "xau_short_xgb_v2_per_regime.json"
+    short_path = short_per_regime if short_per_regime.exists() else MODELS_V2 / "xau_short_xgb_v2.json"
+    short_m.load_model(str(short_path))
+    print(f"SHORT model: {short_path.name}")
     return long_m, short_m, feature_cols
 
 
@@ -172,9 +176,15 @@ def backtest_v2(
         long_r = long_preds[i]
         short_r = short_preds[i]
         # Trade decision
-        if long_r >= threshold and long_r > -short_r:
+        # CONVENTION: r_multiple_labels(direction='short') returns POSITIVE
+        # R when SHORT wins (internal sign flip). So SHORT entry = positive
+        # short_r prediction. Earlier code used `short_r <= -threshold` —
+        # that was a bug, only triggered when model accidentally predicted
+        # negative R (= "SHORT will lose" — correct anti-signal but inverted
+        # interpretation). Fixed 2026-04-25.
+        if long_r >= threshold and long_r > short_r:
             direction = "LONG"
-        elif short_r <= -threshold and -short_r > long_r:
+        elif short_r >= threshold and short_r > long_r:
             direction = "SHORT"
         else:
             continue
