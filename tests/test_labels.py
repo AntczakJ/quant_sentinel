@@ -1,9 +1,9 @@
-"""Tests for labels (triple-barrier + R-multiple)."""
+"""Tests for labels (triple-barrier + R-multiple + binary)."""
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.learning.labels import triple_barrier_labels, r_multiple_labels
+from src.learning.labels import triple_barrier_labels, r_multiple_labels, binary_labels
 
 
 def _make_df(close, atr=2.0):
@@ -99,3 +99,26 @@ class TestRMultiple:
         df["low"] = df["close"] - 0.5
         result = r_multiple_labels(df, "short", sl_atr=1.0, max_horizon_bars=20)
         assert result["r_realized"].iloc[0] > 0
+
+
+class TestBinary:
+    def test_long_uptrend_labels_1(self):
+        close = list(range(2400, 2450))
+        df = _make_df(close, atr=2.0)
+        df["high"] = df["close"] + 2.0  # ensures threshold_atr=0.5 hit (1.0 above entry)
+        labels = binary_labels(df, "long", horizon_bars=5, threshold_atr=0.5)
+        assert labels.iloc[0] == 1
+
+    def test_long_downtrend_labels_0(self):
+        close = list(range(2400, 2350, -1))
+        df = _make_df(close, atr=2.0)
+        df["high"] = df["close"] + 0.1
+        labels = binary_labels(df, "long", horizon_bars=5, threshold_atr=0.5)
+        assert labels.iloc[0] == 0
+
+    def test_short_downtrend_labels_1(self):
+        close = list(range(2400, 2350, -1))
+        df = _make_df(close, atr=2.0)
+        df["low"] = df["close"] - 2.0
+        labels = binary_labels(df, "short", horizon_bars=5, threshold_atr=0.5)
+        assert labels.iloc[0] == 1
