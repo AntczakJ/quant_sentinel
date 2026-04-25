@@ -35,7 +35,8 @@ class TestFeatureComputation:
 
     def test_feature_count(self):
         from src.analysis.compute import FEATURE_COLS
-        assert len(FEATURE_COLS) == 31
+        # 31 baseline + 3 macro (USDJPY) + 2 VWAP = 36 as of 2026-04-24
+        assert len(FEATURE_COLS) == 36
 
     def test_compute_target(self):
         from src.analysis.compute import compute_features, compute_target

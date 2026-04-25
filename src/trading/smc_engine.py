@@ -1416,11 +1416,13 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         score += 20
         factors_detail['dbr_rbd'] = 20
 
-    # BOS — Break of Structure (max 12 pkt)
+    # BOS — Break of Structure (max 18 pkt)
+    # Upweighted from 12 → 18 on 2026-04-25 based on factor attribution:
+    # bos was best EV factor (n=11, WR 46%, +$457 cumulative).
     if (direction == "LONG" and analysis.get('bos_bullish')) or \
        (direction == "SHORT" and analysis.get('bos_bearish')):
-        score += 12
-        factors_detail['bos'] = 12
+        score += 18
+        factors_detail['bos'] = 18
 
     # CHoCH — Change of Character (max 15 pkt)
     if (direction == "LONG" and analysis.get('choch_bullish')) or \
@@ -1519,6 +1521,18 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         score += 6
         factors_detail['ichimoku'] = 6
 
+    # Toxic combo guard (2026-04-25): macro + ichimoku_bull together on LONG
+    # produced n=13, WR 15%, -$394 in factor attribution. Likely cause:
+    # macro "zielony" + ichimoku above cloud both fire on late-trend setups
+    # where price has already extended — prone to mean reversion. Subtract
+    # 15 pts to wipe the combined +18 max boost (12 macro + 6 ichimoku) and
+    # nudge the setup toward grade C.
+    if direction == "LONG" \
+       and analysis.get('macro_regime') == "zielony" \
+       and analysis.get('ichimoku_above_cloud'):
+        score -= 15
+        factors_detail['toxic_combo_macro_ichi_bull'] = -15
+
     # Makro regime alignment (max 12 pkt — scales with signal count)
     macro = analysis.get('macro_regime', 'neutralny')
     macro_bullish = analysis.get('macro_bullish_count', 0)
@@ -1535,17 +1549,37 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     # Session-aware scoring
     session_name = analysis.get('session', 'unknown')
     if analysis.get('is_killzone'):
-        # Killzone (London open / NY overlap) — highest probability setups
-        score += 8
-        factors_detail['killzone'] = 8
+        # Killzone (London open / NY overlap) — direction-aware
+        # 2026-04-25 attribution: LONG n=6 WR 0% (-$88) vs SHORT n=4 WR 25%
+        # (+$35). First B2 attempt was global -3 which destroyed SHORT
+        # killzone edge (PF dropped 0.83 → 0.70 in validation backtest).
+        # Now: penalize LONG, mildly reward SHORT (smaller +5 vs old +8).
+        if direction == "LONG":
+            score -= 3
+            factors_detail['killzone_long_penalty'] = -3
+        else:
+            score += 5
+            factors_detail['killzone_short'] = 5
     elif session_name == 'overlap':
         # London+NY overlap — good liquidity even outside killzone
         score += 4
         factors_detail['session_overlap'] = 4
     elif session_name == 'asian':
         # Asian session — low vol, higher failure rate for breakouts
-        score -= 3
-        factors_detail['session_asian_penalty'] = -3
+        # 2026-04-25: direction-aware. LONG in asian = 0/3 wins (-$282)
+        # in factor attribution. Apply hard -25 penalty so any LONG asian
+        # setup falls below b_cut. SHORT keeps mild -3 (no clear evidence
+        # SHORT is bad in asian; small sample).
+        if direction == "LONG":
+            score -= 25
+            factors_detail['asian_long_block'] = -25
+        else:
+            score -= 3
+            factors_detail['session_asian_penalty'] = -3
+
+    # B5 (off_hours LONG hard-block) attempted 2026-04-25, rolled back:
+    # n=2 base sample failed overfitting check (sample size criterion).
+    # off_hours retains generic -5 low_liquidity_penalty applied below.
 
     # --- DYNAMICZNA KOREKTA Z BAZY (historyczna skuteczność grade'a) ---
     try:
@@ -1635,13 +1669,12 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     # represents a stronger relative signal than on H1+. Without this,
     # a 5m setup with 5 positive factors could still fall short of grade B
     # (seen in prod: score 34.4 with fvg+OB+RSI+macro aligned = grade C).
+    # B6 (per-direction grade thresholds) attempted 2026-04-25 but rolled
+    # back: combined with B4/B5 it eliminated 50/55 trades in validation
+    # backtest (4 trades / 0 wins / PF 0.0). Sample-size (33 trades for
+    # threshold derivation) was too small for the aggressive cut + full
+    # bundle. Reverted to baseline thresholds.
     if _is_scalp:
-        # b_cut lowered 30 -> 25 on 2026-04-16. Live data showed scalp
-        # setups routinely scoring 25-26 (strong CHoCH/OB+RSI+ichimoku
-        # confluence) but missing grade B by 4-5 pts. Grab/MSS/BOS are
-        # rare enough on lower TFs that requiring them as gatekeepers
-        # killed all scalp flow. 25 keeps ~5-factor setups active while
-        # still rejecting 1-2 factor noise.
         a_plus_cut, a_cut, b_cut = 65, 45, 25
     else:
         a_plus_cut, a_cut, b_cut = 75, 55, 40

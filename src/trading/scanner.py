@@ -953,6 +953,13 @@ def _check_trade_cooldown(db, min_hours: float = None) -> bool:
     Uses adaptive cooldown based on session + loss streak if min_hours not specified.
     Zwraca True jeśli można handlować, False jeśli jeszcze za wcześnie.
     """
+    # 2026-04-25: Set BACKTEST_DISABLE_COOLDOWN=1 to skip cooldown in
+    # comparison backtests where cooldown skews trade count vs other
+    # variants (e.g. trailing-disabled runs hold positions longer).
+    import os
+    if os.environ.get("BACKTEST_DISABLE_COOLDOWN") == "1":
+        return True
+
     if min_hours is None:
         min_hours = _get_adaptive_cooldown_hours(db)
 
