@@ -208,6 +208,47 @@ duże R, większość czasu pred ~ 0. Selektywność może być dobra cecha, nie
 
 ---
 
+## Sesja round 2 — production integration + bug fix + per-regime + determinism
+
+### 🎯 KRYTYCZNY BUG FIX: SHORT signal interpretation
+Wszystkie wcześniejsze v2 wyniki używały złej konwencji dla SHORT entry.
+`r_multiple_labels(direction='short')` zwraca POSITIVE R gdy SHORT wygrywa,
+ale kod backtest_v2_simple/walk_forward_v2/predict_v2_xgb_direction
+używał `short_r <= -threshold` zamiast `short_r >= +threshold`.
+
+Po fix:
+- In-sample 30d threshold 1.0R: 41→**170 trades**, +50R→**+186R**,
+  SHORT 0→**115 trades z 73% WR**
+- OOS walk-forward 4mo threshold 1.0R: 1986→**3632 trades**, sum +815R→**+1318R**
+  - LONG: 51% WR, +877R
+  - **SHORT: 59% WR, +441R** (vs 21% WR / 1 trade z bugiem!)
+
+v2 system to **prawdziwie LONG+SHORT**, nie tylko LONG-only.
+
+### 🎯 v2 jako production voter (wdrożone)
+ensemble_models.py ma teraz `predict_v2_xgb_direction()` plus `v2_xgb`
+voter w default_weights z wagą 0.10. Po restart API v2 zaczyna głosować.
+Wszystkie istniejące safety nets (Kelly, streak, factor scoring) bez zmian.
+
+Per-regime SHORT model (`xau_short_xgb_v2_per_regime.json`) preferowany
+gdy istnieje. Bardziej agresywny (787 vs 170 trades / 30d) ale niższy
+WR per trade.
+
+### 🎯 DETERMINIZM W PEŁNI NAPRAWIONY
+`BACKTEST_FULLY_DETERMINISTIC=1` env var dodany. Forces:
+- XGBoost n_jobs=1 (single-threaded tree builds, no tie-break race)
+- TF intra/inter-op = 1 (no parallel reduction race)
+- OMP/MKL/OpenBLAS = 1 thread
+- Plus seeds + TF_DETERMINISTIC_OPS już istniejące
+
+**Empiryczny test**: 2× backtest 3-day → diff EMPTY (identyczne wyniki).
+Trade-off: ~2x wolniej (~10 min vs 5 min na 3-day). Use dla A/B compare.
+
+### Per-regime SHORT trainer
+`scripts/train_short_per_regime.py` — Strategy A (filter to non-bullish-trend
+bars) + Strategy B (3x sample weight for winning shorts). Zapisuje do
+`models/v2/xau_short_xgb_v2_per_regime.json`. Best CV MSE 14.92.
+
 ## Niedociągnięcia / TODO na potem
 
 1. **Determinizm backtestu — CZĘŚCIOWO** (empirycznie potwierdzone):
