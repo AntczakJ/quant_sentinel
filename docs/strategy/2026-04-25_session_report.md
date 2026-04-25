@@ -184,7 +184,27 @@ Output log: `logs/train_v2_full.log`
 
 ## Niedociągnięcia / TODO na potem
 
-1. **Test backtest determinism end-to-end** — fixed seeds + TF_DETERMINISTIC, ale właściwa walidacja (run twice → identical) odłożona (~36 min × 2). Powinno działać na podstawie zmian, ale verify w przyszłej sesji.
+1. **Determinizm backtestu — CZĘŚCIOWO** (empirycznie potwierdzone):
+   2× backtest --days 3 z identycznym kodem dał:
+   - Run 1: 6 trades, 4 losses, PnL -$68.83, DD -2.75%
+   - Run 2: 7 trades, 5 losses, PnL -$79.69, DD -2.96%
+
+   Phase 5.4 seeds (random/np/tf + TF_DETERMINISTIC_OPS) ZMNIEJSZYŁY noise
+   (różnica 1 trade, nie 50% jak wcześniej w XAU LONG signals 384 vs 214),
+   ale pełnego determinism nie osiągnęły.
+
+   Pozostałe źródła non-determinism (do zbadania w przyszłej sesji):
+   - .env ma `ONNX_FORCE_CPU=1` — więc ONNX nie powinien być źródłem
+     (ale verify że faktycznie jest aktywny w backtest context)
+   - XGBoost multi-threading: `tree_method='hist'` z multiple threads — ustaw
+     `nthread=1` dla deterministic mode
+   - TF Keras LSTM inference: dropout layers stochastic w training mode;
+     verify że `model(X, training=False)` jest używany w inference path
+   - asyncio task scheduling order — może wpływać na DB write order
+   - DataProvider cache TTL — różne timing → różne cache hits w realnym time
+
+   Plan na przyszłą sesję: 1-2h debug — dodać `BACKTEST_FULLY_DETERMINISTIC=1`
+   env var który force-singlethread XGB + force-CPU TF + disables async.
 
 2. **VIX/DXY warehouse** — TwelveData nie ma tych symboli pod naszymi nazwami. Spróbować VIXY (ETF) i DX-Y.NYB (yfinance fallback).
 
