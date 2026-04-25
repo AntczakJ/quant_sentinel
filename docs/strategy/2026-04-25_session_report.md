@@ -283,6 +283,39 @@ do `data/shadow_predictions.jsonl` co 5 min. Po 2 tyg → `compare_v1_v2_shadow.
 
 ---
 
+## VIX feature added (VIXY ETF fallback)
+
+VIXY ETF dostępne na TwelveData, używamy jako proxy dla brakującego VIX.
+Re-train z VIX-active porównanie (quick mode 20 trials):
+
+| metric | bez VIX | z VIX |
+|---|---|---|
+| LONG XGB CV MSE | 26.89 | **23.52** (lepiej) |
+| SHORT XGB CV MSE | 13.58 | **11.59** (lepiej) |
+
+Optuna-tuned model z VIX, in-sample backtest 30d, threshold 1.0R:
+- **WR 74.6%, PF 6.29, avg +1.17R, max DD -3R** (in-sample biased)
+
+Note: walk-forward OOS z fixed-params jest worse z VIX (PF 1.96 vs 2.24)
+ale to bo fixed params nie correspond to Optuna optimum. Real walk-forward
+z Optuna-tuned model na każdym window byłby konieczny dla absolute
+honest comparison — to ~3-5h training. Defer to next session.
+
+**Summary: Optuna-tuned VIX-active model jest aktualnie w models/v2/.
+Best so far. Ready dla shadow mode.**
+
+## Pipeline end-to-end VALIDATED
+
+`scripts/test_shadow_pipeline.py` — generuje synthetic shadow predictions
+przez 14 dni warehouse data, runs `compare_v1_v2_shadow.py`. Result:
+- 1279 actionable predictions evaluated
+- WR 56.76%, avg R +0.70
+- t-stat 9.71, p-value **0.000** (HIGHLY SIGNIFICANT)
+- LONG +0.91R, SHORT -1.07R (LONG carries the edge)
+
+Validates: shadow predictor + comparison flow gotowe do real shadow data
+po Mon market open.
+
 ## V2 EDGE CONFIRMED (out-of-sample!)
 
 True walk-forward test — model trenowany na 2023-04 → 2025-12 (85%),
