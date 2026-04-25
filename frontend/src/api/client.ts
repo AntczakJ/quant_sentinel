@@ -1250,12 +1250,57 @@ export interface ScannerInsightResponse {
   pause_reason: string | null;
 }
 
+export interface FactorSummaryRow {
+  factor: string;
+  n: number;
+  wins: number;
+  losses: number;
+  win_rate_pct: number;
+  pnl_total: number;
+  pnl_per_trade: number;
+}
+
+export interface RecentTradeRow {
+  id: number;
+  direction: string;
+  status: 'WIN' | 'LOSS' | string;
+  profit: number;
+  timestamp: string;
+  factors: Record<string, number | string>;
+  setup_grade: string | null;
+  setup_score: number | null;
+  pattern: string | null;
+  structure: string | null;
+}
+
+export interface FactorsAttributionResponse {
+  window_days: number;
+  total_resolved: number;
+  factors_summary: FactorSummaryRow[];
+  recent_trades: RecentTradeRow[];
+}
+
 export const scannerAPI = {
   /** Explain why scanner is (not) trading — rejection breakdown, toxic patterns, streak, kelly state, pause */
   getInsight: async (hours: number = 24): Promise<ScannerInsightResponse> => {
     const response = await client.get<ScannerInsightResponse>('/scanner/insight', {
       params: { hours },
     });
+    return response.data;
+  },
+
+  /** Per-factor attribution + recent trades with factor breakdown.
+   *  Used by FactorAttribution dashboard component to validate which
+   *  scoring boosters (asia_orb, vwap_confluence, post_news_2nd_rotation,
+   *  grab_mss, ...) actually correlate with WIN vs LOSS post-deployment. */
+  getFactorsAttribution: async (
+    windowDays: number = 30,
+    lastN: number = 20,
+  ): Promise<FactorsAttributionResponse> => {
+    const response = await client.get<FactorsAttributionResponse>(
+      '/scanner/factors-attribution',
+      { params: { window_days: windowDays, last_n: lastN } },
+    );
     return response.data;
   },
 };

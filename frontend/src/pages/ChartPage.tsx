@@ -16,6 +16,7 @@ import { ScannerInsight } from '../components/dashboard/ScannerInsight';
 import { MacroContext } from '../components/dashboard/MacroContext';
 import { WeekendBanner } from '../components/dashboard/WeekendBanner';
 import { OrbStatus } from '../components/dashboard/OrbStatus';
+import { FactorAttribution } from '../components/dashboard/FactorAttribution';
 
 function SectionHeader({
   eyebrow,
@@ -127,6 +128,15 @@ export default function ChartPage() {
           title="Why the system is (not) trading"
         />
         <ScannerInsight />
+      </motion.div>
+
+      {/* Factor attribution — which scoring boosters drive WIN vs LOSS */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1], delay: 0.5 }}
+      >
+        <FactorAttribution />
       </motion.div>
     </div>
   );

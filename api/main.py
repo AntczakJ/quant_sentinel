@@ -2752,6 +2752,97 @@ async def macro_context():
     return result
 
 
+@app.get("/api/scanner/factors-attribution", tags=["System"])
+async def scanner_factors_attribution(window_days: int = 30, last_n: int = 20):
+    """Per-factor attribution + recent-trades breakdown.
+
+    For each factor present in trades.factors JSON over the lookback window:
+    counts wins/losses where the factor fired, computes win rate, and attaches
+    the cumulative pnl. Lets the operator see which scoring boosters
+    (asia_orb, vwap_confluence, post_news_2nd_rotation, grab_mss, etc.)
+    actually correlate with WIN vs LOSS post-deployment.
+
+    Also returns the most recent N resolved trades with their factor list,
+    grade, and pnl — for the dashboard "last trades" mini-panel.
+    """
+    from src.core.database import NewsDB
+    import json as _json
+    from collections import defaultdict
+    db = NewsDB()
+
+    cutoff = f"-{int(window_days)} days"
+    rows = db._query(
+        "SELECT id, direction, status, profit, timestamp, factors, "
+        "       setup_grade, setup_score, pattern, structure "
+        "FROM trades "
+        "WHERE status IN ('WIN','LOSS') "
+        "  AND timestamp >= datetime('now', ?) "
+        "ORDER BY id DESC",
+        (cutoff,),
+    )
+
+    # Per-factor aggregate
+    agg: dict = defaultdict(lambda: {"wins": 0, "losses": 0, "pnl": 0.0, "n": 0})
+    for r in rows:
+        try:
+            factors = _json.loads(r[5]) if r[5] else {}
+        except (TypeError, ValueError):
+            factors = {}
+        if not isinstance(factors, dict):
+            continue
+        is_win = r[2] == "WIN"
+        pnl = float(r[3] or 0.0)
+        for fname, fval in factors.items():
+            # fval may be int (factor weight), bool, or other — count any presence
+            if not fval:
+                continue
+            a = agg[fname]
+            a["n"] += 1
+            a["wins"] += int(is_win)
+            a["losses"] += int(not is_win)
+            a["pnl"] += pnl
+
+    factors_summary = []
+    for fname, a in sorted(agg.items(), key=lambda x: -x[1]["n"]):
+        wr = round(a["wins"] / a["n"] * 100, 1) if a["n"] else 0
+        factors_summary.append({
+            "factor": fname,
+            "n": a["n"],
+            "wins": a["wins"],
+            "losses": a["losses"],
+            "win_rate_pct": wr,
+            "pnl_total": round(a["pnl"], 2),
+            "pnl_per_trade": round(a["pnl"] / a["n"], 2) if a["n"] else 0,
+        })
+
+    # Recent N trades — full breakdown including factors
+    recent = []
+    for r in rows[:last_n]:
+        try:
+            factors = _json.loads(r[5]) if r[5] else {}
+        except (TypeError, ValueError):
+            factors = {}
+        recent.append({
+            "id": r[0],
+            "direction": r[1],
+            "status": r[2],
+            "profit": float(r[3] or 0.0),
+            "timestamp": r[4],
+            "factors": factors if isinstance(factors, dict) else {},
+            "setup_grade": r[6],
+            "setup_score": r[7],
+            "pattern": r[8],
+            "structure": r[9],
+        })
+
+    return {
+        "window_days": window_days,
+        "total_resolved": len(rows),
+        "factors_summary": factors_summary,
+        "recent_trades": recent,
+    }
+
+
 @app.get("/api/scanner/insight", tags=["System"])
 async def scanner_insight(hours: int = 24):
     """Scanner insight panel data — explains why scanner is/isn't trading.
