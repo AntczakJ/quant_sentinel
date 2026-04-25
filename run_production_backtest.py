@@ -32,6 +32,30 @@ import os
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 # ═══════════════════════════════════════════════════════════════════════
+# STEP 1.5: DETERMINISM — fix random seeds + disable non-deterministic ops
+# ═══════════════════════════════════════════════════════════════════════
+# Without this, two runs of the same backtest can produce different trade
+# counts (observed 2026-04-25: ensemble_signals_short 196 vs 454 across
+# two consecutive runs with identical code). Source of non-determinism:
+#   - GPU-accelerated TF ops (cuDNN heuristic dispatch)
+#   - Python hash randomization (set/dict iteration order)
+#   - numpy/random global state pollution from earlier imports
+# Setting seeds + TF_DETERMINISTIC_OPS forces reproducible runs.
+os.environ.setdefault("PYTHONHASHSEED", "42")
+os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")
+os.environ.setdefault("TF_CUDNN_DETERMINISTIC", "1")
+import random as _rand_seed_mod
+import numpy as _np_seed_mod
+_rand_seed_mod.seed(42)
+_np_seed_mod.random.seed(42)
+try:
+    import tensorflow as _tf_seed_mod
+    _tf_seed_mod.random.set_seed(42)
+    _tf_seed_mod.keras.utils.set_random_seed(42)
+except Exception:
+    pass
+
+# ═══════════════════════════════════════════════════════════════════════
 # STEP 2: Now safe to import the rest
 # ═══════════════════════════════════════════════════════════════════════
 import argparse

@@ -159,6 +159,10 @@ async def lifespan(app: FastAPI):
     resolver_task = asyncio.create_task(_auto_resolve_trades())
     monitor_task = asyncio.create_task(_monitoring_loop())
     retention_task = asyncio.create_task(_daily_retention_cleanup())
+    # 2026-04-25: Shadow predictor (Phase 6.1). Logs v2 ensemble decisions
+    # alongside production v1 without affecting trading. Dormant until v2
+    # models are trained (models/v2/xau_*_xgb_v2.json).
+    shadow_task = asyncio.create_task(_shadow_scanner())
     # Health monitor (Telegram alerts on degraded state, 10-min cadence)
     try:
         from src.ops.health_monitor import health_monitor_task
@@ -474,6 +478,46 @@ async def _background_scanner():
 
         # Wait until next scan cycle
         await asyncio.sleep(_SCAN_INTERVAL_SEC)
+
+
+async def _shadow_scanner():
+    """
+    Shadow ensemble — logs v2 predictions next to live v1 trading.
+
+    Runs every 5 minutes (same cadence as production scanner). Fetches
+    its own data so it doesn't share state with the production scanner.
+    Writes to data/shadow_predictions.jsonl. Dormant until v2 models
+    exist in models/v2/.
+    """
+    import os as _os
+    SHADOW_INTERVAL_SEC = 300
+    # Wait 60s after startup so production scanner gets first run
+    await asyncio.sleep(60)
+    logger.info("📡 [Shadow Scanner] starting (every 300s)")
+    while True:
+        try:
+            # Skip if v2 models not yet trained (avoid wasted data fetches)
+            if not _os.path.exists("models/v2/xau_long_xgb_v2.json") \
+               and not _os.path.exists("models/v2/xau_short_xgb_v2.json"):
+                # Slow polling when dormant
+                await asyncio.sleep(SHADOW_INTERVAL_SEC * 4)
+                continue
+
+            from src.data.data_provider import DataProvider
+            dp = DataProvider()
+            df = dp.fetch_ohlcv("XAU/USD", interval="5m", limit=200)
+            if df is None or len(df) < 50:
+                await asyncio.sleep(SHADOW_INTERVAL_SEC)
+                continue
+
+            from src.learning.shadow_predictor import shadow_predict
+            shadow_predict(df, tf="5m", v1_signal="UNKNOWN")
+        except asyncio.CancelledError:
+            logger.info("📡 [Shadow Scanner] cancelled")
+            return
+        except Exception as e:
+            logger.debug(f"[Shadow Scanner] non-fatal error: {e}")
+        await asyncio.sleep(SHADOW_INTERVAL_SEC)
 
 
 async def _broadcast_prices_task():

@@ -212,3 +212,7 @@ reports/
 !requirements.txt
 !train_all.py
 !train_rl.py
+
+# Master plan v2 outputs (large + reproducible)
+data/historical/
+models/v2/

@@ -1,0 +1,298 @@
+"""
+walk_forward.py — Rolling-window walk-forward backtest validation.
+
+Splits historical period into N rolling windows:
+  Train: [t, t + train_days]
+  Test:  [t + train_days, t + train_days + test_days]
+  Then: t += step_days
+
+For each window:
+  1. Train models on train period (or skip if read-only walk-forward)
+  2. Run production backtest pipeline on test period
+  3. Record metrics (WR, PF, Sharpe, max DD, return)
+
+Aggregate across all windows for statistical significance.
+
+Usage (read-only — uses current models, just rolls test window):
+    from src.backtest.walk_forward import walk_forward
+    results = walk_forward(
+        start_date='2024-01-01',
+        end_date='2026-04-01',
+        train_days=90,
+        test_days=7,
+        step_days=7,
+    )
+    print_summary(results)
+"""
+from __future__ import annotations
+
+import json
+import logging
+import statistics
+from dataclasses import dataclass, asdict
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Callable, Optional
+
+import pandas as pd
+
+logger = logging.getLogger("quant_sentinel.walk_forward")
+
+
+@dataclass
+class WindowResult:
+    window_idx: int
+    train_start: str
+    train_end: str
+    test_start: str
+    test_end: str
+    n_trades: int
+    n_wins: int
+    n_losses: int
+    n_be: int
+    win_rate: float
+    profit_factor: float
+    cumulative_pnl: float
+    max_drawdown_pct: float
+    sharpe: Optional[float] = None
+    return_pct: Optional[float] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class WalkForwardResults:
+    windows: list[WindowResult]
+    config: dict
+
+    @property
+    def n_windows(self) -> int:
+        return len(self.windows)
+
+    @property
+    def successful_windows(self) -> list[WindowResult]:
+        return [w for w in self.windows if w.error is None and w.n_trades > 0]
+
+    def aggregate(self) -> dict:
+        """Aggregate metrics across all successful windows."""
+        succ = self.successful_windows
+        if not succ:
+            return {"error": "no successful windows"}
+
+        wrs = [w.win_rate for w in succ]
+        pfs = [w.profit_factor for w in succ if w.profit_factor != float("inf")]
+        pnls = [w.cumulative_pnl for w in succ]
+        dds = [w.max_drawdown_pct for w in succ]
+
+        return {
+            "n_windows": len(succ),
+            "n_trades_total": sum(w.n_trades for w in succ),
+            "win_rate_mean": statistics.mean(wrs),
+            "win_rate_stdev": statistics.stdev(wrs) if len(wrs) > 1 else 0.0,
+            "profit_factor_mean": statistics.mean(pfs) if pfs else 0.0,
+            "profit_factor_stdev": statistics.stdev(pfs) if len(pfs) > 1 else 0.0,
+            "cumulative_pnl_total": sum(pnls),
+            "cumulative_pnl_mean_per_window": statistics.mean(pnls),
+            "max_drawdown_worst": min(dds),
+            "max_drawdown_mean": statistics.mean(dds),
+            "windows_profitable_pct": sum(1 for p in pnls if p > 0) / len(pnls) * 100,
+        }
+
+    def to_dict(self) -> dict:
+        return {
+            "config": self.config,
+            "n_windows": self.n_windows,
+            "n_successful": len(self.successful_windows),
+            "aggregate": self.aggregate(),
+            "windows": [asdict(w) for w in self.windows],
+        }
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2, default=str)
+
+
+def generate_windows(
+    start_date: str,
+    end_date: str,
+    train_days: int,
+    test_days: int,
+    step_days: int,
+) -> list[tuple[datetime, datetime, datetime, datetime]]:
+    """Generate (train_start, train_end, test_start, test_end) tuples."""
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date)
+    cursor = start
+    windows = []
+    while True:
+        train_start = cursor
+        train_end = cursor + timedelta(days=train_days)
+        test_start = train_end
+        test_end = test_start + timedelta(days=test_days)
+        if test_end > end:
+            break
+        windows.append((train_start, train_end, test_start, test_end))
+        cursor = cursor + timedelta(days=step_days)
+    return windows
+
+
+def run_one_test_window(
+    test_start: datetime,
+    test_end: datetime,
+    backtest_runner: Callable,
+) -> dict:
+    """
+    Run backtest on a single test window.
+
+    backtest_runner signature: (start_date, end_date) -> dict with metrics
+    """
+    return backtest_runner(test_start, test_end)
+
+
+def walk_forward(
+    start_date: str = "2024-01-01",
+    end_date: str = "2026-04-01",
+    train_days: int = 90,
+    test_days: int = 7,
+    step_days: int = 7,
+    backtest_runner: Callable | None = None,
+    train_runner: Callable | None = None,
+) -> WalkForwardResults:
+    """
+    Run rolling walk-forward validation.
+
+    Args:
+        start_date, end_date: total period to roll over
+        train_days: training window size
+        test_days: test window size (= step_days for non-overlap)
+        step_days: how far to advance between windows
+        backtest_runner: callable(start_date, end_date) -> {metrics dict}
+            If None, uses default that calls run_production_backtest
+        train_runner: callable(start_date, end_date) -> None (re-trains models)
+            If None, skip training (read-only walk-forward using current models)
+
+    Returns:
+        WalkForwardResults with per-window + aggregate metrics
+    """
+    config = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "train_days": train_days,
+        "test_days": test_days,
+        "step_days": step_days,
+        "train_enabled": train_runner is not None,
+    }
+
+    windows_def = generate_windows(start_date, end_date, train_days, test_days, step_days)
+    logger.info(f"Walk-forward: {len(windows_def)} windows planned")
+
+    if backtest_runner is None:
+        backtest_runner = _default_backtest_runner
+
+    results: list[WindowResult] = []
+    for idx, (train_s, train_e, test_s, test_e) in enumerate(windows_def):
+        logger.info(
+            f"Window {idx + 1}/{len(windows_def)}: "
+            f"train [{train_s.date()} -> {train_e.date()}], "
+            f"test [{test_s.date()} -> {test_e.date()}]"
+        )
+        try:
+            if train_runner:
+                train_runner(train_s, train_e)
+            metrics = backtest_runner(test_s, test_e)
+            wr = WindowResult(
+                window_idx=idx,
+                train_start=str(train_s.date()),
+                train_end=str(train_e.date()),
+                test_start=str(test_s.date()),
+                test_end=str(test_e.date()),
+                n_trades=metrics.get("total_trades", 0),
+                n_wins=metrics.get("wins", 0),
+                n_losses=metrics.get("losses", 0),
+                n_be=metrics.get("breakevens", 0),
+                win_rate=metrics.get("win_rate_pct", 0.0),
+                profit_factor=metrics.get("profit_factor", 0.0),
+                cumulative_pnl=metrics.get("cumulative_profit", 0.0),
+                max_drawdown_pct=metrics.get("max_drawdown_pct", 0.0),
+                return_pct=metrics.get("return_pct"),
+            )
+        except Exception as e:
+            logger.exception(f"Window {idx + 1} failed: {e}")
+            wr = WindowResult(
+                window_idx=idx,
+                train_start=str(train_s.date()),
+                train_end=str(train_e.date()),
+                test_start=str(test_s.date()),
+                test_end=str(test_e.date()),
+                n_trades=0, n_wins=0, n_losses=0, n_be=0,
+                win_rate=0.0, profit_factor=0.0, cumulative_pnl=0.0,
+                max_drawdown_pct=0.0, error=str(e),
+            )
+        results.append(wr)
+
+    return WalkForwardResults(windows=results, config=config)
+
+
+def _default_backtest_runner(start: datetime, end: datetime) -> dict:
+    """Wrapper around run_production_backtest for walk-forward use."""
+    days = (end - start).days
+    if days < 1:
+        return {"total_trades": 0}
+    # Defer import to avoid TF init at module load
+    import subprocess, json as _json, os
+    cmd = [
+        ".venv/Scripts/python.exe",
+        "run_production_backtest.py",
+        "--reset",
+        "--days", str(days),
+    ]
+    env = os.environ.copy()
+    env["BACKTEST_START_DATE"] = start.strftime("%Y-%m-%d")
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, env=env, timeout=3600,
+    )
+    # Parse FINAL RESULTS block from stdout
+    stdout = result.stdout
+    metrics = {}
+    in_results = False
+    for line in stdout.splitlines():
+        if "FINAL RESULTS" in line:
+            in_results = True
+            continue
+        if in_results and line.strip().startswith("=="):
+            in_results = False
+            continue
+        if in_results and ":" not in line:
+            parts = line.split()
+            if len(parts) >= 2:
+                key = parts[0]
+                val_str = parts[1]
+                try:
+                    val = float(val_str)
+                    metrics[key] = val
+                except ValueError:
+                    pass
+    return metrics
+
+
+def print_summary(results: WalkForwardResults) -> None:
+    """Pretty-print walk-forward results."""
+    agg = results.aggregate()
+    print("\n" + "=" * 70)
+    print("WALK-FORWARD BACKTEST SUMMARY")
+    print("=" * 70)
+    print(f"  Windows total:         {results.n_windows}")
+    print(f"  Windows successful:    {len(results.successful_windows)}")
+    if "error" in agg:
+        print(f"  ERROR: {agg['error']}")
+        return
+    print(f"  Trades total:          {agg['n_trades_total']}")
+    print(f"  WR mean (stdev):       {agg['win_rate_mean']:.1f}% ({agg['win_rate_stdev']:.1f}%)")
+    print(f"  PF  mean (stdev):      {agg['profit_factor_mean']:.2f} ({agg['profit_factor_stdev']:.2f})")
+    print(f"  PnL cumulative:        {agg['cumulative_pnl_total']:+.2f}")
+    print(f"  PnL per window mean:   {agg['cumulative_pnl_mean_per_window']:+.2f}")
+    print(f"  Max DD worst:          {agg['max_drawdown_worst']:.2f}%")
+    print(f"  Max DD mean:           {agg['max_drawdown_mean']:.2f}%")
+    print(f"  Windows profitable:    {agg['windows_profitable_pct']:.0f}%")
+    print("=" * 70)
