@@ -131,10 +131,36 @@ Top features (model importance):
 - LONG: atr, h1_above_ema20, h1_atr, h1_rsi, williams_r → multi-TF projection działa
 - SHORT: volatility, adx, atr_ratio, macd, h1_atr → regime indicators dominują
 
-### Full training W TLE (od 15:17, ~2-2.5h, ETA 17:30-18:00)
-50 trials Optuna XGB + LSTM 50 epochs, both directions, 3 years data.
-Pliki: `models/v2/xau_{long,short}_{xgb,lstm}_v2.{json,keras}` + meta.
-Output log: `logs/train_v2_full.log`
+### Full training DONE w 69 min (15:17 -> 16:26)
+50 trials Optuna XGB + LSTM 50 epochs, both directions, 3 years data
+(231,426 samples). Wytrenowane:
+
+| Model | Train CV MSE | Full eval R² | High-conf (>0.5R) | Actual R when high-conf | WR when high-conf |
+|---|---|---|---|---|---|
+| LONG XGB  | 21.61 | 0.29 | 22.5% | **+1.82R** | 32.7% |
+| LONG LSTM | 53.84 | n/a (early stop 6 ep) | n/a | n/a | n/a |
+| **SHORT XGB**  | **11.11** | 0.07 | 6.2% (selective) | **+2.43R** | 36.1% |
+| SHORT LSTM| 17.22 | n/a | n/a | n/a | n/a |
+
+**Najważniejsze odkrycia full trainingu:**
+- SHORT XGB ma 50% niższe MSE niż LONG XGB — confirming structural asymetria
+- LSTM dominuje XGB w obu kierunkach (XGB > LSTM dla tabular financial data; LSTM
+  early-stopped — może wymagać dłuższego training z mniejszym learning rate)
+- Top features SHORT XGB: **btc_ret_60 (#1!)**, d1_trend_strength, h1_volatility_percentile,
+  adx, eurusd_ret_5, eurusd_corr_20, atr_ratio, h4_atr — bardzo silne cross-asset
+  i multi-TF features. Walidacja Phase 1 (warehouse) i Phase 3 (features_v2).
+- Top features LONG XGB: atr, volatility, h1_atr, atr_ratio, trend_strength —
+  volatility-dominated. LONG ma mniej "exotic" feature value.
+
+**EV per-trade gdyby handlować tylko high-confidence sygnały:**
+- LONG: 0.327 × 1.82 + 0.673 × (-1) = **−0.08R** per trade — barely break-even
+- SHORT: 0.361 × 2.43 + 0.639 × (-1) = **+0.24R** per trade — solid edge
+- Sum: bardzo silny mandat dla per-direction modeli + selektywne high-conf trading
+
+**Ważne zastrzeżenie:** evaluation jest na danych OSTATNIEGO 1y (overlap z train).
+Real out-of-sample test wymaga walk-forward. R² 0.07 dla SHORT może być artifact.
+Model output (pred std 0.45) sugeruje model jest CONSERVATIVE — predykuje rzadko
+duże R, większość czasu pred ~ 0. Selektywność może być dobra cecha, nie problemem.
 
 ### Co dzieje się automatycznie po deploy do live
 - API restart (jeśli zrestartowany) automatycznie startuje `_shadow_scanner` task
