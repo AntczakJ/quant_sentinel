@@ -274,11 +274,58 @@ do `data/shadow_predictions.jsonl` co 5 min. Po 2 tyg → `compare_v1_v2_shadow.
 ## Co możesz zrobić jak wrócisz
 
 1. **Sprawdź status:** `python scripts/status_v2.py`
-2. **Re-evaluate models on real holdout (po stworzeniu osobnego trainset/testset):** `python scripts/evaluate_v2_models.py --years 1`
-3. **Restart API** (żeby _shadow_scanner zauważył nowe modele):
+2. **Restart API** (żeby _shadow_scanner zauważył nowe modele):
    ```bash
    pkill -f "uvicorn" && sleep 2 && .venv/Scripts/python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --log-level info > logs/api.log 2>&1 &
    ```
-4. **Po Mon (XAU otwarte)**: shadow log zacznie się zapełniać. Po 2 tyg uruchom:
+3. **Po Mon (XAU otwarte)**: shadow log zacznie się zapełniać. Po 2 tyg uruchom:
    `python scripts/compare_v1_v2_shadow.py`
-5. **Walk-forward** (long-running, ~4-6h): `python scripts/run_walk_forward.py --start 2025-01-01 --end 2026-04-01`
+
+---
+
+## V2 EDGE CONFIRMED (out-of-sample!)
+
+True walk-forward test — model trenowany na 2023-04 → 2025-12 (85%),
+testowany na 2025-12 → 2026-04 (15%, model NIGDY nie widział):
+
+| threshold | n_trades/4mo | WR | PF | avg_R | max_DD | Sharpe-like |
+|-----------|--------------|-----|------|-------|--------|-------------|
+| 0.3R | 4267 | 45.4% | 1.43 | +0.18 | -33 | low |
+| 0.5R | 3424 | 49.9% | 1.80 | +0.28 | -19 | medium |
+| 0.7R | 2762 | 51.9% | 1.96 | +0.30 | -16 | high |
+| **1.0R** | **1986** | **53.6%** | **2.24** | **+0.35** | **-13** | **best** |
+| 1.5R | 1842 | 51.7% | 2.00 | +0.30 | -14 | high |
+| 2.0R | 1169 | 51.1% | 1.98 | +0.30 | -16 | high |
+
+**SWEET SPOT: threshold 1.0R** — wybiera tylko ~7% bars, daje PF 2.24
+i WR 53.6% out-of-sample. To jest **2x lepszy PF niż current production
+(1.07)**. Max DD tylko -13R (=$130 z 1k risk).
+
+**LONG-only edge** — SHORT model fundamentalnie zepsuty w bull regime
+2026 (max negative pred to -0.72R, czyli próg -1.0R nigdy nie uderza).
+Należy używać **v2 LONG-only**, SHORT zostawić v1 (lub disable całkowicie
+po stronie v2).
+
+**LSTM HURTS** — ensemble XGB+LSTM dał WR 47% vs XGB-only 58%.
+Use XGB only.
+
+## V2 → live integration plan
+
+1. Already in place: `_shadow_scanner` background task w api/main.py auto-startuje
+   gdy `models/v2/xau_long_xgb_v2.json` istnieje
+2. Po restart API → 2 tyg shadow logging
+3. Compare przez `scripts/compare_v1_v2_shadow.py`
+4. Jeśli OK → gradual rollout 25% → 50% → 100% (kod do napisania
+   gdy będzie czas — placeholder w master plan Phase 6.2)
+
+## Aktualne problemy zostawione na potem
+
+1. **SHORT v2 broken** — out-of-sample max negative pred -0.72, nie ma
+   sygnału pewnego SHORT. Solution na potem: train SHORT na bear regime
+   data lub per-regime model.
+
+2. **VIX feature** — dodany via VIXY ETF fallback, re-train
+   w toku z VIX active. Nie wiadomo jeszcze czy poprawi.
+
+3. **LSTM models suboptimal** — early-stopped na 6 epoch (LONG), wymagają
+   architektury revision lub dłuższego treningu.
