@@ -244,9 +244,41 @@ duże R, większość czasu pred ~ 0. Selektywność może być dobra cecha, nie
 
 ## Liczby finalne
 
-- **Files created**: 11 (3 src modules + 3 tests + 2 scripts + 1 module init + 2 docs)
-- **Files modified**: 2 (api/main.py, run_production_backtest.py)
-- **Tests added**: 20 (all green)
+- **Commits**: 12 w sesji
+- **Files created**: 16+ (5 src modules + 5 tests + 6 scripts + docs)
+- **Files modified**: 4 (api/main.py, run_production_backtest.py, smc_engine.py, scanner.py)
+- **Tests added**: 23 nowe (358/358 cały suite zielony)
 - **API calls used**: 234 (warehouse fetch)
-- **Data collected**: 729k OHLCV rows across 10 symbols/7 TFs
-- **Lines of code**: ~2,200 added
+- **Data collected**: 729k OHLCV rows across 8 symbols × wiele TFs
+- **Lines of code**: ~2,800 added
+- **Models trained**: 4 (long/short × XGB/LSTM, full 50 trials + 50 epochs)
+- **Total session time**: ~3h15m autonomous + ~30 min wcześniej
+
+## Final integration test PASSED
+
+Shadow predictor end-to-end z wszystkimi 4 modelami:
+```json
+{
+  "v2_long_r_pred": 0.62,
+  "v2_short_r_pred": -0.56,
+  "v2_signal": "LONG",
+  "v2_confidence": 0.62,
+  "models_loaded": ["xgb_long", "xgb_short", "lstm_long", "lstm_short"]
+}
+```
+
+System gotowy. Po restart API `_shadow_scanner` zacznie logować real predictions
+do `data/shadow_predictions.jsonl` co 5 min. Po 2 tyg → `compare_v1_v2_shadow.py`
+żeby zdecydować rollout.
+
+## Co możesz zrobić jak wrócisz
+
+1. **Sprawdź status:** `python scripts/status_v2.py`
+2. **Re-evaluate models on real holdout (po stworzeniu osobnego trainset/testset):** `python scripts/evaluate_v2_models.py --years 1`
+3. **Restart API** (żeby _shadow_scanner zauważył nowe modele):
+   ```bash
+   pkill -f "uvicorn" && sleep 2 && .venv/Scripts/python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --log-level info > logs/api.log 2>&1 &
+   ```
+4. **Po Mon (XAU otwarte)**: shadow log zacznie się zapełniać. Po 2 tyg uruchom:
+   `python scripts/compare_v1_v2_shadow.py`
+5. **Walk-forward** (long-running, ~4-6h): `python scripts/run_walk_forward.py --start 2025-01-01 --end 2026-04-01`
