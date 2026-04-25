@@ -56,7 +56,8 @@ SYMBOLS_CONFIG = {
     "SPY":       ("SPY",       ["1h", "1day"]),
     "BTC/USD":   ("BTC/USD",   ["1h", "4h", "1day"]),
     "WTI/USD":   ("WTI/USD",   ["1h", "1day"]),
-    "VIX":       ("VIX",       ["1day"]),  # only daily for VIX index
+    "VIX":       ("VIX",       ["1day"]),  # only daily for VIX index (often unavailable)
+    "VIXY":      ("VIXY",      ["1h", "1day"]),  # ProShares VIX Short-Term ETF (proxy when VIX direct fails)
 }
 
 # Bars per call cap from TwelveData

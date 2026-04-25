@@ -259,13 +259,24 @@ def load_warehouse(symbol: str, interval: str) -> pd.DataFrame | None:
 
 
 def load_cross_asset_warehouse(interval: str = "1h") -> dict[str, pd.DataFrame]:
-    """Load all cross-asset symbols at given TF from warehouse."""
+    """Load all cross-asset symbols at given TF from warehouse.
+
+    VIX fallback: if direct VIX unavailable on TwelveData, use VIXY ETF
+    (ProShares VIX Short-Term Futures ETF) as proxy. Loaded under "VIX" key
+    so downstream code is symbol-agnostic.
+    """
     symbols = ["XAG/USD", "EUR/USD", "TLT", "SPY", "BTC/USD", "VIX"]
     result = {}
     for sym in symbols:
         df = load_warehouse(sym, interval)
         if df is not None:
             result[sym] = df
+        elif sym == "VIX":
+            # Fallback to VIXY ETF
+            df = load_warehouse("VIXY", interval)
+            if df is not None:
+                result["VIX"] = df
+                logger.info(f"VIX fallback: using VIXY ETF data ({len(df)} rows)")
     return result
 
 
