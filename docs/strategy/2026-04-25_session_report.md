@@ -109,15 +109,38 @@ Plus wcześniejsze testy nadal zielone.
 
 ## Status w momencie raportu
 
-**Procesy działające w tle:**
-- Quick training run (~20 min) — XGB LONG + SHORT, 20 trials Optuna
-- Po skończeniu: models/v2/ powinno mieć xau_long_xgb_v2.json + xau_short_xgb_v2.json
+### Quick training DONE (19 min)
+Wytrenowane: `models/v2/xau_long_xgb_v2.json` + `xau_short_xgb_v2.json`
+- LONG XGB best CV MSE: 26.89
+- SHORT XGB best CV MSE: 13.58 (50% lepiej — confirms SHORT signal more learnable)
 
-**Co dzieje się automatycznie po deploy do live:**
+### Quick model evaluation (1y holdout sample)
+
+| metric | LONG XGB | SHORT XGB |
+|---|---|---|
+| R² | 0.51 | 0.31 |
+| Pred mean / std | +0.35 / 2.59 | -0.02 / 1.14 |
+| High-conf preds (>0.5R) | 20.1% of samples | 7.0% (selective) |
+| **Actual R when high-conf** | **+2.68** | **+3.64** |
+| WR when high-conf | 36.8% | 42.3% |
+
+**Implikacja:** wysokie predykcje korelują z dużymi realised wins. Per-trade EV gdyby
+handlować tylko high-confidence signals: LONG +0.37R, SHORT +0.96R (much above water).
+
+Top features (model importance):
+- LONG: atr, h1_above_ema20, h1_atr, h1_rsi, williams_r → multi-TF projection działa
+- SHORT: volatility, adx, atr_ratio, macd, h1_atr → regime indicators dominują
+
+### Full training W TLE (od 15:17, ~2-2.5h, ETA 17:30-18:00)
+50 trials Optuna XGB + LSTM 50 epochs, both directions, 3 years data.
+Pliki: `models/v2/xau_{long,short}_{xgb,lstm}_v2.{json,keras}` + meta.
+Output log: `logs/train_v2_full.log`
+
+### Co dzieje się automatycznie po deploy do live
 - API restart (jeśli zrestartowany) automatycznie startuje `_shadow_scanner` task
 - Scanner skanuje co 5 min, dormant dopóki models/v2/ nie istnieje
 - Gdy models/v2/ pojawi się → shadow zaczyna logować do `data/shadow_predictions.jsonl`
-- Live scanner v1 NIEPATRZONY na shadow — production safe
+- Live scanner v1 NIETKNIĘTY przez shadow — production safe
 
 ---
 
