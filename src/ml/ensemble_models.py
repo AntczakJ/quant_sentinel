@@ -346,6 +346,102 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
         return None
 
 
+_v2_xgb_cache = {"loaded": False, "long": None, "short": None,
+                 "feature_cols": None, "long_mtime": None, "short_mtime": None}
+
+
+def _load_v2_xgb():
+    """Load v2 XGB models (long + short). Cached + invalidated on file mtime."""
+    long_path = "models/v2/xau_long_xgb_v2.json"
+    short_path = "models/v2/xau_short_xgb_v2.json"
+    short_per_regime = "models/v2/xau_short_xgb_v2_per_regime.json"
+    meta_path = "models/v2/xau_long_xgb_v2.meta.json"
+
+    if not os.path.exists(long_path) or not os.path.exists(meta_path):
+        return None
+
+    long_mt = _file_mtime(long_path)
+    short_mt = _file_mtime(short_path)
+    if (_v2_xgb_cache["loaded"]
+            and _v2_xgb_cache.get("long_mtime") == long_mt
+            and _v2_xgb_cache.get("short_mtime") == short_mt):
+        return _v2_xgb_cache
+
+    try:
+        import xgboost as xgb
+        import json as _json_mod
+        with open(meta_path) as f:
+            meta = _json_mod.load(f)
+        feature_cols = meta["feature_cols"]
+
+        long_m = xgb.XGBRegressor()
+        long_m.load_model(long_path)
+
+        # Prefer per-regime SHORT if available (better for bull-regime XAU)
+        short_to_use = short_per_regime if os.path.exists(short_per_regime) else short_path
+        short_m = xgb.XGBRegressor()
+        short_m.load_model(short_to_use)
+
+        _v2_xgb_cache.update({
+            "loaded": True, "long": long_m, "short": short_m,
+            "feature_cols": feature_cols,
+            "long_mtime": long_mt, "short_mtime": short_mt,
+        })
+        logger.info(f"v2_xgb loaded (short={'per_regime' if short_to_use == short_per_regime else 'base'})")
+        return _v2_xgb_cache
+    except Exception as e:
+        logger.warning(f"v2_xgb load failed: {e}")
+        return None
+
+
+def predict_v2_xgb_direction(df: pd.DataFrame) -> Optional[float]:
+    """Predykcja v2 XGBoost: returns 0-1 LONG-bias score from R-multiple preds.
+
+    v2 models predict R-multiples (continuous):
+      - long_r: predicted R if entering LONG at this bar (1ATR SL)
+      - short_r: same for SHORT (negative = SHORT predicted to win)
+
+    Conversion to 0-1 LONG bias:
+      - Strong LONG (long_r >= 0.5 + bigger than -short_r): 0.5 + min(long_r/3, 0.4)
+      - Strong SHORT (short_r <= -0.5 + magnitude > long_r): 0.5 - min(-short_r/3, 0.4)
+      - Else: 0.5 (neutral)
+    """
+    try:
+        cache = _load_v2_xgb()
+        if cache is None:
+            return None
+
+        # Use features_v2 (62 features). Falls back gracefully if warehouse
+        # files for cross-asset are missing (defaults to 0).
+        try:
+            from src.analysis.features_v2 import compute_features_v2
+            features = compute_features_v2(df.copy())
+        except Exception as e:
+            logger.debug(f"v2_xgb features error: {e}")
+            return None
+        if features.empty:
+            return None
+
+        feature_cols = cache["feature_cols"]
+        last = features.iloc[-1]
+        x = np.array([last.get(c, 0.0) for c in feature_cols], dtype=np.float32).reshape(1, -1)
+
+        long_r = float(cache["long"].predict(x)[0])
+        short_r = float(cache["short"].predict(x)[0])
+
+        # Convert R predictions to 0-1 bias
+        if long_r >= 0.3 and long_r > -short_r:
+            value = 0.5 + min(long_r / 3.0, 0.4)
+        elif short_r <= -0.3 and -short_r > long_r:
+            value = 0.5 - min(-short_r / 3.0, 0.4)
+        else:
+            value = 0.5
+        return float(value)
+    except Exception as e:
+        logger.debug(f"v2_xgb predict error: {e}")
+        return None
+
+
 def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
     """
     Predykcja XGBoost: prawdopodobieństwo wzrostu (0-1).
@@ -479,6 +575,12 @@ def _load_dynamic_weights() -> Dict[str, float]:
         # deeptrans is ignored unless QUANT_ENABLE_TRANSFORMER=1 — starts
         # tiny so self-learning has to earn its weight.
         "deeptrans": 0.05,
+        # v2_xgb (per-direction R-multiple model trained 2026-04-25 on
+        # multi-asset features). OOS edge confirmed: PF 2.24 / WR 53.6%
+        # at threshold 1.0R. Starts at MIN_ACTIVE_WEIGHT 0.10 = active
+        # at minimum, can earn its way up via self-learning. Ramp gradually
+        # 0.10 → 0.20 → 0.30 over weeks once shadow data validates live.
+        "v2_xgb": 0.10,
     }
     try:
         from src.core.database import NewsDB
@@ -851,6 +953,23 @@ def get_ensemble_prediction(
             "direction": "NEUTRAL",
             "confidence": 0.0,
             "status": "unavailable"
+        }
+
+    # --- 3b. v2 XGB (R-multiple, per-direction, multi-asset features) ---
+    # OOS edge confirmed 2026-04-25: PF 2.24 / WR 53.6% at threshold 1.0R.
+    # Starts at low weight (0.10) — earn its way up via self-learning.
+    v2_pred = predict_v2_xgb_direction(df)
+    if v2_pred is not None:
+        results["predictions"]["v2_xgb"] = {
+            "value": v2_pred,
+            "direction": "LONG" if v2_pred > 0.5 else ("SHORT" if v2_pred < 0.5 else "NEUTRAL"),
+            # Confidence: distance from neutral × 4 (similar to xgb voter scale)
+            "confidence": min(1.0, abs(v2_pred - 0.5) * 4),
+        }
+    else:
+        results["predictions"]["v2_xgb"] = {
+            "value": 0.5, "direction": "NEUTRAL",
+            "confidence": 0.0, "status": "unavailable"
         }
 
     # --- 4. DQN Action (z dynamicznym confidence z Q-values) ---

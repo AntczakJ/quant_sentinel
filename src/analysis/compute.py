@@ -157,9 +157,16 @@ def to_numpy(arr) -> np.ndarray:
 # ============================================================================
 
 def get_xgb_params() -> dict:
-    """Return XGBoost params dict with GPU if available."""
+    """Return XGBoost params dict with GPU if available.
+
+    BACKTEST_FULLY_DETERMINISTIC=1 forces n_jobs=1 (single-threaded) which
+    eliminates non-deterministic tie-breaking in tree split candidate
+    selection (different threads finish in different orders, picking
+    different equally-good splits).
+    """
     info = detect_gpu()
-    base = {'tree_method': 'hist', 'n_jobs': -1}
+    n_jobs = 1 if os.environ.get("BACKTEST_FULLY_DETERMINISTIC") == "1" else -1
+    base = {'tree_method': 'hist', 'n_jobs': n_jobs}
     if info["xgb_gpu"] == "cuda":
         return {**base, 'device': 'cuda'}
     elif info["xgb_gpu"] == "gpu_hist":

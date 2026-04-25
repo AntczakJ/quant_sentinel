@@ -36,14 +36,25 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 # ═══════════════════════════════════════════════════════════════════════
 # Without this, two runs of the same backtest can produce different trade
 # counts (observed 2026-04-25: ensemble_signals_short 196 vs 454 across
-# two consecutive runs with identical code). Source of non-determinism:
-#   - GPU-accelerated TF ops (cuDNN heuristic dispatch)
+# two consecutive runs with identical code).
+#
+# Sources of non-determinism eliminated:
 #   - Python hash randomization (set/dict iteration order)
 #   - numpy/random global state pollution from earlier imports
-# Setting seeds + TF_DETERMINISTIC_OPS forces reproducible runs.
+#   - TF GPU ops (cuDNN heuristic dispatch via TF_DETERMINISTIC_OPS)
+#   - ONNX DirectML GPU dispatch (.env has ONNX_FORCE_CPU=1)
+#
+# Set BACKTEST_FULLY_DETERMINISTIC=1 to also force:
+#   - XGBoost single-threaded (multi-thread non-deterministic tie-break)
+#   - TF intra/inter-op = 1 (single-threaded inference)
+# Trade-off: ~2-3x slower backtest. Use for A/B comparisons; turn off
+# for routine production backtest where small variance is acceptable.
 os.environ.setdefault("PYTHONHASHSEED", "42")
 os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")
 os.environ.setdefault("TF_CUDNN_DETERMINISTIC", "1")
+
+_FULLY_DET = os.environ.get("BACKTEST_FULLY_DETERMINISTIC") == "1"
+
 import random as _rand_seed_mod
 import numpy as _np_seed_mod
 _rand_seed_mod.seed(42)
@@ -52,8 +63,21 @@ try:
     import tensorflow as _tf_seed_mod
     _tf_seed_mod.random.set_seed(42)
     _tf_seed_mod.keras.utils.set_random_seed(42)
+    if _FULLY_DET:
+        # Force TF to single-threaded inference (must be set BEFORE any
+        # session/model creation). Eliminates intra-op parallel tie-breaks.
+        _tf_seed_mod.config.threading.set_intra_op_parallelism_threads(1)
+        _tf_seed_mod.config.threading.set_inter_op_parallelism_threads(1)
 except Exception:
     pass
+
+if _FULLY_DET:
+    # Hint to other libraries to also single-thread
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    print("[determinism] BACKTEST_FULLY_DETERMINISTIC=1 — forcing single-thread "
+          "XGB/TF/BLAS for fully reproducible backtest")
 
 # ═══════════════════════════════════════════════════════════════════════
 # STEP 2: Now safe to import the rest
