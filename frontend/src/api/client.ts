@@ -276,6 +276,7 @@ export const api = {
   systemInfo: () =>
     get<{
       platform: { system: string; release: string; machine: string; python: string }
+      git: { sha: string | null; branch: string | null; dirty: boolean | null; error?: string }
       versions: Record<string, string | null>
       models: Array<{ name: string; size_kb: number; mtime_iso: string; age_hours: number }>
       xgb_loader: { status: string; path?: string; error?: string }
@@ -284,6 +285,14 @@ export const api = {
       disk: { total_gb: number; used_gb: number; free_gb: number; free_pct: number }
       env: Record<string, boolean>
     }>('/system/info'),
+
+  /** sentinel.db row counts + file size. */
+  dbStats: () =>
+    get<{
+      trades: { total: number; open: number; closed: number; wins: number; losses: number; win_rate_pct: number | null }
+      tables: Record<string, number | null>
+      file: { path: string; size_kb: number | null }
+    }>('/system/db-stats'),
 
   /** API credit-bucket status (TwelveData primary). */
   rateLimit: () =>

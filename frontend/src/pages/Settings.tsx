@@ -108,6 +108,11 @@ export default function Settings() {
           <RateLimitBlock />
         </Card>
 
+        {/* ─── Database stats ───────────────────────────────── */}
+        <Card variant="raised" className="p-6">
+          <DbStatsBlock />
+        </Card>
+
         {/* ─── System diagnostic ─────────────────────────────── */}
         <Card variant="raised" className="p-6 lg:col-span-2">
           <SystemInfoBlock />
@@ -153,6 +158,72 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
       <span className="text-caption text-ink-600">{label}</span>
       <span className="num text-body">{value}</span>
+    </div>
+  )
+}
+
+// ─── Database stats — sentinel.db counts + size ───────────────────────
+function DbStatsBlock() {
+  const { data, isError } = useQuery({
+    queryKey: ['db-stats'],
+    queryFn: api.dbStats,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  })
+  if (isError) {
+    return (
+      <div>
+        <h3 className="text-title font-display">Database</h3>
+        <p className="text-caption text-bear mt-2">/api/system/db-stats failed.</p>
+      </div>
+    )
+  }
+  if (!data) {
+    return (
+      <div>
+        <h3 className="text-title font-display">Database</h3>
+        <p className="text-caption text-ink-600 mt-2">Loading…</p>
+      </div>
+    )
+  }
+  const t = data.trades
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-title font-display">Database</h3>
+          <p className="text-caption text-ink-600 mt-1">
+            {data.file.path}
+            {data.file.size_kb != null && (
+              <> · {(data.file.size_kb / 1024).toFixed(1)} MB</>
+            )}
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Trades · WR</div>
+          <div className="num text-headline font-display">
+            <NumberFlow value={t.total} format={{ maximumFractionDigits: 0 }} respectMotionPreference />
+            {t.win_rate_pct != null && (
+              <span className={`text-caption ml-2 ${t.win_rate_pct >= 50 ? 'text-bull' : 'text-bear'}`}>
+                {t.win_rate_pct.toFixed(0)}%
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 text-caption">
+        <Row label="Trades · open"   value={String(t.open)} />
+        <Row label="Trades · wins"   value={String(t.wins)} />
+        <Row label="Trades · closed" value={String(t.closed)} />
+        <Row label="Trades · losses" value={String(t.losses)} />
+        <Row label="Rejected setups" value={String(data.tables.rejected_setups ?? '—')} />
+        <Row label="Scanner signals" value={String(data.tables.scanner_signals ?? '—')} />
+        <Row label="ML predictions"  value={String(data.tables.ml_predictions  ?? '—')} />
+        <Row label="Dynamic params"  value={String(data.tables.dynamic_params  ?? '—')} />
+        <Row label="Pattern stats"   value={String(data.tables.pattern_stats   ?? '—')} />
+        <Row label="Model alerts"    value={String(data.tables.model_alerts    ?? '—')} />
+      </div>
     </div>
   )
 }
@@ -303,6 +374,15 @@ function SystemInfoBlock() {
             <span className={data.xgb_loader.status === 'loaded' ? 'text-bull' : 'text-ink-700'}>
               XGB voter: {data.xgb_loader.path ?? data.xgb_loader.status}
             </span>
+            {data.git?.sha && (
+              <>
+                {' · '}
+                <span className="font-mono text-ink-700">
+                  {data.git.branch}@{data.git.sha}
+                  {data.git.dirty && <span className="text-gold-400" title="working tree dirty"> ●</span>}
+                </span>
+              </>
+            )}
           </p>
         </div>
         <div className="text-right">

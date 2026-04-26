@@ -4,6 +4,112 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-26 → 2026-04-27 — v4 frontend redesign + observability + ML perf push
+
+A two-day session producing 14 commits. Frontend redesigned end-to-end,
+backend gained 10 new endpoints + observability stack (Logfire + Sentry),
+defensive `dynamic_params` schema closes the bug class behind `95569f7`,
+Treelite ships a 12× speedup on the live-scanner XGB inference path.
+Production scanner / trade resolution paths untouched throughout — every
+new feature defaults OFF or is opt-in.
+
+#### Added — Frontend (v4 redesign)
+- Cursor-reactive WebGL **mesh-gradient background** via Paper Shaders
+  (`MeshBackground`), lazy-loaded, disabled on `/chart` to free GPU for
+  lightweight-charts. Grain noise overlay. (`2236dc5`)
+- **Cmd+K command palette** (`cmdk`) — pages, symbols, recent trades,
+  scanner pause/resume, grid preview/apply, grid rollback, refresh,
+  reduced-motion toggle. (`2236dc5`, `9b6d9cd`, `6c292ac`)
+- **Bento Dashboard** — 12-col grid with Motion `layoutId` expand-to-modal
+  cards. Balance / WinRate / Recent P&L / Open / Macro / Recent signals
+  / Scanner all expand to detail views. (`2236dc5`, `71a35a5`)
+- **NumberFlow rolling digits** + `FlashOnChange` bull/bear pulse on
+  every live numeric. (`2236dc5`, `71a35a5`)
+- **AnimatedBeam** voter→ensemble→signal flow on Models page; intensity
+  scales with `voter_weight × accuracy`. (`2236dc5`, `71a35a5`)
+- **VoterCard expandable** with 72-h forward-move accuracy and per-voter
+  retrain commands. (`9b6d9cd`)
+- **Equity curve** in `BalanceDetail` (with trades-derived fallback when
+  cache empty), USD/JPY 1h × 200-bar chart in MacroDetail, open-positions
+  detail with 5 s polling. (`71a35a5`, `63e5bab`)
+- Mini-sparklines under WR + Recent P&L bento. Magnetic buttons.
+  ScrambleText brand reveal. Aurora bg. WebAudio sound feedback. (`2236dc5`)
+- `?` keyboard shortcuts overlay. (`faee71f`)
+- Settings widgets: SystemInfo (versions / models / GPU / disk / env /
+  git short SHA), RateLimit (credit bucket bar), DbStats (table counts +
+  sentinel.db file size). (`faee71f`, `8ffb7fc`, this release)
+
+#### Added — Backend endpoints
+- `POST /api/scanner/{pause,resume}` + `GET /api/scanner/status` — surface
+  the file-flag mechanism. (`71a35a5`)
+- `GET /api/models/ensemble-weights` reads voter weights from
+  `dynamic_params`. (`71a35a5`)
+- `GET /api/portfolio/history` reconstructs from `trades` when cache empty.
+  (`71a35a5`)
+- `GET /api/params/{usage,drifts}` — live writer/reader counters + drift
+  detector for `dynamic_params`. (`e0ccc66`)
+- `GET /api/grid/{list,preview,apply,backups,rollback}` — surfaces
+  `apply_grid_winner.py` over HTTP, `confirm:true` required for writes,
+  path-traversal-safe rollback. (`9b6d9cd`)
+- `GET /api/system/{info,db-stats,rate-limit}` + `POST /api/system/{test-trace,test-error}`
+  for observability smoke tests. (`faee71f`, `8ffb7fc`, this release)
+
+#### Added — Observability + defense
+- **Logfire** OTEL platform (auto FastAPI + httpx instrumentation, custom
+  scanner spans). Soft-disabled without `LOGFIRE_TOKEN`. (`67ecd77`)
+- **Sentry** — error capture + slow-tx + cron heartbeat
+  (`monitor_slug=bg-scanner`). Soft-disabled without `SENTRY_DSN`.
+  (`9b6d9cd`, `6c292ac`)
+- **Slow-request middleware** — logs WARN above `SLOW_REQUEST_MS`
+  (default 500 ms). (`8ffb7fc`)
+- **`dynamic_params` Pydantic-style schema** with auto-mirror
+  `target_rr → tp_to_sl_ratio` (closes bug class `95569f7`), 30-min drift
+  watchdog, schema-aware `set_param` / `get_param`. (`e0ccc66`, `faee71f`)
+- Startup env-vars OK/missing report in `logs/api.log`. (`6c292ac`)
+
+#### Added — ML / performance
+- **Treelite-compiled XGB voter** (`tools/compile_xgb_treelite.py`) — ~12×
+  speedup on N=1 single-sample inference (the actual scanner case).
+  Parity max abs diff 5.96e-08 vs native. Load priority: Treelite →
+  ONNX/DirectML → sklearn. (`d972d3f`)
+- **DuckDB warehouse reader** (opt-in `QUANT_USE_DUCKDB=1`). Empirical
+  bench: pandas wins 2.5× on single files, DuckDB wins 4× on multi-file
+  SQL aggregations. 8/8 parity tests. (`e9488c8`)
+- **Polars groundwork** — 16/16 features pass parity (≤3.6e-12 EWM, ≤3.3e-16
+  elsewhere). `compute_features` itself stays pandas. (`6c292ac`, `faee71f`)
+- **Optuna optimizer** (`scripts/run_optuna_optimization.py`) — TPE +
+  median pruner, SQLite study storage, `--mock` evaluator. (`6c292ac`)
+- **Modal Labs skeleton** for off-loading `train_all.py`. (`6c292ac`)
+
+#### Added — Build
+- Migrated to **`pyproject.toml` + `uv.lock`** (199 packages); back-compat
+  `pip install -r requirements.txt` still works. `requires-python ≥ 3.12`.
+  (`58566f8`)
+
+#### Fixed
+- Hero price + KPI digits invisible under `text-display-gradient` /
+  `text-gold-gradient` (cascading `-webkit-text-fill-color: transparent`
+  bled into NumberFlow). Switched numeric values to solid colors.
+  (`5029fdf`)
+- `TracedConnectionProxy` breaks `Connection.backup()` — disabled
+  Logfire's sqlite3 instrumentation. (`67ecd77`)
+- uv `prerelease=allow` (global) picked dev wheels for unrelated packages;
+  switched to `if-necessary`. (`e9488c8`)
+
+#### Tests
+40 unit tests across three suites:
+- `tests/test_dynamic_params_schema.py` — 19 (mirror, drift, edge cases).
+- `tests/test_grid_endpoints.py` — 13 (TestClient, path traversal,
+  confirm-required, 404 handling).
+- `tests/test_warehouse_duckdb_parity.py` — 8 (pandas vs DuckDB parity).
+
+#### Tooling
+- `tools/bench_warehouse_reader.py`, `tools/compile_xgb_treelite.py`,
+  `tools/polars_features_parity.py`, `tools/modal_train.py`,
+  `scripts/run_optuna_optimization.py`.
+
+---
+
 ### 2026-04-13 — Autonomous overnight retrain session
 
 **Net production change**: LSTM voter resurrected. Other voters unchanged.

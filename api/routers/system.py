@@ -34,6 +34,24 @@ def _safe_version(import_name: str) -> str | None:
         return None
 
 
+def _git_info() -> dict:
+    """Best-effort short SHA + branch + dirty flag. Soft-fallback if git
+    isn't installed or the project isn't a repo (production deploy)."""
+    try:
+        import subprocess
+        kwargs = dict(cwd=str(ROOT), capture_output=True, text=True, timeout=2)
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], **kwargs)
+        branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], **kwargs)
+        status = subprocess.run(["git", "status", "--porcelain"], **kwargs)
+        return {
+            "sha":    sha.stdout.strip() or None,
+            "branch": branch.stdout.strip() or None,
+            "dirty":  bool(status.stdout.strip()),
+        }
+    except Exception as e:
+        return {"sha": None, "branch": None, "dirty": None, "error": str(e)}
+
+
 def _model_files() -> list[dict]:
     """Walk models/ for the most relevant artifacts and report size + mtime."""
     if not MODELS_DIR.exists():
@@ -113,6 +131,103 @@ def _xgb_loader_info() -> dict:
         return {"error": str(e)}
 
 
+@router.get("/db-stats", summary="Counts + file size for sentinel.db tables")
+async def db_stats():
+    """Quick counts of the tables the operator usually wants to see —
+    trades by status, rejected_setups, scanner_signals, model_alerts —
+    plus the on-disk file size."""
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        # Trade buckets
+        def _scalar(sql: str, args: tuple = ()) -> int:
+            row = db._query_one(sql, args)
+            return int(row[0] or 0) if row else 0
+
+        trades_total = _scalar("SELECT COUNT(*) FROM trades")
+        trades_open = _scalar(
+            "SELECT COUNT(*) FROM trades WHERE status IN ('OPEN','PROPOSED')"
+        )
+        trades_closed = _scalar(
+            "SELECT COUNT(*) FROM trades WHERE status IN ('WIN','LOSS','PROFIT','LOSE','CLOSED')"
+        )
+        trades_wins = _scalar(
+            "SELECT COUNT(*) FROM trades WHERE status IN ('WIN','PROFIT')"
+        )
+
+        # Aux tables — wrap individually so a missing one doesn't kill the whole report.
+        def _safe_count(table: str) -> int | None:
+            try:
+                return _scalar(f"SELECT COUNT(*) FROM {table}")
+            except Exception:
+                return None
+
+        rejected_setups   = _safe_count("rejected_setups")
+        scanner_signals   = _safe_count("scanner_signals")
+        model_alerts      = _safe_count("model_alerts")
+        ml_predictions    = _safe_count("ml_predictions")
+        dynamic_params_n  = _safe_count("dynamic_params")
+        pattern_stats_n   = _safe_count("pattern_stats")
+
+        # File size
+        db_path = ROOT / "data" / "sentinel.db"
+        size_kb = round(db_path.stat().st_size / 1024, 1) if db_path.exists() else None
+
+        return {
+            "trades": {
+                "total": trades_total,
+                "open": trades_open,
+                "closed": trades_closed,
+                "wins": trades_wins,
+                "losses": trades_closed - trades_wins,
+                "win_rate_pct": round(trades_wins / trades_closed * 100, 1) if trades_closed else None,
+            },
+            "tables": {
+                "rejected_setups": rejected_setups,
+                "scanner_signals": scanner_signals,
+                "model_alerts": model_alerts,
+                "ml_predictions": ml_predictions,
+                "dynamic_params": dynamic_params_n,
+                "pattern_stats": pattern_stats_n,
+            },
+            "file": {
+                "path": "data/sentinel.db",
+                "size_kb": size_kb,
+            },
+        }
+    except Exception as e:
+        logger.error(f"system/db-stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/test-trace", summary="Smoke-test Logfire (emits a span)")
+async def system_test_trace():
+    """Invoke this once after `logfire auth` to confirm spans are reaching
+    the Logfire dashboard. Soft-noop when Logfire is disabled — never
+    raises. Writes one structured info span and one INFO log line."""
+    import logging as _logging
+    try:
+        import logfire as _lf
+        with _lf.span("system.test_trace", marker="manual_smoke"):
+            _lf.info("Logfire smoke test", source="api/system/test-trace")
+        return {"ok": True, "message": "Span emitted (visible in Logfire if token configured)"}
+    except Exception as e:
+        _logging.getLogger("logfire").debug(f"test-trace soft-fail: {e}")
+        return {"ok": False, "message": "Logfire not configured", "detail": str(e)}
+
+
+@router.post("/test-error", summary="Smoke-test Sentry (raises a captured exception)")
+async def system_test_error():
+    """Triggers a captured ZeroDivisionError so Janek can verify Sentry
+    receives the event after pasting SENTRY_DSN. Returns 500 if Sentry
+    is on (the captured exception bubbles), or 200 with `disabled: true`
+    when no DSN is set."""
+    if not os.environ.get("SENTRY_DSN", "").strip():
+        return {"ok": False, "disabled": True, "message": "SENTRY_DSN not set — skipping the raise"}
+    # When Sentry IS configured, deliberately raise so the SDK captures it.
+    1 / 0  # noqa: B018 — intentional
+
+
 @router.get("/rate-limit", summary="API rate-limiter status")
 async def rate_limit_status():
     """Snapshot of the TwelveData credit bucket — what's available right
@@ -140,6 +255,7 @@ async def system_info():
                 "machine": platform.machine(),
                 "python": platform.python_version(),
             },
+            "git": _git_info(),
             "versions": {
                 "fastapi":   _safe_version("fastapi"),
                 "uvicorn":   _safe_version("uvicorn"),
