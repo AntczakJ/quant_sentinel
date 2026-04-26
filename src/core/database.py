@@ -207,6 +207,15 @@ class NewsDB:
         result = {}
         for name, num_val, text_val in rows:
             result[name] = text_val if text_val is not None else num_val
+        # Track bulk reads in the schema layer so the drift watchdog sees
+        # them; otherwise portfolio_* keys would falsely appear as
+        # "write_only".
+        try:
+            from src.core.dynamic_params_schema import track_read
+            for name in result.keys():
+                track_read(name)
+        except Exception:
+            pass
         return result
 
     def create_tables(self):
@@ -597,6 +606,17 @@ class NewsDB:
         return self._query("SELECT pattern, count, wins, losses, win_rate FROM pattern_stats ORDER BY win_rate DESC")
 
     def set_param(self, name: str, value):
+        # Schema-aware path: validate + auto-mirror coupled keys
+        # (e.g. target_rr → tp_to_sl_ratio, see dynamic_params_schema.py).
+        # Failure-soft: any error in the schema layer is logged and the
+        # write proceeds — schema must never block a production write.
+        mirror_target: str | None = None
+        try:
+            from src.core.dynamic_params_schema import validate_param_write
+            mirror_target = validate_param_write(name, value)
+        except Exception as _e:  # pragma: no cover
+            logger.debug(f"dynamic_params schema check failed: {_e}")
+
         if isinstance(value, str) and not self._is_numeric_string(value):
             self._execute(
                 "INSERT INTO dynamic_params (param_name, param_text) VALUES (?, ?) "
@@ -608,8 +628,33 @@ class NewsDB:
                 "ON CONFLICT(param_name) DO UPDATE SET param_value=excluded.param_value, param_text=NULL, last_updated=CURRENT_TIMESTAMP",
                 (name, value))
 
+        # Auto-mirror coupled keys exactly once (no recursion — mirror writes
+        # bypass the mirror lookup by writing directly with the same value).
+        if mirror_target and mirror_target != name:
+            try:
+                if isinstance(value, str) and not self._is_numeric_string(value):
+                    self._execute(
+                        "INSERT INTO dynamic_params (param_name, param_text) VALUES (?, ?) "
+                        "ON CONFLICT(param_name) DO UPDATE SET param_text=excluded.param_text, param_value=NULL, last_updated=CURRENT_TIMESTAMP",
+                        (mirror_target, value))
+                else:
+                    self._execute(
+                        "INSERT INTO dynamic_params (param_name, param_value) VALUES (?, ?) "
+                        "ON CONFLICT(param_name) DO UPDATE SET param_value=excluded.param_value, param_text=NULL, last_updated=CURRENT_TIMESTAMP",
+                        (mirror_target, value))
+                logger.debug(
+                    f"[dynamic_params] auto-mirrored {name} → {mirror_target} = {value}"
+                )
+            except Exception as _e:  # pragma: no cover
+                logger.warning(f"[dynamic_params] mirror write failed: {_e}")
+
     def get_param(self, name: str, default=None):
         row = self._query_one("SELECT param_value, param_text FROM dynamic_params WHERE param_name = ?", (name,))
+        try:
+            from src.core.dynamic_params_schema import track_read
+            track_read(name)
+        except Exception:
+            pass
         if not row:
             return default
         # Return text if available, otherwise numeric

@@ -53,6 +53,32 @@ Custom spans wrapping the BG scanner are `scanner.prefetch_tfs` and
 `/api/health` and `/api/sse/*` are excluded from request traces to keep
 the stream readable.
 
+## dynamic_params schema + drift watchdog (2026-04-26 evening)
+`src/core/dynamic_params_schema.py` declares well-known keys (literal +
+prefix specs across 12 domain groups: risk_sizing, ensemble, portfolio,
+patterns, …). Every `db.set_param(name, value)` call routes through
+`validate_param_write` which:
+1. logs a warning when the value's type/range looks off (never raises);
+2. tracks (n_writes, n_reads, last_*_ts) per key in-process;
+3. **auto-mirrors coupled keys** — `target_rr` is automatically written
+   to `tp_to_sl_ratio` so the bug class behind commit 95569f7 (silent
+   writer/reader name drift) cannot recur.
+
+`db.get_param` and `db.get_portfolio_params` call `track_read` so the
+usage map sees both individual and bulk reads.
+
+A 30-min `_dynamic_params_drift_watchdog` background task logs three
+drift kinds: write_only (key written, never read since boot), read_only
+(key read, never written), dead_write (write happened > 30 min ago and
+no read followed). Live inspection: `GET /api/params/usage` and
+`GET /api/params/drifts`.
+
+When introducing a new dynamic_params key, **add a `KeySpec` (or extend
+the matching `PrefixSpec`) in `dynamic_params_schema.py`** so the
+watchdog and validator see it. Test coverage:
+`tests/test_dynamic_params_schema.py` (10 tests, including end-to-end
+mirror in NewsDB).
+
 `requires-python` bumped to `>=3.12` (was 3.10) because `pandas-ta 0.4.71b0`
 prerelease — the only line carrying our needed version — declares 3.12+. Project
 runs on 3.13 anyway. `[tool.uv].override-dependencies` forces `pandas>=3.0`,

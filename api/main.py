@@ -205,8 +205,14 @@ async def lifespan(app: FastAPI):
     except Exception as _hm_err:
         logger.warning(f"Health monitor disabled: {_hm_err}")
         health_task = None
+
+    # Dynamic-params drift watchdog (30-min cadence). Logs writer-without-
+    # reader and reader-without-writer keys so the next #95569f7-style
+    # silent rename gets caught early. Always-on, very cheap.
+    drift_task = asyncio.create_task(_dynamic_params_drift_watchdog())
+
     logger.info("Background tasks started (scanner 5min | prices 5s | resolver 5min | "
-                "monitor 1h | retention 24h | health 10min)")
+                "monitor 1h | retention 24h | health 10min | params-drift 30min)")
 
     yield
 
@@ -240,6 +246,49 @@ async def lifespan(app: FastAPI):
         pass
 
     logger.info("QUANT SENTINEL API shutdown complete")
+
+
+async def _dynamic_params_drift_watchdog():
+    """
+    Periodic logger of `dynamic_params` writer/reader drift.
+
+    Catches the bug class behind #95569f7 (`target_rr` written, production
+    reading `tp_to_sl_ratio`) by surfacing keys that are written within the
+    last cycle but have *no* readers. Soft signal — a freshly introduced
+    key may legitimately have no consumer yet, so this never raises.
+    """
+    # First sleep — let the scanner / queries run a few cycles so we have a
+    # baseline of read activity before judging anything.
+    await asyncio.sleep(900)
+    while True:
+        try:
+            from src.core.dynamic_params_schema import find_drifts
+            drifts = find_drifts(write_only_grace_s=1800.0)
+            if drifts:
+                # Group concise log
+                wo = [d["name"] for d in drifts if d["kind"] == "write_only"]
+                ro = [d["name"] for d in drifts if d["kind"] == "read_only"]
+                dw = [d["name"] for d in drifts if d["kind"] == "dead_write"]
+                if wo:
+                    logger.warning(
+                        f"🔍 [params-drift] {len(wo)} write-only keys (no reader since boot): "
+                        f"{', '.join(sorted(wo)[:8])}{'…' if len(wo) > 8 else ''}"
+                    )
+                if dw:
+                    logger.warning(
+                        f"🔍 [params-drift] {len(dw)} dead-write keys (recently written, no recent read): "
+                        f"{', '.join(sorted(dw)[:8])}"
+                    )
+                if ro and len(ro) > 0:
+                    logger.info(
+                        f"🔍 [params-drift] {len(ro)} read-only keys (no writer): "
+                        f"{', '.join(sorted(ro)[:8])}{'…' if len(ro) > 8 else ''}"
+                    )
+            else:
+                logger.debug("[params-drift] no drifts detected")
+        except Exception as _e:
+            logger.debug(f"[params-drift] watchdog tick failed: {_e}")
+        await asyncio.sleep(1800)  # every 30 min
 
 
 async def _background_scanner():
@@ -1190,6 +1239,8 @@ app.include_router(export.router, prefix="/api/export", tags=["Data Export"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 from api.routers import scanner as _scanner_router
 app.include_router(_scanner_router.router, prefix="/api/scanner", tags=["Scanner Control"])
+from api.routers import params as _params_router
+app.include_router(_params_router.router, prefix="/api/params", tags=["Dynamic Params"])
 
 
 @app.get("/api/metrics", tags=["System"])
