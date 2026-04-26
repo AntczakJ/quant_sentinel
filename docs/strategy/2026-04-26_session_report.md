@@ -27,7 +27,24 @@ Frontend rebuilt from scratch.
 | short_block_traoff (B7 + trailing OFF, var lot) | 64 | 46% | 1.66 | **-20.7%** | -26.1% | 9 |
 | equal_lot_combo (B7 + trail OFF + BACKTEST_EQUAL_LOT=0.01) | 68 | 43% | 1.80 | +7.18% | -4.23% | 11 |
 | **flat_risk_combo** (B7 + trail OFF + Phase B + MAX_LOT_CAP=0.01) | **54** | **47%** | **2.14** | **+7.43%** | **-3.02%** | **13** |
-| warehouse_90d (3-month sample, in progress at session end) | ~150 expected | TBD | TBD | TBD | TBD | TBD |
+| **warehouse_90d** (3-month sample, same config as flat_risk_combo) | **137** | **44%** | **1.21** | **+3.30%** | **-3.63%** | **10** |
+
+### 90-day vs 30-day interpretation
+
+The 90-day backtest (PF 1.21, +3.3%, DD -3.6%) is the more honest number. The 30-day PF 2.14 result was inflated by a favorable regime window. PF 1.21 over 137 trades is:
+- Robust positive edge (above 1.0 with margin)
+- DD -3.63% nearly identical to 30-day → drawdown profile is consistent
+- LONG-only: 134/137 trades LONG (B7 effectively blocks SHORT in zielony)
+- LONG WR 44% × 90-day is ~1.7× the 26% baseline triple-barrier TP rate — exactly the filter-lift hypothesis from `label_baseline_2026-04-26.md`
+
+### Direction split (warehouse_90d)
+
+| direction | n | closed | WR | pnl_price |
+|---|---|---|---|---|
+| LONG | 134 | 114 | 44% | +$363 |
+| SHORT | 3 | 3 | 67% | -$33 |
+
+3 SHORT trades slipped through B7 (likely macro_regime momentarily flipped to neutral). Of those, 2 wins / 1 loss but net price-units negative. Sample too small to read into.
 
 ## Four major findings
 
