@@ -42,9 +42,22 @@ def warehouse_status():
     with open(MANIFEST) as f:
         manifest = json.load(f)
     by_symbol = {}
-    for key, last_ts in manifest.items():
-        symbol, tf = key.rsplit("/", 1)
-        by_symbol.setdefault(symbol, []).append((tf, last_ts))
+    for key, value in manifest.items():
+        # 2026-04-26: support both legacy flat format ("XAU/USD/5m": "2026-04-26...")
+        # and nested format ({"XAU_USD": {"5m": {"last_fetched": "..."}}}).
+        if isinstance(value, dict):
+            # Nested per-symbol format
+            for tf, meta in value.items():
+                last_ts = meta.get("last_fetched") if isinstance(meta, dict) else str(meta)
+                if last_ts:
+                    by_symbol.setdefault(key, []).append((tf, last_ts))
+        else:
+            # Flat key format
+            try:
+                symbol, tf = key.rsplit("/", 1)
+            except ValueError:
+                continue
+            by_symbol.setdefault(symbol, []).append((tf, value))
     for symbol, entries in sorted(by_symbol.items()):
         tfs_str = ", ".join(f"{tf}({last[:10]})" for tf, last in sorted(entries))
         print(f"  {symbol:12s}: {tfs_str}")
