@@ -48,6 +48,26 @@ def load_xau_5min() -> pd.DataFrame:
     return df
 
 
+def _rma_numpy(x: np.ndarray, length: int) -> np.ndarray:
+    """Wilder's RMA: SMA seed for the first `length` values, then EMA with
+    alpha=1/length. Pandas_ta documents `rma()` as
+    `close.ewm(alpha=alpha, adjust=False).mean()` — for the ATR case
+    this matches our numpy version to floating-point precision."""
+    x = np.asarray(x, dtype=np.float64)
+    out = np.full_like(x, np.nan)
+    if len(x) < length:
+        return out
+    # Use pandas-style direct ewm (no SMA seed — matches pandas_ta v0.4.x)
+    alpha = 1.0 / length
+    # Seed with the first non-NaN value, then ewm forward
+    seed_idx = int(np.argmax(~np.isnan(x)))
+    out[seed_idx] = x[seed_idx] if not np.isnan(x[seed_idx]) else 0.0
+    for i in range(seed_idx + 1, len(x)):
+        v = x[i] if not np.isnan(x[i]) else 0.0
+        out[i] = alpha * v + (1 - alpha) * out[i - 1]
+    return out
+
+
 def pandas_subset(df: pd.DataFrame) -> pd.DataFrame:
     """Compute the subset that has a polars equivalent — pandas reference."""
     out = pd.DataFrame(index=df.index)
@@ -55,6 +75,14 @@ def pandas_subset(df: pd.DataFrame) -> pd.DataFrame:
     out["ret_1"] = df["close"].pct_change()
     out["ret_5"] = df["close"].pct_change(5)
     out["ret_10"] = df["close"].pct_change(10)
+    # ── ATR (Wilder, length=14) — uses _rma_numpy for the smoothing ──
+    h = df["high"].to_numpy()
+    l = df["low"].to_numpy()
+    c = df["close"].to_numpy()
+    prev_c = np.roll(c, 1)
+    prev_c[0] = c[0]
+    tr = np.maximum.reduce([h - l, np.abs(h - prev_c), np.abs(l - prev_c)])
+    out["atr_14"] = _rma_numpy(tr, 14)
     # ── Rolling stats ──────────────────────────────────────────────
     out["volatility_20"] = df["close"].pct_change().rolling(20).std()
     out["sma_20"] = df["close"].rolling(20).mean()
@@ -91,6 +119,16 @@ def polars_subset(df_pd: pd.DataFrame) -> pd.DataFrame:
     ema20 = pl.col("close").ewm_mean(span=20, adjust=False)
     h14 = pl.col("high").rolling_max(window_size=14)
     l14 = pl.col("low").rolling_min(window_size=14)
+    prev_close = pl.col("close").shift(1)
+    tr = pl.max_horizontal(
+        pl.col("high") - pl.col("low"),
+        (pl.col("high") - prev_close).abs(),
+        (pl.col("low") - prev_close).abs(),
+    )
+    # ATR uses ewm_mean(alpha=1/14) which pandas_ta confirms is the same
+    # as their `rma()` implementation (just `ewm(alpha=alpha,
+    # adjust=False).mean()` — see pandas_ta.overlap.rma source).
+    atr_14_expr = tr.ewm_mean(alpha=1.0 / 14.0, adjust=False).alias("atr_14")
 
     out = df.select(
         # Returns
@@ -118,6 +156,8 @@ def polars_subset(df_pd: pd.DataFrame) -> pd.DataFrame:
             .fill_null(False).cast(pl.Int64).alias("higher_high"),
         (pl.col("low").rolling_min(window_size=5).shift(1) > pl.col("low"))
             .fill_null(False).cast(pl.Int64).alias("lower_low"),
+        # ATR(14) — Wilder smoothing via polars ewm_mean(alpha=1/14)
+        atr_14_expr,
     )
     return out.to_pandas()
 
