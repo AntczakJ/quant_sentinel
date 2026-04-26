@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import NumberFlow from '@number-flow/react'
 import { api } from '@/api/client'
 import { Card } from '@/components/Card'
 import { AuroraBackground } from '@/components/AuroraBackground'
@@ -102,6 +103,11 @@ export default function Settings() {
           </div>
         </Card>
 
+        {/* ─── System diagnostic ─────────────────────────────── */}
+        <Card variant="raised" className="p-6 lg:col-span-2">
+          <SystemInfoBlock />
+        </Card>
+
         {/* ─── Tonight's session changes ───────────────────────── */}
         <Card variant="raised" className="p-6 lg:col-span-2">
           <h3 className="text-title font-display">Tonight's session changes (2026-04-26)</h3>
@@ -142,6 +148,161 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
       <span className="text-caption text-ink-600">{label}</span>
       <span className="num text-body">{value}</span>
+    </div>
+  )
+}
+
+// ─── System info — versions, models, GPU, disk, env ───────────────────
+function SystemInfoBlock() {
+  const { data, isError } = useQuery({
+    queryKey: ['system-info'],
+    queryFn: api.systemInfo,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  })
+
+  if (isError) {
+    return (
+      <div>
+        <h3 className="text-title font-display">System diagnostic</h3>
+        <p className="text-caption text-bear mt-2">Failed to load /api/system/info.</p>
+      </div>
+    )
+  }
+  if (!data) {
+    return (
+      <div>
+        <h3 className="text-title font-display">System diagnostic</h3>
+        <p className="text-caption text-ink-600 mt-2">Loading…</p>
+      </div>
+    )
+  }
+
+  const v = data.versions
+  const versionRows: Array<[string, string | null]> = [
+    ['Python', data.platform.python],
+    ['FastAPI', v.fastapi],
+    ['Pydantic', v.pydantic],
+    ['NumPy', v.numpy],
+    ['Pandas', v.pandas],
+    ['Polars', v.polars],
+    ['Numba', v.numba],
+    ['XGBoost', v.xgboost],
+    ['Treelite', v.treelite],
+    ['DuckDB', v.duckdb],
+    ['Torch', v.torch],
+    ['TensorFlow', v.tensorflow],
+    ['Logfire', v.logfire],
+    ['Sentry', v.sentry_sdk],
+  ]
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-title font-display">System diagnostic</h3>
+          <p className="text-caption text-ink-600 mt-1">
+            {data.platform.system} {data.platform.release} {data.platform.machine}
+            {' · '}
+            <span className={data.xgb_loader.status === 'loaded' ? 'text-bull' : 'text-ink-700'}>
+              XGB voter: {data.xgb_loader.path ?? data.xgb_loader.status}
+            </span>
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Memory</div>
+          <div className="num text-headline font-display">
+            {data.process.rss_mb != null ? (
+              <NumberFlow value={data.process.rss_mb} format={{ maximumFractionDigits: 0 }} suffix=" MB" respectMotionPreference />
+            ) : (
+              '—'
+            )}
+          </div>
+          <div className="text-micro text-ink-600">
+            {data.process.num_threads ?? '—'} threads · {data.process.uptime_s != null ? Math.round(data.process.uptime_s / 60) : '—'} min uptime
+          </div>
+        </div>
+      </div>
+
+      {/* Versions grid */}
+      <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+        {versionRows.map(([k, val]) => (
+          <div key={k} className="surface p-3 rounded-xl">
+            <div className="text-micro uppercase tracking-wider text-ink-600">{k}</div>
+            <div className={`num text-caption mt-0.5 ${val ? 'text-ink-900' : 'text-ink-600'}`}>
+              {val ?? '—'}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Models + Disk + GPU + Env in a 2-col layout */}
+      <div className="mt-5 grid lg:grid-cols-2 gap-5">
+        <div>
+          <div className="text-micro uppercase tracking-wider text-ink-600 mb-2">
+            Model artifacts ({data.models.length})
+          </div>
+          <div className="flex flex-col gap-1">
+            {data.models.slice(0, 10).map((m) => (
+              <div
+                key={m.name}
+                className="flex items-center justify-between text-caption py-1 border-b border-white/[0.03] last:border-0"
+              >
+                <span className="font-mono text-ink-700 truncate mr-3">{m.name}</span>
+                <span className="num text-ink-600 shrink-0">
+                  {m.size_kb.toFixed(0)} kB · age {m.age_hours.toFixed(1)}h
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-micro uppercase tracking-wider text-ink-600 mb-2">Runtime</div>
+          <div className="flex flex-col gap-1 text-caption">
+            <div className="flex justify-between border-b border-white/[0.03] py-1">
+              <span className="text-ink-700">Disk free</span>
+              <span className="num text-ink-800">
+                {data.disk.free_gb.toFixed(0)} GB ({data.disk.free_pct.toFixed(0)}%)
+              </span>
+            </div>
+            <div className="flex justify-between border-b border-white/[0.03] py-1">
+              <span className="text-ink-700">Disk used</span>
+              <span className="num text-ink-600">
+                {data.disk.used_gb.toFixed(0)} / {data.disk.total_gb.toFixed(0)} GB
+              </span>
+            </div>
+            <div className="flex justify-between border-b border-white/[0.03] py-1">
+              <span className="text-ink-700">GPU</span>
+              <span className="num text-ink-800">
+                {data.gpu.onnx_directml === true ? 'DirectML detected' : 'CPU only'}
+              </span>
+            </div>
+            <div className="flex justify-between border-b border-white/[0.03] py-1">
+              <span className="text-ink-700">CPU</span>
+              <span className="num text-ink-600">
+                {data.process.cpu_percent != null ? `${data.process.cpu_percent.toFixed(1)}%` : '—'}
+              </span>
+            </div>
+          </div>
+
+          <div className="text-micro uppercase tracking-wider text-ink-600 mt-4 mb-2">
+            Env keys
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(data.env).map(([k, ok]) => (
+              <span
+                key={k}
+                className={`pill ${ok ? 'pill-bull' : ''}`}
+                style={{ fontSize: 9, opacity: ok ? 1 : 0.55 }}
+                title={ok ? 'Set' : 'Missing'}
+              >
+                {ok ? '✓' : '○'} {k}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

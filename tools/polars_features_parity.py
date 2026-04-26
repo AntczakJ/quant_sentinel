@@ -51,32 +51,73 @@ def load_xau_5min() -> pd.DataFrame:
 def pandas_subset(df: pd.DataFrame) -> pd.DataFrame:
     """Compute the subset that has a polars equivalent — pandas reference."""
     out = pd.DataFrame(index=df.index)
+    # ── Returns ─────────────────────────────────────────────────────
     out["ret_1"] = df["close"].pct_change()
     out["ret_5"] = df["close"].pct_change(5)
     out["ret_10"] = df["close"].pct_change(10)
+    # ── Rolling stats ──────────────────────────────────────────────
     out["volatility_20"] = df["close"].pct_change().rolling(20).std()
     out["sma_20"] = df["close"].rolling(20).mean()
     out["high_14"] = df["high"].rolling(14).max()
     out["low_14"] = df["low"].rolling(14).min()
-    out["body_ratio"] = (df["close"] - df["open"]).abs() / (df["high"] - df["low"] + 1e-10)
+    # ── Candle shape ──────────────────────────────────────────────
+    high_low = df["high"] - df["low"] + 1e-10
+    out["body_ratio"] = (df["close"] - df["open"]).abs() / high_low
+    out["upper_shadow_ratio"] = (df["high"] - df[["close", "open"]].max(axis=1)) / high_low
+    out["lower_shadow_ratio"] = (df[["close", "open"]].min(axis=1) - df["low"]) / high_low
+    # ── EMA + distance ─────────────────────────────────────────────
+    ema20 = df["close"].ewm(span=20, adjust=False).mean()
+    out["ema_20"] = ema20
+    out["ema_distance"] = (df["close"] - ema20) / ema20
+    out["above_ema20"] = (df["close"] > ema20).astype(int)
+    # ── Williams %R (14) ──────────────────────────────────────────
+    h14 = df["high"].rolling(14).max()
+    l14 = df["low"].rolling(14).min()
+    out["williams_r"] = -100 * (h14 - df["close"]) / (h14 - l14 + 1e-10)
+    # ── Higher high / lower low (5-bar lookback) ───────────────────
+    out["higher_high"] = (df["high"].rolling(5).max().shift(1) < df["high"]).astype(int)
+    out["lower_low"] = (df["low"].rolling(5).min().shift(1) > df["low"]).astype(int)
     return out
 
 
 def polars_subset(df_pd: pd.DataFrame) -> pd.DataFrame:
     """Same set of features, computed via polars Lazy expressions."""
     df = pl.from_pandas(df_pd)
-    out = (
-        df.select(
-            pl.col("close").pct_change().alias("ret_1"),
-            pl.col("close").pct_change(5).alias("ret_5"),
-            pl.col("close").pct_change(10).alias("ret_10"),
-            pl.col("close").pct_change().rolling_std(window_size=20).alias("volatility_20"),
-            pl.col("close").rolling_mean(window_size=20).alias("sma_20"),
-            pl.col("high").rolling_max(window_size=14).alias("high_14"),
-            pl.col("low").rolling_min(window_size=14).alias("low_14"),
-            ((pl.col("close") - pl.col("open")).abs()
-             / (pl.col("high") - pl.col("low") + 1e-10)).alias("body_ratio"),
-        )
+
+    # Build min(open, close) and max(open, close) via polars min_horizontal / max_horizontal
+    body_max = pl.max_horizontal(pl.col("open"), pl.col("close"))
+    body_min = pl.min_horizontal(pl.col("open"), pl.col("close"))
+    high_low_eps = pl.col("high") - pl.col("low") + 1e-10
+    ema20 = pl.col("close").ewm_mean(span=20, adjust=False)
+    h14 = pl.col("high").rolling_max(window_size=14)
+    l14 = pl.col("low").rolling_min(window_size=14)
+
+    out = df.select(
+        # Returns
+        pl.col("close").pct_change().alias("ret_1"),
+        pl.col("close").pct_change(5).alias("ret_5"),
+        pl.col("close").pct_change(10).alias("ret_10"),
+        # Rolling stats
+        pl.col("close").pct_change().rolling_std(window_size=20).alias("volatility_20"),
+        pl.col("close").rolling_mean(window_size=20).alias("sma_20"),
+        pl.col("high").rolling_max(window_size=14).alias("high_14"),
+        pl.col("low").rolling_min(window_size=14).alias("low_14"),
+        # Candle shape
+        ((pl.col("close") - pl.col("open")).abs() / high_low_eps).alias("body_ratio"),
+        ((pl.col("high") - body_max) / high_low_eps).alias("upper_shadow_ratio"),
+        ((body_min - pl.col("low")) / high_low_eps).alias("lower_shadow_ratio"),
+        # EMA-based
+        ema20.alias("ema_20"),
+        ((pl.col("close") - ema20) / ema20).alias("ema_distance"),
+        (pl.col("close") > ema20).cast(pl.Int64).alias("above_ema20"),
+        # Williams %R
+        (-100 * (h14 - pl.col("close")) / (h14 - l14 + 1e-10)).alias("williams_r"),
+        # Higher high / lower low — fill_null mirrors pandas `(... < ...).astype(int)`
+        # which yields 0 for the leading bars where the rolling window is empty.
+        (pl.col("high").rolling_max(window_size=5).shift(1) < pl.col("high"))
+            .fill_null(False).cast(pl.Int64).alias("higher_high"),
+        (pl.col("low").rolling_min(window_size=5).shift(1) > pl.col("low"))
+            .fill_null(False).cast(pl.Int64).alias("lower_low"),
     )
     return out.to_pandas()
 

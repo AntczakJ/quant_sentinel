@@ -272,6 +272,19 @@ export const api = {
       current_price: number
     }>('/portfolio/open-positions'),
 
+  /** Diagnostic snapshot of the running stack — versions, models, GPU, env. */
+  systemInfo: () =>
+    get<{
+      platform: { system: string; release: string; machine: string; python: string }
+      versions: Record<string, string | null>
+      models: Array<{ name: string; size_kb: number; mtime_iso: string; age_hours: number }>
+      xgb_loader: { status: string; path?: string; error?: string }
+      process: { rss_mb?: number; vms_mb?: number; num_threads?: number; cpu_percent?: number; uptime_s?: number; error?: string }
+      gpu: Record<string, unknown>
+      disk: { total_gb: number; used_gb: number; free_gb: number; free_pct: number }
+      env: Record<string, boolean>
+    }>('/system/info'),
+
   // Scanner control
   scannerStatus: () =>
     get<{ paused: boolean; reason: string | null; since: string | null }>('/scanner/status'),

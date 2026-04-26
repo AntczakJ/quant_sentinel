@@ -1347,6 +1347,8 @@ from api.routers import params as _params_router
 app.include_router(_params_router.router, prefix="/api/params", tags=["Dynamic Params"])
 from api.routers import grid as _grid_router
 app.include_router(_grid_router.router, prefix="/api/grid", tags=["Grid Backtest"])
+from api.routers import system as _system_router
+app.include_router(_system_router.router, prefix="/api/system", tags=["System Info"])
 
 
 @app.get("/api/metrics", tags=["System"])

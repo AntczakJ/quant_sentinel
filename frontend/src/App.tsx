@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import { Shell } from '@/components/Shell'
 import { CommandPalette } from '@/components/CommandPalette'
+import { ShortcutsOverlay } from '@/components/ShortcutsOverlay'
 import { TradeWatcher } from '@/components/TradeWatcher'
 import Dashboard from '@/pages/Dashboard'
 import Trades from '@/pages/Trades'
@@ -22,6 +23,7 @@ export default function App() {
         </Routes>
       </Shell>
       <CommandPalette />
+      <ShortcutsOverlay />
       <TradeWatcher />
     </>
   )
