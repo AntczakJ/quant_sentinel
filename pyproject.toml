@@ -82,6 +82,11 @@ dependencies = [
     "duckdb>=1.5.0,<1.6.0",
     # Error tracking + cron monitor — soft-disabled when SENTRY_DSN unset.
     "sentry-sdk[fastapi,httpx,asyncio]>=2.0.0",
+    # Modal Labs — opt-in cloud GPU offload for `train_all.py`. Idle by
+    # default; only fires when Janek runs `modal token new` and `modal
+    # deploy tools/modal_train.py`. The modal CLI is bundled with the
+    # SDK install.
+    "modal>=0.66",
     # Native XGBoost compilation — `tools/compile_xgb_treelite.py` produces
     # models/xgb_treelite.{dll,so}; ensemble_models.py loads it ahead of
     # ONNX/native sklearn paths. ~12x faster on N=1 single-sample inference.

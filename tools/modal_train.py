@@ -132,18 +132,36 @@ def run(
         print(f"[modal_train] copied {len(list(out.glob('*')))} model files to /models")
 
 
+_MOUNT_IGNORE = (
+    # Anything that would inflate the bundle past the 5 GB Modal limit.
+    "**/.venv/**", "**/node_modules/**", "**/__pycache__/**",
+    "**/dist/**", "**/build/**", "**/.git/**",
+    "**/data/sentinel.db*", "**/data/backups/**", "**/data/_*cache*/**",
+    "**/data/historical/**",   # warehouse goes via the qs-warehouse Volume
+    "**/logs/**", "**/.pytest_cache/**", "**/.ruff_cache/**",
+    "**/frontend/**",          # the trainer never touches the SPA
+    "**/frontend_v3_baseline/**", "**/frontend_v1/**",
+    "**/uv.lock", "**/.mypy_cache/**",
+)
+
+
 @app.local_entrypoint()
 def main(skip_lstm: bool = False, skip_rl: bool = True, skip_xgb: bool = False):
     """Local CLI hook: `modal run tools/modal_train.py::main --skip-lstm`.
 
     The repo gets attached as a local dir so train_all.py runs unchanged
-    on the remote container. Tweak `local_path` if you reorganize.
+    on the remote container. Heavy / irrelevant trees are excluded via
+    `_MOUNT_IGNORE` — without them Modal would refuse the upload.
     """
     repo_root = Path(__file__).resolve().parents[1]
-    # Mount the repo into /repo on the remote — train_all.py expects to
-    # see src/, api/, models/ relative to its own location.
     run.with_options(  # type: ignore[attr-defined]
-        mounts=[modal.Mount.from_local_dir(str(repo_root), remote_path="/repo")]
+        mounts=[modal.Mount.from_local_dir(
+            str(repo_root),
+            remote_path="/repo",
+            condition=lambda p: not any(
+                __import__("fnmatch").fnmatch(p, pat) for pat in _MOUNT_IGNORE
+            ),
+        )]
     ).remote(skip_lstm=skip_lstm, skip_rl=skip_rl, skip_xgb=skip_xgb)
 
 
