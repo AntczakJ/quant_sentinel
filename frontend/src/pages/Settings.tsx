@@ -19,8 +19,8 @@ export default function Settings() {
           <div className="mt-4 space-y-2">
             {[
               ['Status', health?.status ?? '—'],
-              ['Data provider', health?.data_provider ?? '—'],
-              ['WebSocket', health?.ws_status ?? '—'],
+              ['Uptime', health?.uptime ?? '—'],
+              ['Models loaded', String(health?.models_loaded ?? '—')],
             ].map(([k, v]) => (
               <Row key={k as string} label={k as string} value={v as string} />
             ))}
@@ -30,13 +30,31 @@ export default function Settings() {
         <Card variant="raised" className="p-6">
           <h3 className="text-title font-display">Account</h3>
           <div className="mt-4 space-y-2">
-            <Row label="Balance" value={portfolio?.balance != null ? `$${portfolio.balance.toFixed(2)}` : '—'} />
-            <Row label="Equity" value={portfolio?.equity != null ? `$${portfolio.equity.toFixed(2)}` : '—'} />
+            <Row
+              label="Balance"
+              value={
+                portfolio?.balance != null
+                  ? `${portfolio.balance.toFixed(2)} ${portfolio.currency || ''}`
+                  : '—'
+              }
+            />
             <Row
               label="P&L"
-              value={portfolio?.pnl != null ? `${portfolio.pnl >= 0 ? '+' : ''}$${portfolio.pnl.toFixed(2)}` : '—'}
+              value={
+                portfolio?.pnl != null
+                  ? `${portfolio.pnl >= 0 ? '+' : ''}${portfolio.pnl.toFixed(2)}`
+                  : '—'
+              }
             />
-            <Row label="Open positions" value={String(portfolio?.open_trades ?? 0)} />
+            <Row
+              label="P&L %"
+              value={
+                portfolio?.pnl_pct != null
+                  ? `${portfolio.pnl_pct >= 0 ? '+' : ''}${portfolio.pnl_pct.toFixed(2)}%`
+                  : '—'
+              }
+            />
+            <Row label="Open positions" value={String(portfolio?.open_positions ?? 0)} />
           </div>
         </Card>
 

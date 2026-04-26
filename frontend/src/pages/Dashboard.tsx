@@ -1,35 +1,35 @@
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { api, type Trade } from '@/api/client'
+import { api, type Trade, type ScannerInsight as ScanI, type MacroContext } from '@/api/client'
 import { Card } from '@/components/Card'
 import { Stat } from '@/components/Stat'
 
 export default function Dashboard() {
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.portfolio, refetchInterval: 15_000 })
   const { data: ticker } = useQuery({ queryKey: ['ticker'], queryFn: () => api.ticker('XAU/USD'), refetchInterval: 5_000 })
-  const { data: trades } = useQuery({ queryKey: ['trades-recent'], queryFn: () => api.trades(10) })
+  const { data: trades = [] } = useQuery({ queryKey: ['trades-recent'], queryFn: () => api.trades(10) })
   const { data: insight } = useQuery({ queryKey: ['scanner-insight'], queryFn: api.scannerInsight, refetchInterval: 30_000 })
   const { data: macro } = useQuery({ queryKey: ['macro'], queryFn: api.macroContext, refetchInterval: 60_000 })
 
-  const closed = (trades ?? []).filter((t) => t.status === 'WIN' || t.status === 'LOSS' || t.status === 'PROFIT' || t.status === 'LOSE')
+  const closed = trades.filter((t) => t.status === 'WIN' || t.status === 'LOSS' || t.status === 'PROFIT' || t.status === 'LOSE')
   const wins = closed.filter((t) => t.status === 'WIN' || t.status === 'PROFIT').length
   const wr = closed.length ? (wins / closed.length) * 100 : null
-  const totalPnl = (trades ?? []).reduce((s, t) => s + (t.profit ?? 0), 0)
+  const totalPnl = trades.reduce((s, t) => s + (t.profit ?? 0), 0)
 
   return (
     <div className="flex flex-col gap-12">
-      {/* ─── Hero ─────────────────────────────────────────────────────── */}
       <Hero ticker={ticker} portfolio={portfolio} macro={macro} />
 
-      {/* ─── Stats grid ───────────────────────────────────────────────── */}
       <section>
         <SectionHeader title="Today" subtitle="Live performance metrics" />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
           <Card variant="raised" delay={0.05} className="p-6">
             <Stat
-              label="Equity"
-              value={portfolio?.equity ? `$${portfolio.equity.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
-              delta={portfolio?.pnl != null ? { value: portfolio.pnl, suffix: '$' } : null}
+              label="Balance"
+              value={portfolio?.balance != null
+                ? `${portfolio.balance.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${portfolio.currency || ''}`
+                : '—'}
+              delta={portfolio?.pnl != null ? { value: portfolio.pnl, suffix: '' } : null}
               hint="vs starting balance"
             />
           </Card>
@@ -43,26 +43,25 @@ export default function Dashboard() {
           <Card variant="raised" delay={0.15} className="p-6">
             <Stat
               label="Recent P&L"
-              value={`${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(0)}`}
+              value={`${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(0)}`}
               hint="last 10 trades"
             />
           </Card>
           <Card variant="raised" delay={0.2} className="p-6">
             <Stat
               label="Open"
-              value={portfolio?.open_trades ?? '0'}
+              value={portfolio?.open_positions ?? 0}
               hint="active positions"
             />
           </Card>
         </div>
       </section>
 
-      {/* ─── Two-col: Signals + Scanner Insight ───────────────────────── */}
       <div className="grid lg:grid-cols-3 gap-6">
         <Card variant="raised" delay={0.25} className="p-6 lg:col-span-2">
           <SectionHeader title="Recent signals" subtitle="Last 10 trades" inline />
           <div className="mt-6">
-            <TradesList trades={trades ?? []} />
+            <TradesList trades={trades} />
           </div>
         </Card>
         <Card variant="raised" delay={0.3} className="p-6">
@@ -73,7 +72,6 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* ─── Macro strip ───────────────────────────────────────────────── */}
       {macro && <MacroStrip macro={macro} />}
     </div>
   )
@@ -86,13 +84,12 @@ function Hero({
   macro,
 }: {
   ticker: { price: number; change_pct?: number } | undefined
-  portfolio: { equity?: number; pnl?: number } | undefined
-  macro: { macro_regime?: string; market_regime?: string } | undefined
+  portfolio: { balance?: number; pnl?: number; currency?: string } | undefined
+  macro: MacroContext | undefined
 }) {
   const regime = macro?.macro_regime
   const regimeLabel = regime === 'zielony' ? 'BULL' : regime === 'czerwony' ? 'BEAR' : 'NEUTRAL'
-  const regimeColor =
-    regime === 'zielony' ? 'pill-bull' : regime === 'czerwony' ? 'pill-bear' : 'pill'
+  const regimeColor = regime === 'zielony' ? 'pill-bull' : regime === 'czerwony' ? 'pill-bear' : 'pill'
 
   return (
     <motion.section
@@ -121,7 +118,7 @@ function Hero({
             {ticker?.change_pct != null && (
               <div className={`mt-3 text-headline num ${ticker.change_pct >= 0 ? 'text-bull' : 'text-bear'}`}>
                 {ticker.change_pct >= 0 ? '+' : ''}
-                {ticker.change_pct.toFixed(2)}%
+                {(ticker.change_pct * 100).toFixed(3)}%
               </div>
             )}
           </div>
@@ -129,7 +126,8 @@ function Hero({
           <div className="text-right space-y-1">
             <div className="text-micro uppercase tracking-wider text-ink-600">Account</div>
             <div className="num font-display text-display-sm text-gold-gradient">
-              ${portfolio?.equity?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? '10,000'}
+              {portfolio?.balance?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? '—'}{' '}
+              <span className="text-headline opacity-60">{portfolio?.currency}</span>
             </div>
             <div className={`text-body num ${(portfolio?.pnl ?? 0) >= 0 ? 'text-bull' : 'text-bear'}`}>
               {(portfolio?.pnl ?? 0) >= 0 ? '+' : ''}
@@ -142,7 +140,6 @@ function Hero({
   )
 }
 
-// ─── Section header ──────────────────────────────────────────────────
 function SectionHeader({ title, subtitle, inline }: { title: string; subtitle?: string; inline?: boolean }) {
   return (
     <div className={inline ? 'flex items-baseline gap-3' : ''}>
@@ -163,7 +160,7 @@ function TradesList({ trades }: { trades: Trade[] }) {
         const isWin = t.status === 'WIN' || t.status === 'PROFIT'
         const isLoss = t.status === 'LOSS' || t.status === 'LOSE'
         const isOpen = t.status === 'OPEN' || t.status === 'PROPOSED'
-        const dirClass = t.direction.toUpperCase().includes('LONG') ? 'text-bull' : 'text-bear'
+        const isLong = t.direction.toUpperCase().includes('LONG')
         return (
           <div
             key={t.id}
@@ -172,18 +169,19 @@ function TradesList({ trades }: { trades: Trade[] }) {
             }`}
           >
             <div className="flex items-center gap-4 min-w-0 flex-1">
-              <span className={`pill ${dirClass.includes('bull') ? 'pill-bull' : 'pill-bear'} shrink-0`}>
-                {t.direction.toUpperCase().includes('LONG') ? 'LONG' : 'SHORT'}
+              <span className={`pill ${isLong ? 'pill-bull' : 'pill-bear'} shrink-0`}>
+                {isLong ? 'LONG' : 'SHORT'}
               </span>
               <div className="min-w-0">
                 <div className="text-body truncate">
-                  ${t.entry?.toFixed(2)} <span className="text-ink-600">→</span>{' '}
+                  {t.entry != null ? `$${t.entry.toFixed(2)}` : '—'}{' '}
+                  <span className="text-ink-600">→</span>{' '}
                   <span className={isWin ? 'text-bull' : isLoss ? 'text-bear' : 'text-ink-700'}>
-                    ${t.tp?.toFixed(2)}
+                    {t.tp != null ? `$${t.tp.toFixed(2)}` : '—'}
                   </span>
                 </div>
                 <div className="text-caption text-ink-600 truncate">
-                  {t.pattern || t.structure || 'unknown'} ·{' '}
+                  {t.pattern || t.timeframe || '—'} ·{' '}
                   {new Date(t.timestamp).toLocaleString(undefined, {
                     month: 'short',
                     day: 'numeric',
@@ -211,62 +209,78 @@ function TradesList({ trades }: { trades: Trade[] }) {
 }
 
 // ─── Scanner panel ────────────────────────────────────────────────────
-function ScannerPanel({ insight }: { insight: { rejection_breakdown?: Array<{ filter: string; reason: string; count: number }>; streak?: { count: number; oldest_age_h: number } } | undefined }) {
+function ScannerPanel({ insight }: { insight: ScanI | undefined }) {
   if (!insight) {
     return <div className="text-caption text-ink-600 py-4">Waiting for scanner data…</div>
   }
-  const rejections = insight.rejection_breakdown?.slice(0, 5) ?? []
+  const rejections = insight.rejections?.top?.slice(0, 5) ?? []
+  const toxic = insight.toxic_patterns?.slice(0, 3) ?? []
   return (
     <div className="flex flex-col gap-5">
-      {insight.streak && insight.streak.count > 0 && (
-        <div className="flex items-center justify-between text-caption">
-          <span className="text-ink-600">Loss streak</span>
-          <span className={`num ${insight.streak.count >= 5 ? 'text-bear' : 'text-ink-800'}`}>
-            {insight.streak.count}L · {insight.streak.oldest_age_h.toFixed(1)}h
-          </span>
-        </div>
-      )}
+      <div className="flex items-center justify-between text-caption">
+        <span className="text-ink-600">Window</span>
+        <span className="num text-ink-800">{insight.hours_window}h</span>
+      </div>
+      <div className="flex items-center justify-between text-caption">
+        <span className="text-ink-600">Rejections (total)</span>
+        <span className="num text-ink-800">{insight.rejections?.total ?? 0}</span>
+      </div>
       <div>
-        <div className="text-micro uppercase tracking-wider text-ink-600 mb-3">Top rejections</div>
+        <div className="text-micro uppercase tracking-wider text-ink-600 mb-3">Top filters</div>
         {rejections.length === 0 ? (
-          <div className="text-caption text-ink-600">No rejection data.</div>
+          <div className="text-caption text-ink-600">Quiet window.</div>
         ) : (
           <div className="flex flex-col gap-2">
             {rejections.map((r, i) => (
               <div key={i} className="flex items-center justify-between text-caption">
-                <span className="truncate text-ink-700">{r.reason}</span>
+                <span className="truncate text-ink-700">{r.filter}</span>
                 <span className="num text-ink-600 shrink-0 ml-3">{r.count}</span>
               </div>
             ))}
           </div>
         )}
       </div>
+      {toxic.length > 0 && (
+        <div>
+          <div className="text-micro uppercase tracking-wider text-ink-600 mb-3">Toxic watch</div>
+          <div className="flex flex-col gap-2">
+            {toxic.map((p, i) => (
+              <div key={i} className="text-caption flex items-center justify-between">
+                <span className="truncate text-ink-700 mr-2">{p.pattern}</span>
+                <span className={`num shrink-0 ${p.win_rate < 0.3 ? 'text-bear' : 'text-ink-600'}`}>
+                  {Math.round(p.win_rate * 100)}% · n={p.n}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── Macro strip ──────────────────────────────────────────────────────
-function MacroStrip({ macro }: { macro: { usdjpy_zscore_20: number; xau_usdjpy_corr_20: number } }) {
+function MacroStrip({ macro }: { macro: MacroContext }) {
   return (
     <Card variant="flat" delay={0.4} className="p-6">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
         <div>
-          <div className="text-micro uppercase tracking-wider text-ink-600">USD/JPY z-score (20)</div>
-          <div className="num text-headline mt-1">{macro.usdjpy_zscore_20?.toFixed(2)}</div>
+          <div className="text-micro uppercase tracking-wider text-ink-600">USD/JPY z-score</div>
+          <div className="num text-headline mt-1">{macro.usdjpy_zscore?.toFixed(2) ?? '—'}</div>
         </div>
         <div>
-          <div className="text-micro uppercase tracking-wider text-ink-600">XAU·USDJPY corr (20)</div>
-          <div className="num text-headline mt-1">{macro.xau_usdjpy_corr_20?.toFixed(2)}</div>
+          <div className="text-micro uppercase tracking-wider text-ink-600">XAU·USDJPY corr</div>
+          <div className="num text-headline mt-1">{macro.xau_usdjpy_corr != null ? macro.xau_usdjpy_corr.toFixed(2) : '—'}</div>
         </div>
         <div>
-          <div className="text-micro uppercase tracking-wider text-ink-600">Last update</div>
-          <div className="text-body mt-1 text-ink-700">
-            {new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+          <div className="text-micro uppercase tracking-wider text-ink-600">Macro regime</div>
+          <div className="text-body mt-1 capitalize">
+            {macro.macro_regime === 'zielony' ? 'bullish gold' : macro.macro_regime === 'czerwony' ? 'bearish gold' : 'neutral'}
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-micro uppercase tracking-wider text-ink-600">Polled</div>
-          <div className="text-body mt-1 text-ink-700">every 60s</div>
+        <div>
+          <div className="text-micro uppercase tracking-wider text-ink-600">Market</div>
+          <div className="text-body mt-1 capitalize">{macro.market_regime?.replace('_', ' ') ?? '—'}</div>
         </div>
       </div>
     </Card>

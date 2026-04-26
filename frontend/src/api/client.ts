@@ -1,14 +1,15 @@
 /**
- * src/api/client.ts — Lean axios client for the Quant Sentinel API.
+ * src/api/client.ts — Quant Sentinel API client.
  *
- * Adapted from frontend_v1/src/api/client.ts but slimmed down.
- * Circuit breaker + 304 ETag caching kept; deduplication kept.
+ * Wired against the real endpoints exposed by api/main.py (FastAPI).
+ * Several endpoints return prices as `"$4732.84"` strings — we parse those
+ * into numbers in the wrappers so components see typed numerics.
  */
 import axios, { type AxiosResponse, type AxiosError } from 'axios'
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api'
 
-// ─── Circuit breaker (close fast when backend is down) ────────────────
+// ─── Circuit breaker ──────────────────────────────────────────────────
 const cb = {
   state: 'CLOSED' as 'CLOSED' | 'OPEN' | 'HALF_OPEN',
   failures: 0,
@@ -31,7 +32,6 @@ const cb = {
   },
 }
 
-// ─── Axios instance ───────────────────────────────────────────────────
 const ax = axios.create({
   baseURL: BASE,
   timeout: 8000,
@@ -39,12 +39,9 @@ const ax = axios.create({
 })
 
 ax.interceptors.request.use((config) => {
-  if (!cb.canRequest()) {
-    return Promise.reject(new Error('circuit-open'))
-  }
+  if (!cb.canRequest()) return Promise.reject(new Error('circuit-open'))
   return config
 })
-
 ax.interceptors.response.use(
   (r: AxiosResponse) => { cb.ok(); return r },
   (e: AxiosError) => {
@@ -53,7 +50,6 @@ ax.interceptors.response.use(
   },
 )
 
-// ─── Request dedup (multiple components asking for same URL get one request) ──
 const inflight = new Map<string, Promise<unknown>>()
 
 async function get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
@@ -67,36 +63,48 @@ async function get<T>(path: string, params?: Record<string, unknown>): Promise<T
   return p
 }
 
-// ─── Typed endpoints ──────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────
+
+/** Parse "$4732.84" or "$-3.29" → 4732.84 / -3.29. Already-numeric returns as-is. */
+function parsePrice(v: unknown): number | null {
+  if (v == null) return null
+  if (typeof v === 'number') return v
+  if (typeof v !== 'string') return null
+  const cleaned = v.replace(/[$,\s]/g, '')
+  if (!cleaned || cleaned === '—') return null
+  const n = parseFloat(cleaned)
+  return Number.isFinite(n) ? n : null
+}
+
+// ─── Public types ─────────────────────────────────────────────────────
 
 export interface Health {
   status: string
-  ws_connected?: boolean
-  ws_status?: string
+  uptime?: string
+  uptime_seconds?: number
+  models_loaded?: boolean
   data_provider?: string
 }
 
-export interface Portfolio {
+export interface PortfolioSummary {
   balance: number
-  equity?: number
-  pnl?: number
-  open_trades?: number
-  closed_trades?: number
+  currency: string
+  pnl: number
+  pnl_pct: number
+  /** open positions count, fetched via /portfolio/open-positions */
+  open_positions?: number
 }
 
 export interface Trade {
   id: number
   timestamp: string
   direction: string
-  entry: number
-  sl: number
-  tp: number
+  entry: number | null
+  sl: number | null
+  tp: number | null
   status: string
   profit: number | null
-  lot: number
-  rsi?: number
-  trend?: string
-  structure?: string
+  timeframe?: string
   pattern?: string
 }
 
@@ -105,43 +113,112 @@ export interface Ticker {
   price: number
   change?: number
   change_pct?: number
-  high?: number
-  low?: number
-  volume?: number
+  high_24h?: number
+  low_24h?: number
+}
+
+export interface Candle {
+  /** Unix seconds (lightweight-charts compatible) */
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
 }
 
 export interface ScannerInsight {
-  open_trades: number
-  closed_today: number
-  rejection_breakdown: Array<{ filter: string; reason: string; count: number }>
-  recent_signals: Array<{ tf: string; direction: string; grade: string; ts: string }>
-  toxic_patterns: Array<{ pattern: string; n: number; wr: number }>
-  streak: { count: number; oldest_age_h: number }
+  hours_window: number
+  rejections: { total: number; top: Array<{ filter: string; count: number }> }
+  toxic_patterns: Array<{ pattern: string; n: number; win_rate: number; blocked: boolean }>
 }
 
 export interface MacroContext {
-  usdjpy_zscore_20: number
-  xau_usdjpy_corr_20: number
-  macro_regime: 'zielony' | 'czerwony' | 'neutralny'
-  market_regime: 'squeeze' | 'trending_high_vol' | 'trending_low_vol' | 'ranging'
+  usdjpy?: number | null
+  usdjpy_zscore?: number | null
+  xau_usdjpy_corr?: number | null
+  macro_regime?: 'zielony' | 'czerwony' | 'neutralny' | null
+  market_regime?: 'squeeze' | 'trending_high_vol' | 'trending_low_vol' | 'ranging' | null
 }
+
+export interface ModelStat {
+  model_name: string
+  accuracy: number | null
+  win_rate: number | null
+  last_training: string | null
+}
+
+// ─── Endpoints ────────────────────────────────────────────────────────
 
 export const api = {
   health: () => get<Health>('/health'),
-  portfolio: () => get<Portfolio>('/portfolio'),
-  trades: (limit = 50) => get<Trade[]>('/trades/recent', { limit }),
-  tradesAll: () => get<Trade[]>('/trades/all'),
+
+  async portfolio(): Promise<PortfolioSummary> {
+    const [summary, open] = await Promise.all([
+      get<{ balance: number; currency: string; pnl: number; pnl_pct: number }>('/portfolio/summary'),
+      get<{ positions: unknown[] }>('/portfolio/open-positions').catch(() => ({ positions: [] })),
+    ])
+    return { ...summary, open_positions: open.positions?.length ?? 0 }
+  },
+
+  async trades(limit = 50): Promise<Trade[]> {
+    const raw = await get<{
+      trades: Array<{
+        id: number
+        timestamp: string
+        direction: string
+        entry: string | number
+        sl: string | number
+        tp: string | number
+        status: string
+        profit: string | number | null
+        timeframe?: string
+        pattern?: string
+      }>
+    }>('/analysis/trades', { limit })
+    return (raw.trades ?? []).map((t) => ({
+      id: t.id,
+      timestamp: t.timestamp,
+      direction: t.direction,
+      entry: parsePrice(t.entry),
+      sl: parsePrice(t.sl),
+      tp: parsePrice(t.tp),
+      status: t.status,
+      profit: parsePrice(t.profit),
+      timeframe: t.timeframe,
+      pattern: t.pattern,
+    }))
+  },
+
   ticker: (symbol = 'XAU/USD') => get<Ticker>('/market/ticker', { symbol }),
-  candles: (symbol = 'XAU/USD', interval = '5m', count = 200) =>
-    get<{ candles: Array<{ time: number; open: number; high: number; low: number; close: number }> }>(
-      '/market/candles',
-      { symbol, interval, count },
-    ),
+
+  async candles(symbol = 'XAU/USD', interval = '5m', count = 500): Promise<Candle[]> {
+    const raw = await get<{
+      candles: Array<{
+        timestamp: string
+        open: number
+        high: number
+        low: number
+        close: number
+      }>
+    }>('/market/candles', { symbol, interval, count })
+    return (raw.candles ?? []).map((c) => ({
+      time: Math.floor(new Date(c.timestamp).getTime() / 1000),
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }))
+  },
+
   scannerInsight: () => get<ScannerInsight>('/scanner/insight'),
   macroContext: () => get<MacroContext>('/macro/context'),
-  models: () => get<{ models: Array<{ name: string; trained_at: string; score: number; direction: string }> }>(
-    '/models',
-  ),
+
+  async models(): Promise<ModelStat[]> {
+    const raw = await get<{ rl_stats?: ModelStat; lstm_stats?: ModelStat; xgb_stats?: ModelStat }>(
+      '/models/stats',
+    )
+    return [raw.lstm_stats, raw.xgb_stats, raw.rl_stats].filter(Boolean) as ModelStat[]
+  },
 }
 
 export const isCircuitOpen = () => cb.state !== 'CLOSED'

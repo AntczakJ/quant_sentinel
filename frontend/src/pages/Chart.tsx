@@ -5,6 +5,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
+  type UTCTimestamp,
   ColorType,
   CrosshairMode,
 } from 'lightweight-charts'
@@ -24,7 +25,7 @@ export default function ChartPage() {
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['candles', tf],
     queryFn: () => api.candles('XAU/USD', tf, 500),
     refetchInterval: 30_000,
@@ -79,18 +80,36 @@ export default function ChartPage() {
     }
   }, [])
 
-  // Update data when fetched
+  // Update data when fetched. lightweight-charts requires:
+  //   - time: UTCTimestamp (number, seconds since epoch)
+  //   - strictly ascending, no duplicates
+  // Our api.candles already returns time as a unix-seconds number.
   useEffect(() => {
-    if (!data?.candles || !seriesRef.current) return
-    const formatted: CandlestickData[] = data.candles.map((c) => ({
-      time: c.time as never,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }))
-    seriesRef.current.setData(formatted)
-    chartRef.current?.timeScale().fitContent()
+    if (!data?.length || !seriesRef.current) return
+    // Dedup + sort guard (the API may return duplicates around session boundaries)
+    const seen = new Set<number>()
+    const sorted: CandlestickData[] = []
+    for (const c of data) {
+      if (typeof c.time !== 'number' || !Number.isFinite(c.time)) continue
+      if (seen.has(c.time)) continue
+      seen.add(c.time)
+      sorted.push({
+        time: c.time as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })
+    }
+    sorted.sort((a, b) => (a.time as number) - (b.time as number))
+    if (sorted.length === 0) return
+    try {
+      seriesRef.current.setData(sorted)
+      chartRef.current?.timeScale().fitContent()
+    } catch (err) {
+      // Don't crash the whole page on a malformed payload — log and recover.
+      console.warn('chart setData failed', err)
+    }
   }, [data])
 
   return (
@@ -114,11 +133,11 @@ export default function ChartPage() {
         </div>
       </div>
 
-      <Card variant="raised" className="p-1">
+      <Card variant="raised" className="relative">
         <div ref={containerRef} className="w-full h-[640px] rounded-xl2 overflow-hidden" />
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center text-caption text-ink-600">
-            Loading candles…
+        {(isLoading || isError) && (
+          <div className="absolute inset-0 flex items-center justify-center text-caption text-ink-600 pointer-events-none">
+            {isError ? 'Failed to load candles.' : 'Loading candles…'}
           </div>
         )}
       </Card>

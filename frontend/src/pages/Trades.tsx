@@ -8,7 +8,7 @@ type Filter = 'all' | 'win' | 'loss' | 'open' | 'long' | 'short'
 export default function Trades() {
   const { data: trades = [] } = useQuery({
     queryKey: ['trades-all'],
-    queryFn: api.tradesAll,
+    queryFn: () => api.trades(500),
     refetchInterval: 30_000,
   })
   const [filter, setFilter] = useState<Filter>('all')
@@ -78,7 +78,7 @@ export default function Trades() {
               <th className="text-left py-4 px-2 font-medium">Dir</th>
               <th className="text-right py-4 px-2 font-medium">Entry</th>
               <th className="text-right py-4 px-2 font-medium">Exit</th>
-              <th className="text-right py-4 px-2 font-medium">Lot</th>
+              <th className="text-right py-4 px-2 font-medium">TF</th>
               <th className="text-right py-4 px-2 font-medium">P&L</th>
               <th className="text-left py-4 px-2 font-medium">Pattern</th>
               <th className="text-right py-4 px-6 font-medium">Status</th>
@@ -90,7 +90,7 @@ export default function Trades() {
               const isWin = t.status === 'WIN' || t.status === 'PROFIT'
               const isLoss = t.status === 'LOSS' || t.status === 'LOSE'
               const isOpen = t.status === 'OPEN' || t.status === 'PROPOSED'
-              const exit = isWin || isLoss ? t.tp : null  // TP for win heuristic
+              const exit = isWin || isLoss ? t.tp : null
               return (
                 <tr key={t.id} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
                   <td className="py-3 px-6 text-caption text-ink-700 num">
@@ -107,13 +107,13 @@ export default function Trades() {
                     </span>
                   </td>
                   <td className="py-3 px-2 text-right num text-body">
-                    ${t.entry?.toFixed(2)}
+                    {t.entry != null ? `$${t.entry.toFixed(2)}` : '—'}
                   </td>
                   <td className="py-3 px-2 text-right num text-caption text-ink-600">
                     {exit != null ? `$${exit.toFixed(2)}` : '—'}
                   </td>
                   <td className="py-3 px-2 text-right num text-caption text-ink-700">
-                    {t.lot?.toFixed(2)}
+                    {t.timeframe || '—'}
                   </td>
                   <td
                     className={`py-3 px-2 text-right num text-body ${
