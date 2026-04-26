@@ -32,7 +32,16 @@ type NumericProps = BaseProps & {
 
 type StatProps = StringProps | NumericProps
 
-const sizeClass: Record<Size, string> = {
+// Two variants: NumberFlow renders its own digits, and `-webkit-text-fill-color:
+// transparent` (used by `.text-display-gradient`) bleeds through to those digits,
+// making them invisible. So numeric values use a solid text color; only string
+// children keep the premium gradient treatment.
+const sizeClassPlain: Record<Size, string> = {
+  sm: 'text-headline text-ink-900',
+  md: 'text-display-sm text-ink-900',
+  lg: 'text-display-md text-ink-900',
+}
+const sizeClassGradient: Record<Size, string> = {
   sm: 'text-headline',
   md: 'text-display-sm text-display-gradient',
   lg: 'text-display-md text-display-gradient',
@@ -41,7 +50,8 @@ const sizeClass: Record<Size, string> = {
 export function Stat(props: StatProps) {
   const { label, delta, hint, size = 'md' } = props
   const reduced = useReducedMotion()
-  const valueClass = `num font-display tracking-tightest ${sizeClass[size]}`
+  const isNumeric = 'numeric' in props && props.numeric !== undefined
+  const valueClass = `num font-display tracking-tightest ${(isNumeric ? sizeClassPlain : sizeClassGradient)[size]}`
 
   const positive = delta && delta.value > 0
   const negative = delta && delta.value < 0

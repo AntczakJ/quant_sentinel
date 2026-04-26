@@ -76,7 +76,7 @@ export default function Models() {
             >
               <div className="absolute inset-1 rounded-full border border-white/[0.04]" />
               <div className="text-micro uppercase tracking-wider text-ink-600 z-10">Ensemble</div>
-              <div className="num text-display-sm font-display text-gold-gradient z-10 mt-1">
+              <div className="num text-display-sm font-display text-gold-400 z-10 mt-1">
                 <NumberFlow
                   value={lastConfidence * 100}
                   format={{ maximumFractionDigits: 0 }}
@@ -192,7 +192,7 @@ export default function Models() {
                   <div className="text-micro uppercase tracking-wider text-ink-600">
                     {m.win_rate != null ? 'Win rate' : 'Accuracy'}
                   </div>
-                  <div className="num text-display-sm font-display mt-1 text-display-gradient">
+                  <div className="num text-display-sm font-display mt-1 text-ink-900">
                     {acc != null ? (
                       <NumberFlow
                         value={acc}

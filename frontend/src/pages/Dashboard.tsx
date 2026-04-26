@@ -193,7 +193,7 @@ function Hero({
               Spot · gold per ounce
             </div>
             <div
-              className="num font-display text-display-lg text-display-gradient leading-none"
+              className="num font-display text-display-lg text-ink-900 leading-none"
               style={{ viewTransitionName: 'hero-price' }}
             >
               <FlashOnChange value={ticker?.price ?? null}>
@@ -223,7 +223,7 @@ function Hero({
 
           <div className="text-right space-y-1">
             <div className="text-micro uppercase tracking-wider text-ink-600">Account</div>
-            <div className="num font-display text-display-sm text-gold-gradient">
+            <div className="num font-display text-display-sm text-gold-400">
               {portfolio?.balance != null ? (
                 <NumberFlow
                   value={portfolio.balance}
