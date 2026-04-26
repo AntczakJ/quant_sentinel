@@ -294,6 +294,22 @@ export const api = {
       file: { path: string; size_kb: number | null }
     }>('/system/db-stats'),
 
+  /** Detailed subsystem health probe. */
+  healthDeep: () =>
+    get<{
+      all_ok: boolean
+      checks: Record<string, {
+        ok: boolean
+        message?: string
+        loaded?: Record<string, boolean>
+        paused?: boolean
+        last_cycle_s_ago?: number | null
+        last_timestamp?: string | null
+        last_status?: string | null
+        open_count?: number
+      }>
+    }>('/system/health/deep'),
+
   /** API credit-bucket status (TwelveData primary). */
   rateLimit: () =>
     get<{

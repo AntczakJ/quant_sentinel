@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { OfflineBanner } from './OfflineBanner'
 import { ScrambleText } from './ScrambleText'
+import { HealthDeepPopover } from './HealthDeepPopover'
 import { isSoundEnabled, setSoundEnabled, playClick } from '@/lib/sound'
 
 // Lazy-load WebGL shader to avoid blocking initial paint on slower routes
@@ -95,16 +96,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <span>quick</span>
             </button>
             <SoundToggle />
-            <div
-              className={`pill ${apiOk ? 'border-bull/30 bg-bull/[0.08] text-bull' : 'border-bear/30 bg-bear/[0.08] text-bear'}`}
-              title={health ? `API: ${health.status}` : 'API: unknown'}
-            >
-              <span
-                className={`inline-block w-1.5 h-1.5 rounded-full ${apiOk ? 'bg-bull' : 'bg-bear'} ${apiOk ? 'animate-pulse-glow' : ''}`}
-                style={{ boxShadow: apiOk ? '0 0 8px currentColor' : 'none' }}
-              />
-              {apiOk ? 'live' : 'down'}
-            </div>
+            <HealthDeepPopover />
             <button
               type="button"
               onClick={() => setNavOpen((v) => !v)}
