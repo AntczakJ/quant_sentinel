@@ -172,6 +172,13 @@ models/*_sweep_winner.keras.params
 models/*.pre_*_promote.keras
 models/*.pre_*_promote.onnx
 models/*.pre_*_promote.keras.params
+
+# Treelite-compiled native shared libraries — regenerate via
+# `tools/compile_xgb_treelite.py` after retraining XGB. Platform-specific
+# (.dll on Windows, .so on Unix) and tightly coupled to xgb.pkl mtime;
+# committing them risks staleness.
+models/*_treelite.dll
+models/*_treelite.so
 models/*_scaler.pre_*_promote.pkl
 
 # Autonomous overnight session artefacts.

@@ -104,20 +104,53 @@ def _load_lstm():
 
 
 def _load_xgb():
-    """Lazy load XGBoost model. Prefers ONNX+DirectML GPU if available."""
+    """
+    Lazy load XGBoost. Tries three paths in order:
+      1. Treelite — native shared lib compiled by tools/compile_xgb_treelite.py
+         (~12× faster than native sklearn for the N=1 single-sample inference
+         the live scanner runs every cycle).
+      2. ONNX Runtime DirectML (GPU) — if `onnxruntime-directml` reports a
+         working DirectML device.
+      3. Native sklearn xgboost (CPU fallback).
+    """
+    import platform
     pkl_path = "models/xgb.pkl"
     onnx_path = "models/xgb.onnx"
+    treelite_path = (
+        "models/xgb_treelite.dll" if platform.system() == "Windows"
+        else "models/xgb_treelite.so"
+    )
     _invalidate_if_stale("xgb", pkl_path, onnx_path)
     if _models_loaded["xgb"]:
         return _models_cache["xgb"]
     _models_mtime["xgb"] = max(_file_mtime(pkl_path), _file_mtime(onnx_path))
 
-    # Try ONNX Runtime (GPU via DirectML) first
+    # ── 1. Treelite (compiled .dll/.so) — preferred ─────────────────
+    try:
+        if os.path.exists(treelite_path):
+            # tl2cgen on Windows needs <prefix>/Library/bin to exist or it
+            # blows up at import time looking for shipped DLLs.
+            from pathlib import Path as _P
+            import sys as _sys
+            _lib_dir = _P(os.path.normpath(_sys.prefix)) / "Library" / "bin"
+            try:
+                _lib_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            import tl2cgen  # type: ignore
+            predictor = tl2cgen.Predictor(treelite_path)
+            _models_cache["xgb"] = ("treelite", predictor)
+            _models_loaded["xgb"] = True
+            logger.info(f"XGBoost loaded via Treelite ({treelite_path}) — N=1 path optimized")
+            return _models_cache["xgb"]
+    except Exception as e:
+        logger.debug(f"Treelite XGBoost load skipped: {e}")
+
+    # ── 2. ONNX Runtime (DirectML GPU) ──────────────────────────────
     try:
         from src.analysis.compute import detect_gpu, convert_xgboost_to_onnx, get_onnx_session
         gpu_info = detect_gpu()
         if gpu_info["onnx_directml"] and os.path.exists(pkl_path):
-            # Load pkl to convert, or use existing onnx
             import pickle
             with open(pkl_path, 'rb') as f:
                 xgb_model = pickle.load(f)
@@ -133,7 +166,7 @@ def _load_xgb():
     except Exception as e:
         logger.debug(f"ONNX XGBoost load skipped: {e}")
 
-    # Fallback: native XGBoost (CPU)
+    # ── 3. Native sklearn xgboost (CPU) ─────────────────────────────
     try:
         import pickle
         if os.path.exists(pkl_path):
@@ -141,7 +174,7 @@ def _load_xgb():
                 model = pickle.load(f)
             _models_cache["xgb"] = ("sklearn", model)
             _models_loaded["xgb"] = True
-            logger.info("XGBoost model loaded (CPU)")
+            logger.info("XGBoost model loaded (native CPU)")
             return _models_cache["xgb"]
     except Exception as e:
         logger.warning(f"Failed to load XGBoost: {e}")
@@ -497,6 +530,19 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
                 # 0.5 into the weighted fusion (which used to mask real
                 # broken-model failures as "no signal").
                 logger.warning(f"XGB ONNX: unexpected output shape, skipping voter")
+                return None
+            elif model_type == "treelite":
+                # tl2cgen.Predictor expects a tl2cgen.DMatrix. The native
+                # output is shape (n_rows, n_classes) — pick class-1 prob.
+                import tl2cgen  # type: ignore
+                dm = tl2cgen.DMatrix(X.values.astype(np.float32))
+                out = model.predict(dm)
+                if out.ndim == 2 and out.shape[1] >= 2:
+                    return float(out[0, 1])
+                if out.ndim == 1:
+                    # Single-class output: interpret as class-1 prob directly.
+                    return float(out[0])
+                logger.warning(f"XGB Treelite: unexpected output shape {out.shape}")
                 return None
             else:
                 pred = model.predict_proba(X)

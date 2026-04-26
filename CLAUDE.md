@@ -53,6 +53,29 @@ Custom spans wrapping the BG scanner are `scanner.prefetch_tfs` and
 `/api/health` and `/api/sse/*` are excluded from request traces to keep
 the stream readable.
 
+## XGBoost via Treelite (2026-04-26 evening)
+`tools/compile_xgb_treelite.py` compiles `models/xgb.pkl` to a native
+shared library (`models/xgb_treelite.dll` on Windows, `.so` elsewhere)
+via Treelite + tl2cgen with the MSVC toolchain. Verified parity
+against the native XGBClassifier (max abs diff 5.96e-08 on 100
+random samples).
+
+`src/ml/ensemble_models.py::_load_xgb()` now tries three paths in
+order: **Treelite → ONNX/DirectML GPU → native sklearn (CPU)**.
+Treelite wins decisively on the realistic single-sample scanner
+inference: **N=1 0.95 ms → 0.08 ms (~12×)**, **N=5 1.30 ms → 0.13 ms
+(~10×)**. Batch N=5000 is ~equal to native (XGBoost batch path is
+already SIMD-optimized).
+
+Workflow after retraining XGB:
+```
+.venv/Scripts/python.exe train_all.py [...]   # produces models/xgb.pkl
+.venv/Scripts/python.exe tools/compile_xgb_treelite.py
+```
+The compile step takes ~1 min and prints the parity verification +
+benchmark. The .dll/.so is **gitignored** — regenerate locally;
+mismatched .dll vs .pkl is a real bug surface so we never commit it.
+
 ## DuckDB warehouse reader (opt-in, 2026-04-26 evening)
 `HistoricalProvider.from_warehouse()` (src/backtest/historical_provider.py)
 now routes parquet reads through `_read_warehouse_parquet(path)` which
