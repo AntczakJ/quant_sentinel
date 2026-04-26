@@ -43,6 +43,16 @@ Janek-flow installs (fresh machine):
 - New: `uv venv && uv sync` (~15× faster than pip)
 - Old (still works): `python -m venv .venv && pip install -r requirements.txt`
 
+## Observability — Logfire (2026-04-26 evening)
+`api/main.py` configures Logfire (Pydantic-team OTEL platform) at startup
+and instruments FastAPI / httpx / sqlite3. Soft-disabled when
+`LOGFIRE_TOKEN` is absent — zero network, near-zero overhead. Set the
+token in `.env` or run `.venv/Scripts/logfire auth` to start sending.
+Custom spans wrapping the BG scanner are `scanner.prefetch_tfs` and
+`scanner.cascade_mtf` (with `trade_found`, `tf`, `direction` attrs).
+`/api/health` and `/api/sse/*` are excluded from request traces to keep
+the stream readable.
+
 `requires-python` bumped to `>=3.12` (was 3.10) because `pandas-ta 0.4.71b0`
 prerelease — the only line carrying our needed version — declares 3.12+. Project
 runs on 3.13 anyway. `[tool.uv].override-dependencies` forces `pandas>=3.0`,

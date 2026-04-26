@@ -18,6 +18,41 @@ from typing import Optional
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ── OBSERVABILITY (Logfire) ──────────────────────────────────────────
+# Soft-enabled: configures unconditionally, but only ships traces when
+# LOGFIRE_TOKEN is set. Without a token Logfire is a near-noop (no
+# network, no overhead beyond span object creation). Run `logfire auth`
+# once to populate ~/.logfire/credentials and start sending.
+try:
+    import logfire as _logfire
+    _logfire.configure(
+        send_to_logfire="if-token-present",
+        service_name="quant-sentinel",
+        service_version="4.0.0",
+        console=False,  # set True locally to debug spans on stdout
+    )
+    _logfire.instrument_httpx()
+    # NB: `instrument_sqlite3()` is intentionally NOT enabled — it wraps
+    # every connection in a TracedConnectionProxy, and `Connection.backup()`
+    # in src/core/database.py rejects proxies with TypeError. Custom spans
+    # below cover the only DB hot paths we care about (scanner cycle).
+    _LOGFIRE_OK = True
+except Exception as _logfire_err:  # pragma: no cover
+    # Logfire missing or misconfigured must never block the API. Fall back
+    # to a stub that turns logfire calls into no-ops.
+    print(f"[logfire] disabled: {_logfire_err}", flush=True)
+
+    class _LogfireStub:
+        def __getattr__(self, _name):
+            def _noop(*_a, **_k):
+                # span() returns a context manager; mimic that.
+                from contextlib import nullcontext
+                return nullcontext()
+            return _noop
+
+    _logfire = _LogfireStub()  # type: ignore
+    _LOGFIRE_OK = False
+
 # ── PRODUCTION HARDENING ──────────────────────────────────────────────
 # Explicitly clear any backtest-mode env vars that might have leaked from
 # a shell session. Production API must NEVER apply relaxed filters.
@@ -339,12 +374,13 @@ async def _background_scanner():
                 continue
 
             # Prefetch all timeframes to warm cache (reduces per-TF API calls in cascade)
-            try:
-                from src.data.data_sources import get_provider as _gp
-                _provider = _gp()
-                await asyncio.to_thread(_provider.prefetch_all_timeframes, 'XAU/USD')
-            except Exception as _pf_err:
-                logger.debug(f"📡 [BG Scanner] Prefetch skipped: {_pf_err}")
+            with _logfire.span("scanner.prefetch_tfs", symbol="XAU/USD"):
+                try:
+                    from src.data.data_sources import get_provider as _gp
+                    _provider = _gp()
+                    await asyncio.to_thread(_provider.prefetch_all_timeframes, 'XAU/USD')
+                except Exception as _pf_err:
+                    logger.debug(f"📡 [BG Scanner] Prefetch skipped: {_pf_err}")
 
             db = NewsDB()
 
@@ -364,10 +400,20 @@ async def _background_scanner():
             # Run cascade scan in thread pool (all SMC + finance calls are blocking)
             try:
                 from src.trading.scanner import cascade_mtf_scan
-                trade = await asyncio.wait_for(
-                    asyncio.to_thread(cascade_mtf_scan, db, portfolio_balance, portfolio_currency),
-                    timeout=120.0,  # generous — cascade may check up to 4 TFs
-                )
+                with _logfire.span(
+                    "scanner.cascade_mtf",
+                    portfolio_balance=portfolio_balance,
+                    currency=portfolio_currency,
+                ) as _cascade_span:
+                    trade = await asyncio.wait_for(
+                        asyncio.to_thread(cascade_mtf_scan, db, portfolio_balance, portfolio_currency),
+                        timeout=120.0,  # generous — cascade may check up to 4 TFs
+                    )
+                    if hasattr(_cascade_span, "set_attribute"):
+                        _cascade_span.set_attribute("trade_found", bool(trade))
+                        if trade:
+                            _cascade_span.set_attribute("tf", trade.get("tf_label", "?"))
+                            _cascade_span.set_attribute("direction", trade.get("direction", "?"))
             except asyncio.TimeoutError:
                 logger.warning("📡 [BG Scanner] MTF cascade timed out (120s)")
                 try:
@@ -923,6 +969,18 @@ app = FastAPI(
     version="2.1.0",
     lifespan=lifespan
 )
+
+# Wire Logfire request/response auto-traces. Excluded URLs keep the
+# trace stream readable — health and SSE generate massive noise.
+if _LOGFIRE_OK:
+    try:
+        _logfire.instrument_fastapi(
+            app,
+            capture_headers=False,
+            excluded_urls=r"/api/health|/api/sse/.*",
+        )
+    except Exception as _le:
+        logging.getLogger("logfire").warning(f"FastAPI instrumentation failed: {_le}")
 
 # Middleware — custom auth/rate use pure ASGI wrappers that bypass WebSocket
 from api.middleware.rate_limit import RateLimitMiddleware

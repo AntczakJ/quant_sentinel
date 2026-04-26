@@ -69,6 +69,11 @@ dependencies = [
     "onnx>=1.21.0",
     "skl2onnx>=1.20.0",
     "onnxmltools>=1.16.0",
+    # Observability — Pydantic-team OTEL platform. Soft-disabled when no
+    # LOGFIRE_TOKEN is present (zero overhead, no traces sent).
+    # Skip the [sqlite3] extra: TracedConnectionProxy breaks
+    # Connection.backup() used by src/core/database.py.
+    "logfire[fastapi,httpx]>=3.0.0",
 ]
 
 [project.optional-dependencies]
