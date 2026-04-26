@@ -99,6 +99,13 @@ frontend/dist/
 frontend/.env.local
 frontend/.env.*.local
 frontend/tsconfig.tsbuildinfo
+# 2026-04-26: frontend_v1 preserved as backup of pre-rebuild state
+frontend_v1/node_modules/
+frontend_v1/dist/
+frontend_v1/coverage/
+frontend_v1/tsconfig.tsbuildinfo
+frontend_v1/.env.local
+frontend_v1/.env.*.local
 
 # ── IDE I EDYTORY ─────────────────────────────────────────────
 .vscode/

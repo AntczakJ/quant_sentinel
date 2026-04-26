@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/qs-logo.svg" />
+    <link rel="apple-touch-icon" href="/qs-logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0e14" />
+    <meta name="description" content="Quant Sentinel — Professional AI Trading Platform for XAU/USD" />
+
+    <!-- DNS prefetch for API backend (saves ~50-100ms on first API call) -->
+    <link rel="dns-prefetch" href="//localhost:8000" />
+    <link rel="preconnect" href="http://localhost:8000" crossorigin />
+
+    <!-- PWA disabled: unregister stale service workers + clear caches
+         from previous build. Old SW caches CSS/JS that no longer exists
+         and causes styling bugs until user hard-reloads. -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(regs => {
+          for (const r of regs) { r.unregister(); }
+        }).catch(() => {});
+        if ('caches' in window) {
+          caches.keys().then(names => names.forEach(n => caches.delete(n))).catch(() => {});
+        }
+      }
+    </script>
+
+    <title>QUANT SENTINEL — AI Trading</title>
+
+    <!-- Preload fonts (no Google Fonts external call on slow networks) -->
+    <style>
+      /* ================================================================
+         SPLASH SCREEN — shows instantly before React bundle loads
+         ================================================================
+         CRITICAL: box-sizing reset is in @layer so Tailwind 4 utilities
+         (which live in @layer utilities) aren't overridden. Previously
+         the `* { margin: 0; padding: 0 }` reset was unlayered → higher
+         cascade priority than all Tailwind spacing utilities → entire
+         UI rendered without padding/margin. */
+      @layer base {
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; }
+      }
+
+      body { background: #0b0e14; color-scheme: dark; }
+
+      #splash {
+        position: fixed;
+        inset: 0;
+        background: #0b0e14;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        z-index: 9999;
+        opacity: 1;
+        transition: opacity 0.4s ease, visibility 0.4s ease;
+        visibility: visible;
+        font-family: 'Inter', -apple-system, sans-serif;
+      }
+      #splash.qs-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      /* Logo */
+      #splash-logo {
+        width: 80px;
+        height: 80px;
+        filter: drop-shadow(0 0 12px rgba(34, 197, 94, 0.3));
+        animation: qs-float 3s ease-in-out infinite;
+      }
+
+      /* Title */
+      #splash-title {
+        color: #ffffff;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.25em;
+        text-transform: uppercase;
+      }
+      #splash-title span {
+        color: #22c55e;
+      }
+
+      #splash-sub {
+        color: #6b7280;
+        font-size: 11px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      /* Animated bars loader */
+      #splash-loader {
+        display: flex;
+        align-items: flex-end;
+        gap: 5px;
+        height: 28px;
+        margin-top: 8px;
+      }
+      #splash-loader span {
+        display: block;
+        width: 5px;
+        background: #22c55e;
+        border-radius: 2px;
+        animation: qs-bar 1.2s ease-in-out infinite;
+        opacity: 0.85;
+      }
+      #splash-loader span:nth-child(1) { animation-delay: 0s;    height: 10px; }
+      #splash-loader span:nth-child(2) { animation-delay: 0.15s; height: 18px; }
+      #splash-loader span:nth-child(3) { animation-delay: 0.3s;  height: 24px; background: #f59e0b; }
+      #splash-loader span:nth-child(4) { animation-delay: 0.45s; height: 14px; }
+      #splash-loader span:nth-child(5) { animation-delay: 0.6s;  height: 8px; }
+
+      #splash-status {
+        color: #374151;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+      }
+
+      @keyframes qs-bar {
+        0%, 100% { transform: scaleY(1);   opacity: 0.5; }
+        50%       { transform: scaleY(1.6); opacity: 1;   }
+      }
+      @keyframes qs-float {
+        0%, 100% { transform: translateY(0); }
+        50%      { transform: translateY(-8px); }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Splash screen — visible immediately, hidden when React mounts -->
+    <div id="splash">
+      <img id="splash-logo" src="/qs-logo.svg" alt="Quant Sentinel" />
+      <div id="splash-title">QUANT <span>SENTINEL</span></div>
+      <div id="splash-sub">Professional AI Trading Platform</div>
+      <div id="splash-loader">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <div id="splash-status">Initializing AI engine...</div>
+    </div>
+
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

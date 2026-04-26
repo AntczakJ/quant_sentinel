@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Reset / globals ────────────────────────────────────────────────── */
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+    /* Prevent ios mobile rubber-band on overscroll */
+    overscroll-behavior: none;
+  }
+
+  body {
+    /* Subtle global mesh — gives the dark surface depth without distraction */
+    background:
+      radial-gradient(80% 60% at 100% 0%, rgba(212, 175, 55, 0.06) 0%, transparent 60%),
+      radial-gradient(60% 50% at 0% 100%, rgba(59, 130, 246, 0.04) 0%, transparent 60%),
+      #0a0a0c;
+    background-attachment: fixed;
+    min-height: 100vh;
+    /* Better selection contrast */
+    selection-color: white;
+    selection-background-color: rgba(212, 175, 55, 0.4);
+  }
+
+  ::selection {
+    background: rgba(212, 175, 55, 0.4);
+    color: white;
+  }
+
+  /* Custom scrollbar — minimal, on-brand */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.16);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+
+  /* Disable focus ring on mouse, keep for keyboard */
+  *:focus:not(:focus-visible) {
+    outline: none;
+  }
+  *:focus-visible {
+    outline: 2px solid theme('colors.gold.500');
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* ─── Custom utility classes ─────────────────────────────────────────── */
+
+@layer components {
+  /* Glass-card surface — Apple-inspired translucency, refined for dark theme */
+  .surface {
+    @apply bg-ink-100/80 backdrop-blur-xl border border-white/5;
+  }
+  .surface-raised {
+    @apply bg-ink-100 border border-white/[0.06] shadow-soft;
+  }
+  .surface-interactive {
+    @apply bg-ink-100 border border-white/[0.06] shadow-soft transition-all duration-300
+           hover:border-white/15 hover:shadow-lift hover:-translate-y-0.5;
+  }
+
+  /* Display-grade text with gradient — Outfit-inspired bold confidence */
+  .text-display-gradient {
+    background: linear-gradient(180deg, #fafafa 0%, #bdbdc6 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .text-gold-gradient {
+    background: linear-gradient(135deg, #d4af37 0%, #f4d676 50%, #a8861f 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* Pill — small status / tag */
+  .pill {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full
+           text-micro uppercase tracking-wider
+           border border-white/[0.08] bg-white/[0.03];
+  }
+  .pill-bull {
+    @apply pill border-bull/30 bg-bull/[0.08] text-bull;
+  }
+  .pill-bear {
+    @apply pill border-bear/30 bg-bear/[0.08] text-bear;
+  }
+  .pill-gold {
+    @apply pill border-gold-500/30 bg-gold-500/[0.08] text-gold-400;
+  }
+
+  /* Number display with tabular alignment for tables */
+  .num {
+    @apply font-mono tabular-nums;
+  }
+
+  /* Subtle divider */
+  .divider {
+    @apply h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent;
+  }
+}
