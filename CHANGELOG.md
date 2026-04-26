@@ -6,7 +6,7 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ### 2026-04-26 → 2026-04-27 — v4 frontend redesign + observability + ML perf push
 
-A two-day session producing 14 commits. Frontend redesigned end-to-end,
+A two-day session producing 18 commits. Frontend redesigned end-to-end,
 backend gained 10 new endpoints + observability stack (Logfire + Sentry),
 defensive `dynamic_params` schema closes the bug class behind `95569f7`,
 Treelite ships a 12× speedup on the live-scanner XGB inference path.
@@ -37,7 +37,13 @@ new feature defaults OFF or is opt-in.
 - `?` keyboard shortcuts overlay. (`faee71f`)
 - Settings widgets: SystemInfo (versions / models / GPU / disk / env /
   git short SHA), RateLimit (credit bucket bar), DbStats (table counts +
-  sentinel.db file size). (`faee71f`, `8ffb7fc`, this release)
+  sentinel.db file size). (`faee71f`, `8ffb7fc`, `d5c732f`)
+- Cmd+K recent-actions history (last 5 in localStorage). (`30c9fbb`)
+- HealthDeepPopover replaces the static live/down pill — click for
+  per-subsystem status (DB / models / GPU / scanner / trades).
+  (`379fc99`)
+- React `ErrorBoundary` around routes — render exceptions show a
+  recoverable fallback instead of a blank screen. (this release)
 
 #### Added — Backend endpoints
 - `POST /api/scanner/{pause,resume}` + `GET /api/scanner/status` — surface
@@ -51,8 +57,9 @@ new feature defaults OFF or is opt-in.
 - `GET /api/grid/{list,preview,apply,backups,rollback}` — surfaces
   `apply_grid_winner.py` over HTTP, `confirm:true` required for writes,
   path-traversal-safe rollback. (`9b6d9cd`)
-- `GET /api/system/{info,db-stats,rate-limit}` + `POST /api/system/{test-trace,test-error}`
-  for observability smoke tests. (`faee71f`, `8ffb7fc`, this release)
+- `GET /api/system/{info,db-stats,rate-limit,health/deep}` + `POST
+  /api/system/{test-trace,test-error}` for observability smoke tests
+  and Settings widgets. (`faee71f`, `8ffb7fc`, `d5c732f`, `30c9fbb`)
 
 #### Added — Observability + defense
 - **Logfire** OTEL platform (auto FastAPI + httpx instrumentation, custom
