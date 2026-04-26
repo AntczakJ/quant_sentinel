@@ -131,6 +131,108 @@ def _xgb_loader_info() -> dict:
         return {"error": str(e)}
 
 
+@router.get("/health/deep", summary="Detailed health probe — DB / models / GPU / scanner / trades")
+async def health_deep():
+    """
+    Per-subsystem health probe. Each section reports `ok` (bool) plus a
+    short context string. The top-level `all_ok` is true iff every check
+    passed. This is meant for the Settings → System diagnostic widget
+    and for ad-hoc curl debugging — `/api/health` stays the canonical
+    fast liveness probe.
+    """
+    checks: dict[str, dict] = {}
+
+    # ── DB connectivity ─────────────────────────────────────────────
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        row = db._query_one("SELECT COUNT(*) FROM trades")
+        checks["db"] = {
+            "ok": True,
+            "message": f"sentinel.db reachable, {int(row[0]) if row else 0} trades",
+        }
+    except Exception as e:
+        checks["db"] = {"ok": False, "message": f"DB query failed: {e}"}
+
+    # ── Models loaded ───────────────────────────────────────────────
+    try:
+        from src.ml.ensemble_models import _models_loaded
+        loaded = {k: bool(v) for k, v in _models_loaded.items()}
+        any_loaded = any(loaded.values())
+        checks["models"] = {
+            "ok": True,
+            "loaded": loaded,
+            "message": f"{sum(loaded.values())}/{len(loaded)} voters cached"
+                       + (" (lazy — first scan will trigger)" if not any_loaded else ""),
+        }
+    except Exception as e:
+        checks["models"] = {"ok": False, "message": f"Model status probe failed: {e}"}
+
+    # ── GPU ────────────────────────────────────────────────────────
+    try:
+        from src.analysis.compute import detect_gpu
+        gpu = detect_gpu()
+        any_gpu = bool(gpu.get("onnx_directml") or gpu.get("cuda_available"))
+        checks["gpu"] = {
+            "ok": True,
+            "message": "DirectML" if gpu.get("onnx_directml") else (
+                "CUDA" if gpu.get("cuda_available") else "CPU only"
+            ),
+            "any_gpu": any_gpu,
+        }
+    except Exception as e:
+        checks["gpu"] = {"ok": False, "message": f"GPU probe failed: {e}"}
+
+    # ── Scanner state ──────────────────────────────────────────────
+    try:
+        import time as _time
+        from src.ops.metrics import scan_last_ts as _slts
+        last_ts = _slts.get() if hasattr(_slts, "get") else 0
+        # Pause flag presence (file flag — same logic as scanner.py router)
+        pause_flag = ROOT / "data" / "SCANNER_PAUSED"
+        is_paused = pause_flag.exists()
+        age_s = (_time.time() - last_ts) if last_ts > 0 else None
+        # Healthy when not paused AND last cycle within 10 min (5-min interval × 2)
+        healthy = (not is_paused) and (age_s is not None) and (age_s < 600)
+        checks["scanner"] = {
+            "ok": healthy or is_paused,  # paused is OK by intent
+            "paused": is_paused,
+            "last_cycle_s_ago": round(age_s, 1) if age_s is not None else None,
+            "message": (
+                "paused (manual or auto-streak)" if is_paused
+                else (f"last cycle {age_s:.0f}s ago" if age_s is not None else "no cycle yet")
+            ),
+        }
+    except Exception as e:
+        checks["scanner"] = {"ok": False, "message": f"Scanner probe failed: {e}"}
+
+    # ── Trades / open positions ────────────────────────────────────
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        last_trade = db._query_one(
+            "SELECT timestamp, status FROM trades ORDER BY id DESC LIMIT 1"
+        )
+        open_count = db._query_one(
+            "SELECT COUNT(*) FROM trades WHERE status IN ('OPEN','PROPOSED')"
+        )
+        checks["trades"] = {
+            "ok": True,
+            "last_timestamp": str(last_trade[0]) if last_trade else None,
+            "last_status":    str(last_trade[1]) if last_trade else None,
+            "open_count":     int(open_count[0]) if open_count else 0,
+        }
+    except Exception as e:
+        checks["trades"] = {"ok": False, "message": f"Trade probe failed: {e}"}
+
+    # ── Aggregate ──────────────────────────────────────────────────
+    all_ok = all(c.get("ok", False) for c in checks.values())
+    return {
+        "all_ok": all_ok,
+        "checks": checks,
+    }
+
+
 @router.get("/db-stats", summary="Counts + file size for sentinel.db tables")
 async def db_stats():
     """Quick counts of the tables the operator usually wants to see —

@@ -20,12 +20,50 @@ interface Props {
   onOpenChange?: (open: boolean) => void
 }
 
+const RECENT_KEY = 'qs.cmdk.recent'
+const RECENT_MAX = 5
+
+type RecentEntry = { id: string; label: string; hint?: string }
+
+function loadRecent(): RecentEntry[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((x) => x && typeof x.id === 'string' && typeof x.label === 'string').slice(0, RECENT_MAX)
+  } catch {
+    return []
+  }
+}
+
+function saveRecent(list: RecentEntry[]) {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_MAX)))
+  } catch {
+    /* localStorage may be disabled — silently degrade */
+  }
+}
+
 export function CommandPalette({ open: controlled, onOpenChange }: Props = {}) {
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlled ?? internalOpen
   const setOpen = (v: boolean) => {
     if (onOpenChange) onOpenChange(v)
     setInternalOpen(v)
+  }
+
+  const [recentActions, setRecentActions] = useState<RecentEntry[]>([])
+  useEffect(() => {
+    setRecentActions(loadRecent())
+  }, [])
+
+  const bumpRecent = (entry: RecentEntry) => {
+    setRecentActions((cur) => {
+      const next = [entry, ...cur.filter((x) => x.id !== entry.id)].slice(0, RECENT_MAX)
+      saveRecent(next)
+      return next
+    })
   }
 
   const navigate = useNavigate()
@@ -231,6 +269,33 @@ export function CommandPalette({ open: controlled, onOpenChange }: Props = {}) {
                   No matches.
                 </Command.Empty>
 
+                {recentActions.length > 0 && (
+                  <Command.Group heading="Recent" className="px-2 pt-2 pb-1 text-micro uppercase tracking-wider text-ink-600">
+                    {recentActions.map((r) => (
+                      <PaletteItem
+                        key={`recent-${r.id}`}
+                        value={`recent ${r.label}`}
+                        label={r.label}
+                        hint={r.hint ?? '—'}
+                        onSelect={() => {
+                          bumpRecent(r)
+                          // Re-dispatch by id to the matching action below
+                          const a = actions.find((x) => x.id === r.id)
+                          if (a) {
+                            a.perform()
+                            return
+                          }
+                          // Page entries are stored with id='page-<label>'
+                          if (r.id.startsWith('page-')) {
+                            const path = r.id.replace('page-', '/').replace('/Dashboard', '/').replace(/\/[A-Z]/, (m) => m.toLowerCase())
+                            go(path)
+                          }
+                        }}
+                      />
+                    ))}
+                  </Command.Group>
+                )}
+
                 <Command.Group heading="Pages" className="px-2 pt-2 pb-1 text-micro uppercase tracking-wider text-ink-600">
                   {[
                     { p: '/', l: 'Dashboard', h: 'KPIs, recent signals, scanner' },
@@ -239,7 +304,16 @@ export function CommandPalette({ open: controlled, onOpenChange }: Props = {}) {
                     { p: '/models', l: 'Models', h: 'Voter ensemble + signal' },
                     { p: '/settings', l: 'Settings', h: 'API health, config, audio' },
                   ].map((x) => (
-                    <PaletteItem key={x.p} value={`page ${x.l}`} label={x.l} hint={x.h} onSelect={() => go(x.p)} />
+                    <PaletteItem
+                      key={x.p}
+                      value={`page ${x.l}`}
+                      label={x.l}
+                      hint={x.h}
+                      onSelect={() => {
+                        bumpRecent({ id: `page-${x.l}`, label: x.l, hint: x.h })
+                        go(x.p)
+                      }}
+                    />
                   ))}
                 </Command.Group>
 
@@ -268,7 +342,16 @@ export function CommandPalette({ open: controlled, onOpenChange }: Props = {}) {
 
                 <Command.Group heading="Actions" className="px-2 pt-3 pb-1 text-micro uppercase tracking-wider text-ink-600">
                   {actions.map((a) => (
-                    <PaletteItem key={a.id} value={`action ${a.label}`} label={a.label} hint={a.hint} onSelect={() => a.perform()} />
+                    <PaletteItem
+                      key={a.id}
+                      value={`action ${a.label}`}
+                      label={a.label}
+                      hint={a.hint}
+                      onSelect={() => {
+                        bumpRecent({ id: a.id, label: a.label, hint: a.hint })
+                        a.perform()
+                      }}
+                    />
                   ))}
                 </Command.Group>
               </Command.List>
