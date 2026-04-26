@@ -304,6 +304,25 @@ export const api = {
       backup_path?: string
       reason?: string
     }>('/grid/apply', { grid, cell_hash: cellHash, confirm }).then((r) => r.data),
+  gridBackups: () =>
+    get<{
+      backups: Array<{
+        filename: string
+        path: string
+        backup_ts_utc: string
+        reason: string
+        size_kb: number
+        params: Record<string, unknown>
+      }>
+    }>('/grid/backups'),
+  gridRollback: (backupFilename: string, confirm = false) =>
+    ax.post<{
+      ok: boolean
+      applied: boolean
+      from?: string
+      restored?: Record<string, unknown>
+      would_restore?: Record<string, unknown>
+    }>('/grid/rollback', { backup_filename: backupFilename, confirm }).then((r) => r.data),
 }
 
 export const isCircuitOpen = () => cb.state !== 'CLOSED'

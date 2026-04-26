@@ -179,6 +179,9 @@ models/*.pre_*_promote.keras.params
 # committing them risks staleness.
 models/*_treelite.dll
 models/*_treelite.so
+
+# Optuna study databases — local search artifacts, regenerable.
+data/optuna_studies/
 models/*_scaler.pre_*_promote.pkl
 
 # Autonomous overnight session artefacts.

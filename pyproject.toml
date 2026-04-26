@@ -87,6 +87,12 @@ dependencies = [
     # ONNX/native sklearn paths. ~12x faster on N=1 single-sample inference.
     "treelite>=4.7.0",
     "tl2cgen>=1.0.0",
+    # Polars — Rust DataFrame, ~5-50x faster than pandas on warehouse-scale
+    # reads + group-bys. Currently used only by the parity scaffolding in
+    # tools/polars_features_parity.py — `compute_features` itself is still
+    # pandas + pandas_ta. Full port is a separate session because it needs
+    # bar-by-bar parity validation against historical training data.
+    "polars>=1.0.0",
 ]
 
 [project.optional-dependencies]

@@ -135,10 +135,55 @@ export function CommandPalette({ open: controlled, onOpenChange }: Props = {}) {
     }
   }
 
+  const rollbackGridLatest = async () => {
+    try {
+      const list = await api.gridBackups()
+      const latest = list.backups[0]
+      if (!latest) {
+        toast.warning('No grid backups found', {
+          description: 'Apply a grid winner first — backups are written automatically.',
+        })
+        setOpen(false)
+        return
+      }
+      const ts = latest.backup_ts_utc ?? '?'
+      const paramsLines = Object.entries(latest.params)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('\n')
+      toast.warning(`Rollback to ${ts}?`, {
+        description: `${latest.filename}\n\nWill restore:\n${paramsLines}\n\nReason: ${latest.reason ?? '—'}`,
+        duration: 15_000,
+        action: {
+          label: 'Confirm rollback',
+          onClick: async () => {
+            try {
+              const r = await api.gridRollback(latest.filename, true)
+              if (r.applied) {
+                toast.success(`Rolled back to ${r.from}`, {
+                  description: 'Restart the scanner so it picks up the previous params.',
+                  duration: 12_000,
+                })
+                qc.invalidateQueries()
+              } else {
+                toast.warning('Rollback not applied', { description: 'Server returned applied=false' })
+              }
+            } catch (err) {
+              toast.error('Rollback failed', { description: (err as Error).message ?? 'Unknown error' })
+            }
+          },
+        },
+      })
+    } catch (err) {
+      toast.error('Could not list backups', { description: (err as Error).message ?? 'Unknown error' })
+    }
+    setOpen(false)
+  }
+
   const actions: Action[] = [
     { id: 'scan-pause', label: 'Pause scanner', hint: 'Stop opening new positions', perform: () => callScannerControl('pause') },
     { id: 'scan-resume', label: 'Resume scanner', hint: 'Continue background loop', perform: () => callScannerControl('resume') },
     { id: 'grid-preview', label: 'Preview grid winner', hint: 'Show top cell diff (no write)', perform: () => previewGrid() },
+    { id: 'grid-rollback', label: 'Rollback grid params', hint: 'Restore the most recent param-backup', perform: rollbackGridLatest },
     { id: 'refresh', label: 'Refresh all data', hint: 'Re-query every endpoint', perform: refreshAll },
     { id: 'motion', label: 'Toggle reduced motion', hint: 'Animation accessibility', perform: toggleReducedMotion },
   ]

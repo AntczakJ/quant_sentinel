@@ -169,6 +169,24 @@ async def lifespan(app: FastAPI):
     except (ImportError, AttributeError):
         pass
 
+    # Env-vars OK/missing report — quick visual that observability + data
+    # providers are wired up. Runs once per uvicorn boot, log-only (never
+    # raises). Mirrors the keys documented in .env.example.
+    _env_groups: list[tuple[str, list[str]]] = [
+        ("data providers", ["TWELVEDATA_KEY", "ALPHA_VANTAGE_KEY", "FRED_API_KEY", "FINNHUB_KEY"]),
+        ("auth/security",  ["API_SECRET_KEY"]),
+        ("observability",  ["LOGFIRE_TOKEN", "SENTRY_DSN"]),
+        ("turso (cloud DB)", ["TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN"]),
+        ("ml flags",       ["ONNX_FORCE_CPU", "DISABLE_TRAILING", "MAX_LOT_CAP"]),
+    ]
+    logger.info("[ENV] startup status:")
+    for group_name, keys in _env_groups:
+        present = [k for k in keys if os.environ.get(k, "").strip()]
+        missing = [k for k in keys if not os.environ.get(k, "").strip()]
+        ok_str = ", ".join(present) if present else "—"
+        miss_str = ", ".join(missing) if missing else "—"
+        logger.info(f"  [{group_name:18s}] OK: {ok_str:60s}  MISSING: {miss_str}")
+
     # Database: enable WAL mode + startup backup + users table
     try:
         from src.ops.db_backup import enable_wal_mode, create_backup
@@ -432,6 +450,27 @@ async def _background_scanner():
         except Exception as _stk:
             logger.debug(f"Streak check failed: {_stk}")
 
+        # ── Sentry cron heartbeat ─────────────────────────────────
+        # Soft-noop without DSN. Sentry expects an in-progress check-in
+        # at cycle start and a follow-up OK/ERROR with the same id at
+        # cycle end. We only emit when _SENTRY_OK is True so this stays
+        # zero-cost without a token.
+        _sentry_checkin_id = None
+        if _SENTRY_OK:
+            try:
+                _sentry_checkin_id = _sentry.capture_checkin(
+                    monitor_slug="bg-scanner",
+                    status="in_progress",
+                    monitor_config={
+                        "schedule": {"type": "interval", "value": 5, "unit": "minute"},
+                        "checkin_margin": 2,
+                        "max_runtime": 5,
+                        "timezone": "UTC",
+                    },
+                )
+            except Exception as _ce:
+                logger.debug(f"sentry checkin start failed: {_ce}")
+
         # Metrics instrumentation — _background_scanner is the LIVE scanner
         # entry point (legacy scan_market_task is no longer wired in). Without
         # this, scan_count / scan_last_ts / scan_duration stayed at 0 even
@@ -598,6 +637,7 @@ async def _background_scanner():
             logger.info("📡 [BG Scanner] Task cancelled")
             if _scan_timer_ctx:
                 _scan_timer_ctx.__exit__(None, None, None)
+            # Don't emit Sentry checkin on cancel — it's a clean shutdown.
             return
         except Exception as e:
             # Log ERROR with traceback so silent death is visible. Loop keeps
@@ -608,6 +648,28 @@ async def _background_scanner():
                 _set.inc()
             except Exception:
                 pass
+            # Sentry: cycle-end checkin = ERROR. Captures the exception too.
+            if _SENTRY_OK and _sentry_checkin_id:
+                try:
+                    _sentry.capture_checkin(
+                        monitor_slug="bg-scanner",
+                        status="error",
+                        check_in_id=_sentry_checkin_id,
+                    )
+                    _sentry.capture_exception(e)
+                except Exception:
+                    pass
+        else:
+            # Sentry: clean cycle end → OK checkin closes the in-progress one.
+            if _SENTRY_OK and _sentry_checkin_id:
+                try:
+                    _sentry.capture_checkin(
+                        monitor_slug="bg-scanner",
+                        status="ok",
+                        check_in_id=_sentry_checkin_id,
+                    )
+                except Exception:
+                    pass
 
         # Close timer for this cycle (populates scan_duration histogram →
         # drives scan_count, scan_avg_ms, scan_p95_ms metrics).
