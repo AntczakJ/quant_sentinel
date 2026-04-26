@@ -1530,8 +1530,23 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     if direction == "LONG" \
        and analysis.get('macro_regime') == "zielony" \
        and analysis.get('ichimoku_above_cloud'):
-        score -= 15
-        factors_detail['toxic_combo_macro_ichi_bull'] = -15
+        # 2026-04-26: softened −15 → −7 after asymmetry FLIP discovered.
+        # B1 was derived from pre-B1-B5 data (33 trades) where LONG was
+        # broken; with B1-B4 active, LONG is now ≥ neutral and SHORT bleeds.
+        # Heavy penalty was cutting working trades. See
+        # memory/asymmetry_flip_2026-04-26.md.
+        score -= 7
+        factors_detail['toxic_combo_macro_ichi_bull'] = -7
+
+    # B7 (2026-04-26 evening): inverse of B1 — SHORT in bullish macro regime
+    # is fighting the tape. Loosened-B1B4 backtest showed SHORT n=12 / WR 25%
+    # / pnl −$132 (real bleed in current XAU bull market) while LONG was
+    # near break-even at WR 49% (n=86). Penalty −20 pushes most B-grade
+    # SHORT setups below b_cut without hard-blocking exceptional A-grade.
+    # Reversible — remove these 4 lines if regime flips bear.
+    if direction == "SHORT" and analysis.get('macro_regime') == "zielony":
+        score -= 20
+        factors_detail['short_in_bull_regime'] = -20
 
     # Makro regime alignment (max 12 pkt — scales with signal count)
     macro = analysis.get('macro_regime', 'neutralny')
@@ -1567,12 +1582,15 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     elif session_name == 'asian':
         # Asian session — low vol, higher failure rate for breakouts
         # 2026-04-25: direction-aware. LONG in asian = 0/3 wins (-$282)
-        # in factor attribution. Apply hard -25 penalty so any LONG asian
-        # setup falls below b_cut. SHORT keeps mild -3 (no clear evidence
-        # SHORT is bad in asian; small sample).
+        # in factor attribution. Originally hard -25 to block LONG asian.
+        # 2026-04-26: softened LONG −25 → −10 after asymmetry FLIP. B4
+        # was overtune on 33-trade pre-B1-B5 sample. -10 still discourages
+        # LONG asian (typically ~10pt swing from B grade) but doesn't
+        # auto-block. SHORT mild -3 unchanged. See
+        # memory/asymmetry_flip_2026-04-26.md.
         if direction == "LONG":
-            score -= 25
-            factors_detail['asian_long_block'] = -25
+            score -= 10
+            factors_detail['asian_long_penalty'] = -10
         else:
             score -= 3
             factors_detail['session_asian_penalty'] = -3

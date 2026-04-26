@@ -238,7 +238,11 @@ async def _background_scanner():
     # open-trade resolution continue; only new entries are blocked.
     import os as _os
     _PAUSE_FLAG = _os.path.join("data", "SCANNER_PAUSED")
-    _STREAK_THRESHOLD = 5   # auto-pause after N consecutive losses
+    # 2026-04-26: 5 → 8 after loosened-B1B4 backtest showed max-consec-losses
+    # 16 over 30 days as natural variance with current scoring. Threshold 5
+    # would over-pause the scanner during normal drawdowns; 8 still catches
+    # genuine blow-ups but tolerates routine streaks. Recency window unchanged.
+    _STREAK_THRESHOLD = 8   # auto-pause after N consecutive losses
 
     while True:
         if _os.path.exists(_PAUSE_FLAG):
@@ -652,18 +656,25 @@ async def _auto_resolve_trades():
                 # on every reversal). Now: 1.0R → BE, 1.5R → lock 0.75R,
                 # 2.0R → lock 1.25R, 2.5R+ → ATR trail. Updates trailing_sl
                 # column; subsequent SL hit check uses the trailed level.
-                try:
-                    from src.trading.scanner import apply_trailing_stop
-                    if apply_trailing_stop(db, (trade_id, direction, entry, sl, tp, trailing_sl),
-                                           current_price):
-                        # Reload SL after trailing update
-                        new_sl_row = db._query_one(
-                            "SELECT trailing_sl, sl FROM trades WHERE id=?", (trade_id,)
-                        )
-                        if new_sl_row:
-                            sl = new_sl_row[0] or new_sl_row[1] or sl
-                except Exception as _trail_err:
-                    logger.debug(f"[Resolver] trailing skipped for #{trade_id}: {_trail_err}")
+                #
+                # 2026-04-26: gated behind DISABLE_TRAILING env var. Backtest
+                # showed trailing was cutting LONG winners at BE before TP
+                # (LONG pnl flipped −$14 → +$7 with trailing off, PF +0.13).
+                # Set DISABLE_TRAILING=1 in .env to skip trailing entirely
+                # — trades exit only at TP/SL or via time-exit. Reversible.
+                if os.environ.get("DISABLE_TRAILING") != "1":
+                    try:
+                        from src.trading.scanner import apply_trailing_stop
+                        if apply_trailing_stop(db, (trade_id, direction, entry, sl, tp, trailing_sl),
+                                               current_price):
+                            # Reload SL after trailing update
+                            new_sl_row = db._query_one(
+                                "SELECT trailing_sl, sl FROM trades WHERE id=?", (trade_id,)
+                            )
+                            if new_sl_row:
+                                sl = new_sl_row[0] or new_sl_row[1] or sl
+                    except Exception as _trail_err:
+                        logger.debug(f"[Resolver] trailing skipped for #{trade_id}: {_trail_err}")
 
                 try:
                     entry_f = float(entry or 0)

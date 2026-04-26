@@ -135,6 +135,10 @@ data/backtest.db
 data/backtest.db-journal
 data/backtest.db-wal
 data/backtest.db-shm
+data/bt_*.db
+data/bt_*.db-journal
+data/bt_*.db-wal
+data/bt_*.db-shm
 # Backtest yfinance cache — regenerated, may be large (parquet files)
 data/_backtest_cache/
 

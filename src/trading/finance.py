@@ -9,6 +9,8 @@ Zmiany:
 - Kurs walutowy pobierany przez DataProvider (nie bezpośrednie requesty).
 """
 
+import os
+
 from src.core.logger import logger
 
 
@@ -490,6 +492,42 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
         if lot_size < 0.01:
             lot_size = 0.01
         logger.info(f"[SCALP] Risk halved: {original_lot} → {lot_size} lot")
+
+    # B6 (2026-04-26): direction-based risk multiplier. Set
+    # QUANT_RISK_LONG_MULT or QUANT_RISK_SHORT_MULT to a float in (0, 1.5]
+    # to scale lot size for that direction. Non-eliminating defense for
+    # LONG asymmetry (every LONG factor has -EV per attribution data) —
+    # use 0.5 to halve LONG risk while collecting more samples. Reversible.
+    try:
+        if direction == "LONG":
+            _dir_mult = float(os.environ.get("QUANT_RISK_LONG_MULT", "1.0"))
+        elif direction == "SHORT":
+            _dir_mult = float(os.environ.get("QUANT_RISK_SHORT_MULT", "1.0"))
+        else:
+            _dir_mult = 1.0
+        if 0 < _dir_mult < 1.5 and abs(_dir_mult - 1.0) > 0.001:
+            original_lot = lot_size
+            lot_size = round(lot_size * _dir_mult, 2)
+            if lot_size < 0.01:
+                lot_size = 0.01
+            logger.info(f"[B6] {direction} risk × {_dir_mult}: {original_lot} → {lot_size} lot")
+    except (ValueError, TypeError):
+        pass
+
+    # MAX_LOT_CAP (2026-04-26): hard ceiling on lot size, enforced AFTER all
+    # other lot-sizing logic. Set in .env to cap risk while the lot-sizing
+    # rebuild lands. Backtest 2026-04-26 found lot was inverse-correlated
+    # with outcome (winners avg 0.026, losers 0.084) — A+ grade 1.5× risk
+    # bump bet bigger on losing setups. Equal-lot 0.01 backtest produced
+    # PF 1.80 / +7.18% return / -4.23% DD; same strategy with var lot ran
+    # PF 1.66 / -20.7% return / -26% DD. Cap is safety floor until rebuild.
+    try:
+        _max_lot = float(os.environ.get("MAX_LOT_CAP", "0.5"))
+    except (ValueError, TypeError):
+        _max_lot = 0.5
+    if lot_size > _max_lot:
+        logger.info(f"[MAX_LOT_CAP] lot {lot_size} → {_max_lot}")
+        lot_size = _max_lot
 
     # --- 6. Portfolio heat check (max aggregate risk) ---
     can_open, heat_pct = rm.check_portfolio_heat(balance_in_usd, risk_usd)

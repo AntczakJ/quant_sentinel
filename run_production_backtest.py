@@ -547,6 +547,27 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
         partial_taken = False
         partial_profit = 0.0
 
+        # Time-exit: production resolver closes scalp trades after 4h, swing
+        # after 48h. Backtest historically didn't enforce this, so its PF was
+        # optimistic vs live. Set BACKTEST_TIME_EXIT_SCALP_HOURS / _SWING_HOURS
+        # to mirror production. Pattern token determines scalp vs swing.
+        try:
+            scalp_hold = float(os.environ.get("BACKTEST_TIME_EXIT_SCALP_HOURS", "0"))
+        except ValueError:
+            scalp_hold = 0.0
+        try:
+            swing_hold = float(os.environ.get("BACKTEST_TIME_EXIT_SWING_HOURS", "0"))
+        except ValueError:
+            swing_hold = 0.0
+        _time_exit_enabled = scalp_hold > 0 or swing_hold > 0
+        if _time_exit_enabled:
+            pat_row = db._query_one("SELECT pattern FROM trades WHERE id=?", (t_id,))
+            pat_str = (pat_row[0] if pat_row else "") or ""
+            is_scalp_tf = any(t in pat_str for t in ("[M5]", "[M15]", "[M30]", "5m", "15m", "30m"))
+            max_hold_h = scalp_hold if is_scalp_tf else swing_hold
+        else:
+            max_hold_h = 0.0
+
         for _, bar in window.iterrows():
             bar_high = float(bar["high"])
             bar_low = float(bar["low"])
@@ -585,6 +606,28 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
                         active_sl = min(active_sl, new_sl)
                     elif excursion_r >= 1.0:
                         active_sl = min(active_sl, entry)
+
+            # 1.5. Time-exit: close at bar close if held longer than max_hold_h
+            if _time_exit_enabled and max_hold_h > 0:
+                try:
+                    bar_ts = pd.to_datetime(bar["timestamp"], utc=True)
+                    age_h_bar = (bar_ts - entry_time).total_seconds() / 3600
+                    if age_h_bar > max_hold_h:
+                        bar_close = float(bar["close"])
+                        if is_long:
+                            pnl_at_close = bar_close - entry
+                        else:
+                            pnl_at_close = entry - bar_close
+                        if pnl_at_close > 0:
+                            hit_status = "WIN"
+                        elif pnl_at_close < 0:
+                            hit_status = "LOSS"
+                        else:
+                            hit_status = "BREAKEVEN"
+                        hit_price = bar_close
+                        break
+                except Exception:
+                    pass
 
             # 2. Check TP/SL (using trailing SL)
             if is_long:
@@ -834,6 +877,17 @@ async def _run_backtest(args) -> dict:
                     trade["entry"] = actual_entry
                     trade["sl"] = trade["sl"] + gap
                     trade["tp"] = trade["tp"] + gap
+            # 2026-04-26: BACKTEST_EQUAL_LOT env var pins all trades to a fixed
+            # lot. Found that variable lot sizing (Kelly + grade_mult + vol_mult)
+            # was inversely correlated with outcome — losers averaged 0.084,
+            # winners 0.026. Equal-lot backtest isolates strategy edge from
+            # position-sizing bug. Set to "0.01" for min-lot uniform; any
+            # other float-parseable value also works.
+            try:
+                _equal_lot_env = os.environ.get("BACKTEST_EQUAL_LOT")
+                _trade_lot = float(_equal_lot_env) if _equal_lot_env else trade.get("lot", 0.01)
+            except (ValueError, TypeError):
+                _trade_lot = trade.get("lot", 0.01)
             try:
                 db.log_trade(
                     direction=trade["direction"],
@@ -844,7 +898,7 @@ async def _run_backtest(args) -> dict:
                     trend=trade.get("trend", ""),
                     structure=f"[backtest] {trade.get('tf_label', trade.get('tf',''))}",
                     pattern=trade.get("pattern", "backtest"),
-                    lot=trade.get("lot", 0.01),
+                    lot=_trade_lot,
                     factors={},
                     profit=None,
                 )
