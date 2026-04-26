@@ -208,6 +208,80 @@ class HistoricalProvider(DataProvider):
             raise RuntimeError(f"HistoricalProvider: no data fetched for {yf_symbol}")
         return cls(cache, symbol=symbol)
 
+    @classmethod
+    def from_warehouse(cls, symbol: str = "XAU/USD", symbol_dir: str = "XAU_USD",
+                       intervals: tuple = ("5m", "15m", "30m", "1h", "4h"),
+                       warehouse_dir: str = "data/historical") -> "HistoricalProvider":
+        """Load OHLCV from local parquet warehouse instead of yfinance.
+
+        Phase 1 deliverable (2026-04-26). Reads `{warehouse_dir}/{symbol_dir}/`
+        which has files like `5min.parquet`, `15min.parquet`, `1h.parquet`,
+        `4h.parquet`, `1day.parquet`. Existing data shape: 3 years of 5min
+        XAU/USD (231k bars) — no API calls needed.
+
+        TF naming compat: caller passes our canonical "5m"/"15m"/"30m"/"1h"/
+        "4h"/"1d", warehouse stores as "5min"/"15min"/"30min"/"1h"/"4h"/"1day".
+        """
+        from pathlib import Path
+        WAREHOUSE_TF_MAP = {
+            "5m": "5min",
+            "15m": "15min",
+            "30m": "30min",
+            "1h": "1h",
+            "4h": "4h",
+            "1d": "1day",
+        }
+
+        wh_dir = Path(warehouse_dir) / symbol_dir
+        if not wh_dir.exists():
+            raise FileNotFoundError(
+                f"HistoricalProvider: warehouse dir {wh_dir} does not exist. "
+                f"Run scripts/data_collection/fetch_xau_history.py first.")
+
+        cache: dict[str, pd.DataFrame] = {}
+        for tf in intervals:
+            wh_tf = WAREHOUSE_TF_MAP.get(tf)
+            if not wh_tf:
+                logger.warning(f"HistoricalProvider: no warehouse mapping for {tf} — skipping")
+                continue
+            parquet_path = wh_dir / f"{wh_tf}.parquet"
+            if not parquet_path.exists():
+                logger.warning(f"HistoricalProvider: warehouse miss {parquet_path}")
+                continue
+            try:
+                df = pd.read_parquet(parquet_path)
+            except Exception as e:
+                logger.warning(f"HistoricalProvider: parquet read failed {parquet_path}: {e}")
+                continue
+
+            # Normalize timestamp column (existing warehouse uses 'datetime')
+            if "timestamp" not in df.columns:
+                ts_col = next((c for c in df.columns if c in ("datetime", "date", "time")), None)
+                if ts_col:
+                    df = df.rename(columns={ts_col: "timestamp"})
+                else:
+                    logger.warning(f"HistoricalProvider: {parquet_path} has no timestamp column")
+                    continue
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+
+            # Ensure expected columns + ordering
+            required = ["timestamp", "open", "high", "low", "close"]
+            missing = [c for c in required if c not in df.columns]
+            if missing:
+                logger.warning(f"HistoricalProvider: {parquet_path} missing {missing} — skipping")
+                continue
+            if "volume" not in df.columns:
+                df["volume"] = 0
+            df = df[required + ["volume"]]
+            df = df.sort_values("timestamp").reset_index(drop=True)
+            cache[tf] = df
+            logger.info(f"HistoricalProvider: {tf} from warehouse — {len(df)} bars "
+                        f"({df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]})")
+
+        if not cache:
+            raise RuntimeError(f"HistoricalProvider: no parquet data loaded from {wh_dir}")
+        return cls(cache, symbol=symbol)
+
 
 def install_historical_provider(provider: HistoricalProvider) -> None:
     """Monkey-patch `src.data.data_sources.get_provider` to always return

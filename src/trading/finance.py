@@ -327,16 +327,24 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
                 "setup_quality": setup_quality
             }
 
-        # Dynamiczny R:R i risk na podstawie grade
+        # Dynamic R:R per grade — these are TARGET-PROFIT calls (where TP
+        # sits relative to SL), based on the assumption that A+ setups can
+        # withstand a longer hold to reach a 3R move. Validated by backtest.
+        #
+        # Per-grade RISK multiplier removed 2026-04-26 after lot-sizing audit:
+        # 30-day backtest found A+ grade `risk_percent × 1.5` was inversely
+        # correlated with outcome — winners avg 0.026 lot, losers 0.084.
+        # The system bet bigger on losing setups. Equal-lot run (PF 1.80,
+        # +7.18%) confirmed strategy edge; variable lot ate it. Now: flat
+        # `risk_percent` regardless of grade (Kelly + vol + session still
+        # apply). Pair this with MAX_LOT_CAP=0.01 in .env until live data
+        # validates uniform sizing. See memory/session_2026-04-26_summary.md.
         if grade == "A+":
             tp_to_sl_ratio = max(tp_to_sl_ratio, 3.0)
-            risk_percent = min(risk_percent * 1.5, 2.0)  # max 2%
         elif grade == "A":
             tp_to_sl_ratio = max(tp_to_sl_ratio, 2.5)
-            # risk_percent bez zmian (default)
         elif grade == "B":
             tp_to_sl_ratio = max(tp_to_sl_ratio, 2.0)
-            risk_percent = risk_percent * 0.7  # zmniejszone ryzyko
 
         logger.info(f"📊 Adjusted: R:R={tp_to_sl_ratio}, Risk={risk_percent:.2f}%")
     except Exception as e:

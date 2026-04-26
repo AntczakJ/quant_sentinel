@@ -720,6 +720,15 @@ async def _run_backtest(args) -> dict:
     if provider is not None and getattr(args, "yf", None) == _SHARED_PROVIDER_KEY.get("yf") \
        and getattr(args, "symbol", None) == _SHARED_PROVIDER_KEY.get("symbol"):
         print(f"[backtest] Reusing shared HistoricalProvider for {args.yf}", flush=True)
+    elif getattr(args, "warehouse", False):
+        # Phase 1 warehouse: read 3-year parquet, no API calls, no 60d cap.
+        symbol_dir = args.symbol.replace("/", "_")
+        print(f"[backtest] Loading from warehouse: data/historical/{symbol_dir}/", flush=True)
+        provider = HistoricalProvider.from_warehouse(
+            symbol=args.symbol,
+            symbol_dir=symbol_dir,
+            intervals=("5m", "15m", "1h", "4h"),
+        )
     else:
         print(f"[backtest] Loading {args.yf} ({args.days} days of 5m/15m/1h/4h)...", flush=True)
         period_for_fetch = f"{max(args.days, 60)}d"  # yfinance 5m max 60d anyway
@@ -1043,6 +1052,11 @@ def main():
                     help="disable relaxed filters — run with PRODUCTION confluence "
                          "threshold (3+) and Stable=blocked. Useful for apples-to-"
                          "apples comparison vs live.")
+    ap.add_argument("--warehouse", action="store_true",
+                    help="load from data/historical/{symbol_dir}/*.parquet "
+                         "(Phase 1 warehouse) instead of yfinance. Enables 3-year "
+                         "history without API calls. Symbol dir derived from --symbol "
+                         "(e.g. XAU/USD -> XAU_USD).")
     args = ap.parse_args()
 
     # Determinism — seed random + numpy for reproducible backtest
