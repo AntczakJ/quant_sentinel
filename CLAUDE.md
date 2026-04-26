@@ -53,6 +53,28 @@ Custom spans wrapping the BG scanner are `scanner.prefetch_tfs` and
 `/api/health` and `/api/sse/*` are excluded from request traces to keep
 the stream readable.
 
+## DuckDB warehouse reader (opt-in, 2026-04-26 evening)
+`HistoricalProvider.from_warehouse()` (src/backtest/historical_provider.py)
+now routes parquet reads through `_read_warehouse_parquet(path)` which
+honors `QUANT_USE_DUCKDB={1,0}` (default `0`). Parity verified by
+`tests/test_warehouse_duckdb_parity.py` (8 tests, OHLCV float-tolerant
+compare across all six XAU/USD TFs).
+
+**Empirical takeaway from `tools/bench_warehouse_reader.py`:**
+- Single-file basic read (6 MB 5-min): pandas wins ~2.5×
+  (15 ms vs 37 ms median). DuckDB has query-engine overhead that doesn't
+  pay off until file > ~50 MB or queries do real aggregation.
+- Multi-asset SQL aggregation (9 daily files, AVG/MIN/MAX/COUNT per
+  symbol): DuckDB wins ~4× (7 ms vs 25 ms).
+
+**Decision:** default stays pandas. Flip `QUANT_USE_DUCKDB=1` only when
+you're actually doing the multi-file/aggregation workload (future
+research scripts, ad-hoc cross-asset analytics). For day-to-day backtest
+and `run_production_backtest.py`, no change needed.
+
+`duckdb` is now a permanent dep — usable directly via `import duckdb` in
+research scripts. Pinned to `>=1.5.0,<1.6.0` (1.6 is still dev).
+
 ## dynamic_params schema + drift watchdog (2026-04-26 evening)
 `src/core/dynamic_params_schema.py` declares well-known keys (literal +
 prefix specs across 12 domain groups: risk_sizing, ensemble, portfolio,

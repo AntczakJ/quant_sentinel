@@ -8,6 +8,12 @@ returns the most recent N bars relative to the current `simulated_now`.
 **Isolation**: this module does NOT touch the live `_provider_cache` in
 data_sources. It exposes `install_historical_provider()` which monkey-
 patches `get_provider` — call it BEFORE any scanner/smc_engine imports.
+
+**Warehouse reader**: `from_warehouse()` reads parquets from
+`data/historical/{SYMBOL_DIR}/`. Setting `QUANT_USE_DUCKDB=1` switches
+the parquet reader from pandas to DuckDB — same DataFrame downstream,
+but faster on large files (parquet row-group pruning, columnar I/O).
+Default OFF until a parity backtest run validates the swap.
 """
 from __future__ import annotations
 
@@ -18,6 +24,29 @@ import pandas as pd
 
 from src.core.logger import logger
 from src.data.data_sources import DataProvider
+
+
+def _read_warehouse_parquet(path) -> pd.DataFrame:
+    """Read a single warehouse parquet — either via pandas or DuckDB.
+
+    DuckDB returns a pandas DataFrame with the same schema, so callers
+    don't need to branch. We import duckdb lazily so the dependency is
+    only loaded when actually requested (Janek's prod scanner never hits
+    this path, only backtest scripts do).
+    """
+    use_duckdb = os.environ.get("QUANT_USE_DUCKDB", "0").lower() in ("1", "true", "yes")
+    if use_duckdb:
+        try:
+            import duckdb  # type: ignore
+            # Use parameterized table function to avoid path-quoting issues.
+            return duckdb.sql(
+                f"SELECT * FROM read_parquet('{str(path).replace(chr(92), '/')}')"
+            ).df()
+        except Exception as e:
+            logger.warning(
+                f"HistoricalProvider: DuckDB read failed for {path} ({e}) — falling back to pandas"
+            )
+    return pd.read_parquet(path)
 
 
 # Maps canonical TF keys to yfinance-compatible intervals
@@ -249,7 +278,7 @@ class HistoricalProvider(DataProvider):
                 logger.warning(f"HistoricalProvider: warehouse miss {parquet_path}")
                 continue
             try:
-                df = pd.read_parquet(parquet_path)
+                df = _read_warehouse_parquet(parquet_path)
             except Exception as e:
                 logger.warning(f"HistoricalProvider: parquet read failed {parquet_path}: {e}")
                 continue

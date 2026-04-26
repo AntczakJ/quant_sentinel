@@ -74,6 +74,12 @@ dependencies = [
     # Skip the [sqlite3] extra: TracedConnectionProxy breaks
     # Connection.backup() used by src/core/database.py.
     "logfire[fastapi,httpx]>=3.0.0",
+    # Embedded analytics — opt-in DuckDB reader for warehouse parquets.
+    # Used by HistoricalProvider.from_warehouse() when QUANT_USE_DUCKDB=1
+    # (default OFF until parity has been verified on a real backtest run).
+    # Pinned to 1.5.x stable — global `prerelease=allow` (set for pandas-ta)
+    # would otherwise pick 1.6.0.dev*.
+    "duckdb>=1.5.0,<1.6.0",
 ]
 
 [project.optional-dependencies]
@@ -88,8 +94,10 @@ dev = [
 # existing one to preserve installed wheels and DirectML GPU runtime.
 managed = true
 # pandas-ta 0.4.71b0 is a prerelease and the only line carrying >=0.4. We
-# want it.
-prerelease = "allow"
+# accept prereleases only when no stable version satisfies the constraint —
+# this keeps duckdb / wrapt / others on stable while letting pandas-ta
+# resolve to its only-ever-prerelease line.
+prerelease = "if-necessary"
 # pandas-ta's pinned numba (==0.61.2) drags in old transitives that conflict
 # with pandas 3 — these overrides force the resolver to honor our pins.
 override-dependencies = [
