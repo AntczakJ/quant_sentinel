@@ -2,7 +2,96 @@
 name = "quant-sentinel"
 version = "3.0.0"
 description = "Autonomous gold trading system — SMC + ML Ensemble"
-requires-python = ">=3.10"
+requires-python = ">=3.12"  # pandas-ta 0.4.x prerelease needs 3.12+; project runs on 3.13 anyway
+
+# Single source of truth for runtime dependencies. `requirements.txt` is
+# generated from this list (`uv export --no-hashes -o requirements.txt`)
+# and kept around only as a back-compat path for `pip install -r`.
+dependencies = [
+    # Telegram bot
+    "python-telegram-bot>=22.7",
+    # Data & analysis
+    "pandas>=3.0.0",
+    "pandas_ta>=0.4.0",
+    "numpy>=2.2.0,<2.5",
+    "numba>=0.61.0",
+    # AI & sentiment
+    "transformers>=5.4.0",
+    "torch>=2.11.0",
+    "scipy>=1.17.0",
+    "openai>=2.30.0",
+    # Visualization
+    "matplotlib>=3.10.0",
+    "Pillow>=12.1.0",
+    # PDF export
+    "reportlab>=4.0",
+    # Utilities
+    "requests>=2.33.0",
+    "python-dotenv>=1.2.0",
+    "feedparser>=6.0.10",
+    "tensorflow>=2.20.0",
+    "scikit-learn>=1.8.0",
+    "xgboost>=3.0.0",
+    "yfinance>=1.2.2",      # 1.2.2+ allows curl-cffi 0.15 (CVE-2026-33752)
+    "curl-cffi>=0.15.0",    # CVE-2026-33752 patch, pinned transitive
+    # Real-time data
+    "websocket-client>=1.9.0",
+    # Signal processing
+    "PyWavelets>=1.8.0",
+    # Auth
+    "PyJWT>=2.12.0",
+    "bcrypt>=4.0.0",
+    # Macro data & news
+    "fredapi>=0.5.0",
+    "finnhub-python>=2.4.0",
+    # News similarity (FAISS)
+    "sentence-transformers>=5.0.0",
+    "faiss-cpu>=1.10.0",
+    # FastAPI & web
+    "fastapi>=0.135.0",
+    "uvicorn[standard]>=0.44.0",
+    "websockets>=16.0",
+    "pydantic>=2.12.0",
+    "python-multipart>=0.0.24",
+    "httpx>=0.28.0",
+    # Hyperparameter tuning
+    "optuna>=3.5.0",
+    # Utilities & UI
+    "colorama>=0.4.6",
+    "tqdm>=4.67.0",
+    # Database cloud (optional)
+    "libsql-client>=0.3.0",
+    # System
+    "psutil>=6.0.0",
+    # GPU acceleration — DirectML (AMD/Intel/NVIDIA on Windows)
+    "onnxruntime-directml>=1.24.0",
+    "tf2onnx>=1.17.0",
+    "onnx>=1.21.0",
+    "skl2onnx>=1.20.0",
+    "onnxmltools>=1.16.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",            # CVE-2025-71176 patch
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=6.0.0",
+]
+
+[tool.uv]
+# uv auto-creates a venv at `.venv/` matching `requires-python`; we keep the
+# existing one to preserve installed wheels and DirectML GPU runtime.
+managed = true
+# pandas-ta 0.4.71b0 is a prerelease and the only line carrying >=0.4. We
+# want it.
+prerelease = "allow"
+# pandas-ta's pinned numba (==0.61.2) drags in old transitives that conflict
+# with pandas 3 — these overrides force the resolver to honor our pins.
+override-dependencies = [
+    "pandas>=3.0.0",
+    "numba>=0.61.2",
+    "numpy>=2.2.0,<2.5",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

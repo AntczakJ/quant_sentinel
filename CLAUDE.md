@@ -26,6 +26,28 @@ touching trading logic.
 
 Start: `.venv/Scripts/python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --log-level info > logs/api.log 2>&1 &`
 
+## Dependency management (2026-04-26 evening — uv migration)
+`pyproject.toml` is now the single source of truth for runtime deps.
+`uv.lock` (committed, 4142 lines, 176 packages resolved) pins exact versions.
+`requirements.txt` is preserved for back-compat but **regenerate from uv**
+when adding/removing deps:
+
+```
+.venv/Scripts/uv add <pkg>           # add a dep + relock
+.venv/Scripts/uv lock                # relock without changes
+.venv/Scripts/uv sync                # apply lock to .venv (heavy — re-installs torch/tf)
+.venv/Scripts/uv export --no-hashes -o requirements.txt   # regenerate back-compat file
+```
+
+Janek-flow installs (fresh machine):
+- New: `uv venv && uv sync` (~15× faster than pip)
+- Old (still works): `python -m venv .venv && pip install -r requirements.txt`
+
+`requires-python` bumped to `>=3.12` (was 3.10) because `pandas-ta 0.4.71b0`
+prerelease — the only line carrying our needed version — declares 3.12+. Project
+runs on 3.13 anyway. `[tool.uv].override-dependencies` forces `pandas>=3.0`,
+`numba>=0.61.2`, `numpy>=2.2,<2.5` to bypass stale transitive constraints.
+
 ## Scanner cascade (scalp-first, as of 2026-04-16)
 `SCAN_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h"]` (scanner.py:26).
 Breaks on first TF with valid setup. Low TFs (5m/15m/30m) have:
