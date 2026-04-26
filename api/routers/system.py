@@ -113,6 +113,18 @@ def _xgb_loader_info() -> dict:
         return {"error": str(e)}
 
 
+@router.get("/rate-limit", summary="API rate-limiter status")
+async def rate_limit_status():
+    """Snapshot of the TwelveData credit bucket — what's available right
+    now, what's been spent in the last minute, and the configured caps."""
+    try:
+        from src.api_optimizer import get_rate_limiter
+        return get_rate_limiter().get_stats()
+    except Exception as e:
+        logger.error(f"system/rate-limit error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/info", summary="System / runtime / ML stack diagnostic")
 async def system_info():
     try:

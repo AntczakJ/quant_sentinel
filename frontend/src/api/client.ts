@@ -285,6 +285,18 @@ export const api = {
       env: Record<string, boolean>
     }>('/system/info'),
 
+  /** API credit-bucket status (TwelveData primary). */
+  rateLimit: () =>
+    get<{
+      current_credits: number
+      safe_limit: number
+      max_limit: number
+      credits_used_last_min: number
+      recent_requests: number
+      last_refill: number
+      all_requests_count: number
+    }>('/system/rate-limit'),
+
   // Scanner control
   scannerStatus: () =>
     get<{ paused: boolean; reason: string | null; since: string | null }>('/scanner/status'),

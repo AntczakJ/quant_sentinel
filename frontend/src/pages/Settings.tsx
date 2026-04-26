@@ -103,6 +103,11 @@ export default function Settings() {
           </div>
         </Card>
 
+        {/* ─── Rate limit (API credits) ──────────────────────── */}
+        <Card variant="raised" className="p-6">
+          <RateLimitBlock />
+        </Card>
+
         {/* ─── System diagnostic ─────────────────────────────── */}
         <Card variant="raised" className="p-6 lg:col-span-2">
           <SystemInfoBlock />
@@ -148,6 +153,97 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
       <span className="text-caption text-ink-600">{label}</span>
       <span className="num text-body">{value}</span>
+    </div>
+  )
+}
+
+// ─── Rate limit — TwelveData credit bucket ─────────────────────────────
+function RateLimitBlock() {
+  const { data, isError } = useQuery({
+    queryKey: ['rate-limit'],
+    queryFn: api.rateLimit,
+    refetchInterval: 10_000,
+    staleTime: 5_000,
+  })
+  if (isError) {
+    return (
+      <div>
+        <h3 className="text-title font-display">API credits</h3>
+        <p className="text-caption text-bear mt-2">/api/system/rate-limit failed.</p>
+      </div>
+    )
+  }
+  if (!data) {
+    return (
+      <div>
+        <h3 className="text-title font-display">API credits</h3>
+        <p className="text-caption text-ink-600 mt-2">Loading…</p>
+      </div>
+    )
+  }
+
+  const pct = data.max_limit > 0 ? (data.current_credits / data.max_limit) * 100 : 0
+  const safePct = data.max_limit > 0 ? (data.safe_limit / data.max_limit) * 100 : 100
+  const tone = pct < 20 ? 'bear' : pct < 50 ? 'gold' : 'bull'
+  const toneClass = tone === 'bear' ? 'text-bear' : tone === 'gold' ? 'text-gold-400' : 'text-bull'
+  const fillBg = tone === 'bear' ? 'bg-bear/60' : tone === 'gold' ? 'bg-gold-500/60' : 'bg-bull/60'
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-title font-display">API credits</h3>
+          <p className="text-caption text-ink-600 mt-1">
+            TwelveData primary bucket · refilled {Math.max(0, Math.round((Date.now() / 1000) - data.last_refill))} s ago
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Now</div>
+          <div className={`num text-headline font-display ${toneClass}`}>
+            <NumberFlow
+              value={data.current_credits}
+              format={{ maximumFractionDigits: 0 }}
+              respectMotionPreference
+            />
+            <span className="text-caption text-ink-600"> / {data.max_limit}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Bucket bar */}
+      <div className="mt-4 relative h-2 rounded-full bg-white/[0.04] overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-700 ${fillBg}`}
+          style={{ width: `${Math.min(100, pct)}%` }}
+        />
+        {/* Safe-limit dashed marker */}
+        <div
+          className="absolute top-0 bottom-0 w-px bg-white/30"
+          style={{ left: `${Math.min(100, safePct)}%` }}
+          title={`safe limit: ${data.safe_limit}`}
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-4 text-caption">
+        <div>
+          <div className="text-micro uppercase tracking-wider text-ink-600">Used / min</div>
+          <div className="num text-body mt-0.5">
+            <NumberFlow value={data.credits_used_last_min} format={{ maximumFractionDigits: 0 }} respectMotionPreference />
+          </div>
+        </div>
+        <div>
+          <div className="text-micro uppercase tracking-wider text-ink-600">Recent reqs</div>
+          <div className="num text-body mt-0.5">
+            <NumberFlow value={data.recent_requests} format={{ maximumFractionDigits: 0 }} respectMotionPreference />
+          </div>
+        </div>
+        <div>
+          <div className="text-micro uppercase tracking-wider text-ink-600">All-time</div>
+          <div className="num text-body mt-0.5">
+            <NumberFlow value={data.all_requests_count} format={{ maximumFractionDigits: 0 }} respectMotionPreference />
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

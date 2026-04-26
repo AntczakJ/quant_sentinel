@@ -1139,8 +1139,12 @@ if _LOGFIRE_OK:
 from api.middleware.rate_limit import RateLimitMiddleware
 from api.middleware.jwt_auth import JwtAuthMiddleware
 from api.middleware.request_id import RequestIDMiddleware
+from api.middleware.slow_request import SlowRequestMiddleware
 app.add_middleware(JwtAuthMiddleware)
 app.add_middleware(RateLimitMiddleware)
+# Slow-request observer — logs a WARN on requests over SLOW_REQUEST_MS.
+# Sits BEFORE Request ID so its log line still has the id.
+app.add_middleware(SlowRequestMiddleware)
 # Request ID — must be outermost so IDs are on every response
 app.add_middleware(RequestIDMiddleware)
 # CORS — only needed when frontend runs on different port (vite dev server)
