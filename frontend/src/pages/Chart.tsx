@@ -11,6 +11,8 @@ import {
 } from 'lightweight-charts'
 import { api } from '@/api/client'
 import { Card } from '@/components/Card'
+import { MagneticButton } from '@/components/MagneticButton'
+import { Skeleton } from '@/components/Skeleton'
 
 const TFS = [
   { label: '5m', value: '5m' },
@@ -118,26 +120,32 @@ export default function ChartPage() {
         <h1 className="text-display-sm font-display tracking-tight text-display-gradient">XAU/USD</h1>
         <div className="flex gap-2">
           {TFS.map((t) => (
-            <button
+            <MagneticButton
               key={t.value}
+              strength={0.18}
               onClick={() => setTf(t.value)}
-              className={`px-4 py-2 rounded-full text-caption transition-all ${
+              className={`px-4 py-2 rounded-full text-caption transition-colors ${
                 tf === t.value
-                  ? 'bg-white/[0.08] text-ink-900 border border-white/15'
+                  ? 'bg-white/[0.08] text-ink-900 border border-white/15 shadow-glow-gold'
                   : 'border border-white/[0.06] text-ink-600 hover:text-ink-800 hover:border-white/15'
               }`}
             >
               {t.label}
-            </button>
+            </MagneticButton>
           ))}
         </div>
       </div>
 
       <Card variant="raised" className="relative">
         <div ref={containerRef} className="w-full h-[640px] rounded-xl2 overflow-hidden" />
-        {(isLoading || isError) && (
-          <div className="absolute inset-0 flex items-center justify-center text-caption text-ink-600 pointer-events-none">
-            {isError ? 'Failed to load candles.' : 'Loading candles…'}
+        {isLoading && !isError && (
+          <div className="absolute inset-0 p-6 pointer-events-none">
+            <Skeleton variant="chart" height={596} />
+          </div>
+        )}
+        {isError && (
+          <div className="absolute inset-0 flex items-center justify-center text-caption text-bear pointer-events-none">
+            Failed to load candles.
           </div>
         )}
       </Card>

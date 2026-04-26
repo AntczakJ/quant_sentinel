@@ -1,7 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import NumberFlow from '@number-flow/react'
+import { useAutoAnimate } from '@formkit/auto-animate/react'
 import { api } from '@/api/client'
 import { Card } from '@/components/Card'
+import { FlashOnChange } from '@/components/FlashOnChange'
+import { MagneticButton } from '@/components/MagneticButton'
 
 type Filter = 'all' | 'win' | 'loss' | 'open' | 'long' | 'short'
 
@@ -29,43 +33,73 @@ export default function Trades() {
   const total = filtered.reduce((s, t) => s + (t.profit ?? 0), 0)
 
   const FILTERS: Filter[] = ['all', 'win', 'loss', 'open', 'long', 'short']
+  const [animParent] = useAutoAnimate<HTMLTableSectionElement>({ duration: 220, easing: 'ease-out' })
 
   return (
     <div className="flex flex-col gap-8">
-      <header className="flex flex-col gap-2">
+      <header className="reveal-on-scroll flex flex-col gap-2">
         <h1 className="text-display-sm font-display tracking-tight text-display-gradient">Trades</h1>
         <p className="text-body text-ink-600">All closed and open positions, most recent first.</p>
       </header>
 
       {/* Quick stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Total', value: filtered.length, mono: true },
-          { label: 'Win Rate', value: wr != null ? `${wr.toFixed(1)}%` : '—' },
-          { label: 'Net P&L', value: `${total >= 0 ? '+' : ''}${total.toFixed(0)}` },
-          { label: 'Closed', value: closed.length, mono: true },
-        ].map((s) => (
-          <Card key={s.label} variant="flat" className="p-5">
-            <div className="text-micro uppercase tracking-wider text-ink-600">{s.label}</div>
-            <div className={`mt-2 text-headline font-display ${s.mono ? 'num' : ''}`}>{s.value}</div>
-          </Card>
-        ))}
+        <Card variant="flat" className="p-5">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Total</div>
+          <div className="mt-2 text-headline font-display num">
+            <NumberFlow value={filtered.length} respectMotionPreference />
+          </div>
+        </Card>
+        <Card variant="flat" className="p-5">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Win Rate</div>
+          <div className="mt-2 text-headline font-display num">
+            {wr != null ? (
+              <NumberFlow
+                value={wr}
+                format={{ minimumFractionDigits: 1, maximumFractionDigits: 1 }}
+                suffix="%"
+                respectMotionPreference
+              />
+            ) : (
+              '—'
+            )}
+          </div>
+        </Card>
+        <Card variant="flat" className="p-5">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Net P&L</div>
+          <div className={`mt-2 text-headline font-display num ${total > 0 ? 'text-bull' : total < 0 ? 'text-bear' : ''}`}>
+            <FlashOnChange value={total}>
+              <NumberFlow
+                value={total}
+                format={{ maximumFractionDigits: 0, signDisplay: 'exceptZero' }}
+                respectMotionPreference
+              />
+            </FlashOnChange>
+          </div>
+        </Card>
+        <Card variant="flat" className="p-5">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Closed</div>
+          <div className="mt-2 text-headline font-display num">
+            <NumberFlow value={closed.length} respectMotionPreference />
+          </div>
+        </Card>
       </div>
 
       {/* Filter tabs */}
       <div className="flex flex-wrap gap-2">
         {FILTERS.map((f) => (
-          <button
+          <MagneticButton
             key={f}
+            strength={0.16}
             onClick={() => setFilter(f)}
-            className={`px-4 py-2 rounded-full text-caption capitalize transition-all ${
+            className={`px-4 py-2 rounded-full text-caption capitalize transition-colors ${
               filter === f
-                ? 'bg-white/[0.08] text-ink-900 border border-white/15'
+                ? 'bg-white/[0.08] text-ink-900 border border-white/15 shadow-glow-gold'
                 : 'bg-transparent text-ink-600 border border-white/[0.06] hover:border-white/15 hover:text-ink-800'
             }`}
           >
             {f}
-          </button>
+          </MagneticButton>
         ))}
       </div>
 
@@ -84,7 +118,7 @@ export default function Trades() {
               <th className="text-right py-4 px-6 font-medium">Status</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={animParent}>
             {filtered.slice(0, 200).map((t) => {
               const isLong = t.direction?.toUpperCase().includes('LONG')
               const isWin = t.status === 'WIN' || t.status === 'PROFIT'

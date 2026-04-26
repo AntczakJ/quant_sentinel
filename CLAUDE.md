@@ -213,7 +213,15 @@ assuming state.
 - Check both `api/main.py` and `src/trading/scanner.py` when changing
   trading behavior — dual-impl risk.
 - For UI changes: `cd frontend && npm run dev`, hard-refresh browser.
-  Frontend was rebuilt 2026-04-26 (commit fcc412d) — Tailwind + minimalist
-  design (Apple/Revolut/Outfit-inspired). Old dashboard preserved at
-  `frontend_v1/`. New frontend uses react-query (no Zustand store) and
-  has 5 pages: Dashboard, Chart, Trades, Models, Settings.
+  Frontend v4 (2026-04-26 evening) extends v3 baseline (commit fcc412d) with:
+  Paper Shaders cursor-reactive mesh bg, NumberFlow animated digits +
+  bull/bear flash on every numeric (Hero price, KPIs, Trades P&L), Cmd+K
+  command palette (cmdk + sonner toasts), View Transitions API page morph,
+  Magic-UI-style AnimatedBeam visualizing voter→ensemble→signal flow on
+  Models page, bento Dashboard with Motion `layoutId` expand-to-modal cards,
+  scrambled brand text reveal, aurora bg on Settings, magnetic buttons +
+  premium shimmer skeletons, sound feedback (off-by-default WebAudio, no
+  asset files). v3 baseline preserved at `frontend_v3_baseline/` (not
+  tracked, see .gitignore — git history is canonical rollback path).
+  v1 preserved at `frontend_v1/`. Stack still react-query (no Zustand),
+  same 5 pages: Dashboard, Chart, Trades, Models, Settings.

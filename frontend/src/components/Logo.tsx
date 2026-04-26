@@ -7,6 +7,7 @@ export function Logo({ size = 36 }: { size?: number }) {
       fill="none"
       className="transition-transform duration-300 group-hover:rotate-12"
       aria-hidden="true"
+      style={{ viewTransitionName: 'brand-logo' }}
     >
       <defs>
         <linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">

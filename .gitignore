@@ -106,6 +106,10 @@ frontend_v1/coverage/
 frontend_v1/tsconfig.tsbuildinfo
 frontend_v1/.env.local
 frontend_v1/.env.*.local
+# 2026-04-26: frontend_v3_baseline = local rollback snapshot (pre-v4 redesign).
+# Not tracked — git history is the canonical rollback path. Delete locally
+# once v4 is verified stable.
+frontend_v3_baseline/
 
 # ── IDE I EDYTORY ─────────────────────────────────────────────
 .vscode/

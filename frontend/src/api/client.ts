@@ -219,6 +219,11 @@ export const api = {
     )
     return [raw.lstm_stats, raw.xgb_stats, raw.rl_stats].filter(Boolean) as ModelStat[]
   },
+
+  // Scanner control — endpoints may not yet exist server-side. The palette
+  // catches 404/network failures and surfaces them via sonner.
+  scannerPause: () => ax.post<{ ok: boolean }>('/scanner/pause').then((r) => r.data),
+  scannerResume: () => ax.post<{ ok: boolean }>('/scanner/resume').then((r) => r.data),
 }
 
 export const isCircuitOpen = () => cb.state !== 'CLOSED'

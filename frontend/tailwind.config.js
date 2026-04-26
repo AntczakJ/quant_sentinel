@@ -1,61 +1,41 @@
 /** @type {import('tailwindcss').Config} */
+import animate from 'tailwindcss-animate'
+
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
-      // Quant Sentinel design tokens — synthesized from Revolut (financial
-      // gradients), Apple (whitespace + premium), Outfit (bold typography,
-      // confident layout choices). Dark-first; light mode flips via .light.
+      // Quant Sentinel design tokens — Revolut + Apple + Outfit, dark-first.
       colors: {
-        // Surfaces — true OLED black to layered greys
         ink: {
-          0: '#000000',     // canvas
-          50: '#0a0a0c',    // page bg
-          100: '#111114',   // raised card
-          200: '#1a1a1f',   // hover surface
-          300: '#26262d',   // border
+          0: '#000000',
+          50: '#0a0a0c',
+          100: '#111114',
+          200: '#1a1a1f',
+          300: '#26262d',
           400: '#3a3a45',
           500: '#5a5a66',
-          600: '#8b8b95',   // muted text
+          600: '#8b8b95',
           700: '#bdbdc6',
           800: '#e6e6ea',
-          900: '#fafafa',   // primary text on dark
+          900: '#fafafa',
         },
-        // Brand accent — premium gold (echoes XAU, also Apple's premium hue)
         gold: {
           400: '#d4af37',
           500: '#caa12a',
           600: '#a8861f',
         },
-        // Signal colors — muted/refined, not neon
         bull: '#22c55e',
         bear: '#ef4444',
         neutral: '#a1a1aa',
         info: '#3b82f6',
       },
       fontFamily: {
-        // System stack first; Inter as web fallback
-        sans: [
-          'ui-sans-serif',
-          '-apple-system',
-          'BlinkMacSystemFont',
-          'Inter',
-          'Segoe UI',
-          'Roboto',
-          'sans-serif',
-        ],
-        display: [
-          'ui-sans-serif',
-          '-apple-system',
-          'BlinkMacSystemFont',
-          'Inter',
-          'Segoe UI',
-          'sans-serif',
-        ],
+        sans: ['ui-sans-serif', '-apple-system', 'BlinkMacSystemFont', 'Inter', 'Segoe UI', 'Roboto', 'sans-serif'],
+        display: ['ui-sans-serif', '-apple-system', 'BlinkMacSystemFont', 'Inter', 'Segoe UI', 'sans-serif'],
         mono: ['ui-monospace', 'SF Mono', 'JetBrains Mono', 'Menlo', 'monospace'],
       },
       fontSize: {
-        // Apple-inspired typographic scale — generous, breathing
         'display-xl': ['96px', { lineHeight: '0.95', letterSpacing: '-0.04em', fontWeight: '700' }],
         'display-lg': ['72px', { lineHeight: '0.98', letterSpacing: '-0.035em', fontWeight: '700' }],
         'display-md': ['56px', { lineHeight: '1.0', letterSpacing: '-0.03em', fontWeight: '600' }],
@@ -70,24 +50,34 @@ export default {
         tightest: '-0.04em',
       },
       backgroundImage: {
-        // Subtle financial gradients — Revolut-style, but more restrained
         'mesh-gold': 'radial-gradient(60% 80% at 30% 20%, rgba(212,175,55,0.18) 0%, transparent 60%), radial-gradient(50% 70% at 80% 90%, rgba(212,175,55,0.10) 0%, transparent 60%)',
         'mesh-info': 'radial-gradient(60% 80% at 70% 20%, rgba(59,130,246,0.12) 0%, transparent 60%)',
         'border-fade': 'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)',
+        // Inline SVG fractal noise — replaces grain.png, ~400 bytes, browser-rendered
+        'grain': "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")",
       },
       borderRadius: {
         'xl2': '20px',
         'xl3': '28px',
       },
       boxShadow: {
-        // Layered, soft shadows — Apple-inspired
         'soft': '0 1px 2px rgba(0,0,0,0.05), 0 4px 12px rgba(0,0,0,0.08)',
         'lift': '0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.12)',
         'glow-gold': '0 0 24px rgba(212,175,55,0.15), 0 0 48px rgba(212,175,55,0.05)',
+        'glow-bull': '0 0 24px rgba(34,197,94,0.25), 0 0 48px rgba(34,197,94,0.08)',
+        'glow-bear': '0 0 24px rgba(239,68,68,0.25), 0 0 48px rgba(239,68,68,0.08)',
+        'glow-info': '0 0 24px rgba(59,130,246,0.25), 0 0 48px rgba(59,130,246,0.08)',
       },
       animation: {
-        'fade-up': 'fadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both',
-        'fade-in': 'fadeIn 0.4s ease-out both',
+        'fade-up':       'fadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'fade-in':       'fadeIn 0.4s ease-out both',
+        'flash-bull':    'flashBull 700ms cubic-bezier(0.22, 1, 0.36, 1)',
+        'flash-bear':    'flashBear 700ms cubic-bezier(0.22, 1, 0.36, 1)',
+        'shimmer':       'shimmer 1.6s linear infinite',
+        'aurora':        'auroraRotate 18s linear infinite',
+        'beam-pulse':    'beamPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'pulse-glow':    'pulseGlow 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'scroll-reveal': 'scrollReveal linear both',
       },
       keyframes: {
         fadeUp: {
@@ -98,8 +88,36 @@ export default {
           from: { opacity: '0' },
           to: { opacity: '1' },
         },
+        flashBull: {
+          '0%, 100%': { backgroundColor: 'transparent', boxShadow: 'none' },
+          '20%': { backgroundColor: 'rgba(34,197,94,0.18)', boxShadow: '0 0 24px rgba(34,197,94,0.20)' },
+        },
+        flashBear: {
+          '0%, 100%': { backgroundColor: 'transparent', boxShadow: 'none' },
+          '20%': { backgroundColor: 'rgba(239,68,68,0.18)', boxShadow: '0 0 24px rgba(239,68,68,0.20)' },
+        },
+        shimmer: {
+          '0%':   { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+        auroraRotate: {
+          '0%':   { transform: 'translate3d(0,0,0) rotate(0deg)' },
+          '100%': { transform: 'translate3d(0,0,0) rotate(360deg)' },
+        },
+        beamPulse: {
+          '0%, 100%': { opacity: '0.45' },
+          '50%':      { opacity: '1' },
+        },
+        pulseGlow: {
+          '0%, 100%': { boxShadow: '0 0 0 0 rgba(212,175,55,0.0), 0 0 16px rgba(212,175,55,0.10)' },
+          '50%':      { boxShadow: '0 0 0 8px rgba(212,175,55,0.05), 0 0 32px rgba(212,175,55,0.30)' },
+        },
+        scrollReveal: {
+          from: { opacity: '0', transform: 'translateY(24px) scale(0.98)' },
+          to:   { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
       },
     },
   },
-  plugins: [],
+  plugins: [animate],
 }

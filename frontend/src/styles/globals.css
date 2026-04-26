@@ -9,20 +9,19 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
-    /* Prevent ios mobile rubber-band on overscroll */
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01', 'tnum';
     overscroll-behavior: none;
   }
 
   body {
-    /* Subtle global mesh — gives the dark surface depth without distraction */
+    /* Subtle global mesh — gives the dark surface depth without distraction.
+       The cursor-reactive Paper Shaders mesh layer mounts on top of this. */
     background:
       radial-gradient(80% 60% at 100% 0%, rgba(212, 175, 55, 0.06) 0%, transparent 60%),
       radial-gradient(60% 50% at 0% 100%, rgba(59, 130, 246, 0.04) 0%, transparent 60%),
       #0a0a0c;
     background-attachment: fixed;
     min-height: 100vh;
-    /* Better selection contrast */
     selection-color: white;
     selection-background-color: rgba(212, 175, 55, 0.4);
   }
@@ -32,7 +31,7 @@
     color: white;
   }
 
-  /* Custom scrollbar — minimal, on-brand */
+  /* Custom scrollbar — minimal, with gold glow on hover */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -45,14 +44,15 @@
     border-radius: 5px;
     border: 2px solid transparent;
     background-clip: padding-box;
+    transition: background 0.2s ease;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(212, 175, 55, 0.32);
     background-clip: padding-box;
     border: 2px solid transparent;
+    box-shadow: inset 0 0 8px rgba(212, 175, 55, 0.4);
   }
 
-  /* Disable focus ring on mouse, keep for keyboard */
   *:focus:not(:focus-visible) {
     outline: none;
   }
@@ -66,7 +66,7 @@
 /* ─── Custom utility classes ─────────────────────────────────────────── */
 
 @layer components {
-  /* Glass-card surface — Apple-inspired translucency, refined for dark theme */
+  /* Glass-card surface — Apple-inspired translucency */
   .surface {
     @apply bg-ink-100/80 backdrop-blur-xl border border-white/5;
   }
@@ -78,7 +78,20 @@
            hover:border-white/15 hover:shadow-lift hover:-translate-y-0.5;
   }
 
-  /* Display-grade text with gradient — Outfit-inspired bold confidence */
+  /* Grain noise overlay — premium texture, used over surfaces and shaders */
+  .surface-grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: theme('backgroundImage.grain');
+    opacity: 0.045;
+    mix-blend-mode: overlay;
+    border-radius: inherit;
+    z-index: 1;
+  }
+
+  /* Display-grade text gradients */
   .text-display-gradient {
     background: linear-gradient(180deg, #fafafa 0%, #bdbdc6 100%);
     -webkit-background-clip: text;
@@ -109,13 +122,144 @@
     @apply pill border-gold-500/30 bg-gold-500/[0.08] text-gold-400;
   }
 
-  /* Number display with tabular alignment for tables */
+  /* Number display — tabular alignment, monospaced */
   .num {
     @apply font-mono tabular-nums;
+    font-variant-numeric: tabular-nums slashed-zero;
   }
 
   /* Subtle divider */
   .divider {
     @apply h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent;
+  }
+
+  /* Flash highlights — used on FlashOnChange wrapper */
+  .flash-bull {
+    animation: flashBull 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .flash-bear {
+    animation: flashBear 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* Premium shimmer skeleton — typed @property for proper interpolation */
+  .skeleton {
+    background:
+      linear-gradient(
+        100deg,
+        rgba(255,255,255,0.04) 0%,
+        rgba(255,255,255,0.10) 45%,
+        rgba(255,255,255,0.18) 50%,
+        rgba(255,255,255,0.10) 55%,
+        rgba(255,255,255,0.04) 100%
+      );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+    border-radius: 8px;
+  }
+
+  /* Aurora — slow rotating multi-color gradient for empty states / Settings */
+  .aurora-bg {
+    position: absolute;
+    inset: -40%;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.42;
+    filter: blur(80px) saturate(140%);
+    background:
+      conic-gradient(
+        from 0deg at 50% 50%,
+        rgba(212,175,55,0.45) 0deg,
+        rgba(59,130,246,0.30) 110deg,
+        rgba(34,197,94,0.18) 200deg,
+        rgba(168,134,31,0.40) 290deg,
+        rgba(212,175,55,0.45) 360deg
+      );
+    animation: auroraRotate 22s linear infinite;
+    transform-origin: center;
+  }
+}
+
+/* ─── @property typed customs (gradient-stop interpolation) ─────────── */
+
+@property --shine-pos {
+  syntax: '<percentage>';
+  initial-value: 0%;
+  inherits: false;
+}
+
+@property --beam-progress {
+  syntax: '<percentage>';
+  initial-value: 0%;
+  inherits: false;
+}
+
+/* ─── View Transitions API — SPA cross-route morph ────────────────── */
+
+@supports (view-transition-name: a) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 240ms;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  ::view-transition-old(root) {
+    animation-name: fadeOutDown;
+  }
+  ::view-transition-new(root) {
+    animation-name: fadeInUp;
+  }
+
+  /* Shared elements — assigned via inline style on individual nodes */
+  ::view-transition-group(brand-logo) {
+    animation-duration: 350ms;
+  }
+  ::view-transition-group(hero-price) {
+    animation-duration: 380ms;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+@keyframes fadeOutDown {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(-4px) scale(0.99); filter: blur(2px); }
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px) scale(0.99); filter: blur(2px); }
+  to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+
+/* ─── Scroll-driven reveal ─────────────────────────────────────────── */
+
+@supports (animation-timeline: view()) {
+  .reveal-on-scroll {
+    animation: scrollReveal linear both;
+    animation-timeline: view();
+    animation-range: entry 0% cover 22%;
+  }
+}
+@supports not (animation-timeline: view()) {
+  /* Firefox fallback — components fall back to Motion whileInView via JS */
+  .reveal-on-scroll {
+    animation: fadeUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+/* ─── Reduced motion — kill non-essential animations ────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .aurora-bg,
+  .skeleton {
+    animation: none !important;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
   }
 }

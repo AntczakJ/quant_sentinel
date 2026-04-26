@@ -1,10 +1,17 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, Suspense, lazy, useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Logo } from './Logo'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { OfflineBanner } from './OfflineBanner'
+import { ScrambleText } from './ScrambleText'
+import { isSoundEnabled, setSoundEnabled, playClick } from '@/lib/sound'
+
+// Lazy-load WebGL shader to avoid blocking initial paint on slower routes
+const MeshBackground = lazy(() =>
+  import('./MeshBackground').then((m) => ({ default: m.MeshBackground }))
+)
 
 const NAV = [
   { to: '/', label: 'Dashboard' },
@@ -24,17 +31,29 @@ export function Shell({ children }: { children: ReactNode }) {
   })
   const apiOk = !isError && (health?.status === 'ok' || health?.status === 'healthy')
 
+  // Disable shader on /chart route — frees GPU for lightweight-charts canvas
+  const meshEnabled = !loc.pathname.startsWith('/chart')
+
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col relative">
+      {/* ─── Cursor-reactive WebGL mesh background ──────────────────── */}
+      <Suspense fallback={null}>
+        <MeshBackground enabled={meshEnabled} />
+      </Suspense>
+
       {/* ─── Top bar ─────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-40 border-b border-white/[0.05] backdrop-blur-xl bg-ink-50/70">
         <div className="max-w-[1400px] mx-auto px-6 lg:px-10 h-16 flex items-center justify-between">
           {/* Brand */}
-          <Link to="/" className="flex items-center gap-3 group">
+          <Link to="/" viewTransition className="flex items-center gap-3 group">
             <Logo />
             <div>
-              <div className="text-title font-display tracking-tight">Quant Sentinel</div>
-              <div className="text-micro text-ink-600 group-hover:text-ink-700 transition-colors">XAU/USD</div>
+              <div className="text-title font-display tracking-tight">
+                <ScrambleText text="Quant Sentinel" duration={650} />
+              </div>
+              <div className="text-micro text-ink-600 group-hover:text-ink-700 transition-colors">
+                <ScrambleText text="XAU/USD" duration={500} />
+              </div>
             </div>
           </Link>
 
@@ -46,6 +65,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 <Link
                   key={n.to}
                   to={n.to}
+                  viewTransition
                   className={`relative px-4 py-2 text-body transition-colors ${
                     active ? 'text-ink-900' : 'text-ink-600 hover:text-ink-800'
                   }`}
@@ -63,14 +83,24 @@ export function Shell({ children }: { children: ReactNode }) {
             })}
           </nav>
 
-          {/* Health pill */}
+          {/* Health pill + Cmd+K hint + sound toggle */}
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
+              className="hidden md:inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-white/[0.08] bg-white/[0.02] text-micro text-ink-600 uppercase tracking-wider hover:border-white/20 hover:text-ink-800 transition-all"
+              title="Open command palette (⌘K)"
+            >
+              <kbd className="font-mono text-ink-700">⌘K</kbd>
+              <span>quick</span>
+            </button>
+            <SoundToggle />
             <div
               className={`pill ${apiOk ? 'border-bull/30 bg-bull/[0.08] text-bull' : 'border-bear/30 bg-bear/[0.08] text-bear'}`}
               title={health ? `API: ${health.status}` : 'API: unknown'}
             >
               <span
-                className={`inline-block w-1.5 h-1.5 rounded-full ${apiOk ? 'bg-bull' : 'bg-bear'}`}
+                className={`inline-block w-1.5 h-1.5 rounded-full ${apiOk ? 'bg-bull' : 'bg-bear'} ${apiOk ? 'animate-pulse-glow' : ''}`}
                 style={{ boxShadow: apiOk ? '0 0 8px currentColor' : 'none' }}
               />
               {apiOk ? 'live' : 'down'}
@@ -100,6 +130,7 @@ export function Shell({ children }: { children: ReactNode }) {
                   <Link
                     key={n.to}
                     to={n.to}
+                    viewTransition
                     onClick={() => setNavOpen(false)}
                     className={`px-3 py-3 rounded-xl text-body ${
                       loc.pathname === n.to ? 'bg-white/[0.06] text-ink-900' : 'text-ink-600'
@@ -132,5 +163,43 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </footer>
     </div>
+  )
+}
+
+// ─── Sound toggle (inline, only used here) ───────────────────────────
+function SoundToggle() {
+  const [on, setOn] = useState(false)
+  useEffect(() => setOn(isSoundEnabled()), [])
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const next = !on
+        setSoundEnabled(next)
+        setOn(next)
+        // Play a confirmation tick *after* enabling so the user hears it
+        if (next) setTimeout(() => playClick(), 30)
+      }}
+      title={on ? 'Sound feedback: ON' : 'Sound feedback: OFF'}
+      aria-label="Toggle sound"
+      className={`hidden md:inline-flex items-center justify-center w-9 h-9 rounded-full border transition-all ${
+        on
+          ? 'bg-gold-500/[0.08] border-gold-500/30 text-gold-400 shadow-glow-gold'
+          : 'bg-white/[0.02] border-white/[0.08] text-ink-600 hover:text-ink-800 hover:border-white/20'
+      }`}
+    >
+      {on ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+          <line x1="22" y1="9" x2="16" y2="15" />
+          <line x1="16" y1="9" x2="22" y2="15" />
+        </svg>
+      )}
+    </button>
   )
 }
