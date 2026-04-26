@@ -144,6 +144,8 @@ export default function Dashboard() {
           <ExpandableCard
             id="kpi-open"
             className="col-span-6 md:col-span-3 p-6"
+            detailTitle="Open positions"
+            detail={<OpenPositionsDetail />}
           >
             <Stat
               label="Open"
@@ -576,9 +578,52 @@ function RecentPnlDetail({ trades, total }: { trades: Trade[]; total: number }) 
 }
 
 function MacroDetail({ macro }: { macro: MacroContext }) {
+  // Pull recent USDJPY 1h candles to draw an inline trend chart inside the
+  // macro expandable. 200 hourly bars ≈ 8 trading days of context.
+  const { data: usdjpy } = useQuery({
+    queryKey: ['usdjpy-candles'],
+    queryFn: () => api.candles('USD/JPY', '1h', 200),
+    staleTime: 60_000,
+  })
+  const closes = (usdjpy ?? []).map((c) => c.close)
+  const last = closes.length ? closes[closes.length - 1] : null
+  const first = closes.length ? closes[0] : null
+  const change = last != null && first != null ? ((last - first) / first) * 100 : null
+
   return (
     <div className="flex flex-col gap-6">
       <MacroMini macro={macro} />
+
+      {/* USDJPY trend — primary USD-strength proxy */}
+      <div className="rounded-xl2 border border-white/[0.06] bg-ink-50/40 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <div className="text-micro uppercase tracking-wider text-ink-600">USD/JPY · 1h · 200 bars</div>
+            <div className="text-caption text-ink-700 mt-0.5">
+              Primary USD-strength proxy. Inverse correlation with XAU (≈ −0.6 historically).
+            </div>
+          </div>
+          {last != null && (
+            <div className="text-right">
+              <div className="num text-headline text-ink-900">
+                <NumberFlow
+                  value={last}
+                  format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }}
+                  respectMotionPreference
+                />
+              </div>
+              {change != null && (
+                <div className={`text-caption num ${change >= 0 ? 'text-bull' : 'text-bear'}`}>
+                  {change >= 0 ? '+' : ''}
+                  {change.toFixed(2)}%
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <Sparkline values={closes} width={760} height={120} strokeWidth={1.8} ariaLabel="USDJPY 1h" />
+      </div>
+
       <div className="text-caption text-ink-600 leading-relaxed">
         <strong className="text-ink-800 font-medium">USD/JPY</strong> is the system's primary USD-strength proxy
         (DXY data quality is too low at intraday for TwelveData feed). Z-score above +1
@@ -589,6 +634,105 @@ function MacroDetail({ macro }: { macro: MacroContext }) {
         <br />
         <strong className="text-ink-800 font-medium">Macro regime</strong> aggregates UUP / TLT / VIXY into a single
         zielony/czerwony/neutralny tag.
+      </div>
+    </div>
+  )
+}
+
+// ─── Open positions detail — live unrealized P&L ─────────────────────
+function OpenPositionsDetail() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['open-positions'],
+    queryFn: api.openPositions,
+    refetchInterval: 5_000,
+  })
+  const positions = data?.positions ?? []
+  const totalPnl = data?.total_unrealized_pnl ?? 0
+  const spot = data?.current_price
+
+  if (isLoading) return <div className="text-caption text-ink-600">Loading positions…</div>
+  if (!positions.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 text-center">
+        <div className="text-headline text-ink-700 mb-2">No open positions</div>
+        <div className="text-caption text-ink-600 max-w-sm">
+          The scanner will open the next entry when its cascade finds a setup that
+          passes all filters. Use Cmd+K → <span className="font-mono">Pause scanner</span>{' '}
+          to halt new entries.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="grid grid-cols-3 gap-4">
+        <Stat
+          size="sm"
+          label="Positions"
+          numeric={positions.length}
+          format={{ maximumFractionDigits: 0 }}
+        />
+        <Stat
+          size="sm"
+          label="Spot price"
+          numeric={spot ?? null}
+          format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }}
+          prefix="$"
+        />
+        <Stat
+          size="sm"
+          label="Unrealized P&L"
+          numeric={totalPnl}
+          format={{ minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' }}
+        />
+      </div>
+
+      <div className="flex flex-col">
+        {positions.map((p, i) => {
+          const isLong = p.direction.toUpperCase().includes('LONG')
+          const upnl = p.unrealized_pnl ?? 0
+          return (
+            <div
+              key={p.id}
+              className={`flex items-center justify-between py-3 ${
+                i < positions.length - 1 ? 'border-b border-white/[0.04]' : ''
+              }`}
+            >
+              <div className="flex items-center gap-4 min-w-0 flex-1">
+                <span className={`pill ${isLong ? 'pill-bull' : 'pill-bear'} shrink-0`}>
+                  {isLong ? 'LONG' : 'SHORT'}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-body num">
+                    ${p.entry.toFixed(2)} <span className="text-ink-600">→</span>{' '}
+                    <span className="text-bull">${p.tp.toFixed(2)}</span>{' '}
+                    <span className="text-ink-600">/</span>{' '}
+                    <span className="text-bear">${p.sl.toFixed(2)}</span>
+                  </div>
+                  <div className="text-caption text-ink-600 num">
+                    #{p.id} · lot {p.lot ?? '—'}
+                    {p.timestamp && (
+                      <> · {new Date(p.timestamp).toLocaleString(undefined, {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                      })}</>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="text-right shrink-0 ml-4">
+                <div className={`num text-body ${upnl >= 0 ? 'text-bull' : 'text-bear'}`}>
+                  <NumberFlow
+                    value={upnl}
+                    format={{ minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' }}
+                    respectMotionPreference
+                  />
+                </div>
+                <div className="text-micro text-ink-600 uppercase tracking-wider">unrealized</div>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

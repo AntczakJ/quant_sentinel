@@ -237,6 +237,23 @@ export const api = {
       pnl_values: number[]
     }>('/portfolio/history'),
 
+  /** Open positions with live P&L. */
+  openPositions: () =>
+    get<{
+      positions: Array<{
+        id: number
+        direction: string
+        entry: number
+        sl: number
+        tp: number
+        lot?: number
+        unrealized_pnl?: number
+        timestamp?: string
+      }>
+      total_unrealized_pnl: number
+      current_price: number
+    }>('/portfolio/open-positions'),
+
   // Scanner control
   scannerStatus: () =>
     get<{ paused: boolean; reason: string | null; since: string | null }>('/scanner/status'),
