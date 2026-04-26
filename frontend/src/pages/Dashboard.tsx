@@ -10,6 +10,7 @@ import {
 import { Stat } from '@/components/Stat'
 import { FlashOnChange } from '@/components/FlashOnChange'
 import { ExpandableCard } from '@/components/ExpandableCard'
+import { Sparkline } from '@/components/Sparkline'
 
 export default function Dashboard() {
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.portfolio, refetchInterval: 15_000 })
@@ -22,6 +23,21 @@ export default function Dashboard() {
   const wins = closed.filter((t) => t.status === 'WIN' || t.status === 'PROFIT').length
   const wr = closed.length ? (wins / closed.length) * 100 : null
   const totalPnl = trades.reduce((s, t) => s + (t.profit ?? 0), 0)
+
+  // Trend series for bento sparklines — derived from chronologically-sorted closed trades
+  const closedAsc = [...closed].reverse() // api returns newest-first; we want oldest-first
+  const wrSeries: number[] = []
+  let cumWins = 0
+  closedAsc.forEach((t, i) => {
+    if (t.status === 'WIN' || t.status === 'PROFIT') cumWins += 1
+    wrSeries.push((cumWins / (i + 1)) * 100)
+  })
+  const pnlSeries: number[] = []
+  let cumPnl = 0
+  closedAsc.forEach((t) => {
+    cumPnl += t.profit ?? 0
+    pnlSeries.push(cumPnl)
+  })
 
   return (
     <div className="flex flex-col gap-10">
@@ -71,7 +87,7 @@ export default function Dashboard() {
           {/* Win Rate — 3×1 */}
           <ExpandableCard
             id="kpi-wr"
-            className="col-span-6 md:col-span-3 p-6"
+            className="col-span-6 md:col-span-3 p-6 flex flex-col justify-between"
             detailTitle="Win-rate breakdown"
             detail={<WinRateDetail trades={trades} wr={wr} closed={closed.length} />}
           >
@@ -82,13 +98,25 @@ export default function Dashboard() {
               suffix="%"
               hint={`${closed.length} closed (last 10)`}
             />
+            {wrSeries.length >= 2 && (
+              <div className="mt-3 -mb-1">
+                <Sparkline
+                  values={wrSeries}
+                  width={220}
+                  height={32}
+                  color="#a1a1aa"
+                  strokeWidth={1.4}
+                  ariaLabel="rolling win-rate"
+                />
+              </div>
+            )}
           </ExpandableCard>
 
           {/* Recent P&L — 3×1 */}
           <ExpandableCard
             id="kpi-pnl"
             accent={totalPnl > 0 ? 'bull' : totalPnl < 0 ? 'bear' : 'none'}
-            className="col-span-6 md:col-span-3 p-6"
+            className="col-span-6 md:col-span-3 p-6 flex flex-col justify-between"
             detailTitle="Recent P&L"
             detail={<RecentPnlDetail trades={trades} total={totalPnl} />}
           >
@@ -98,6 +126,18 @@ export default function Dashboard() {
               format={{ style: 'decimal', maximumFractionDigits: 0, signDisplay: 'exceptZero' }}
               hint="last 10 trades"
             />
+            {pnlSeries.length >= 2 && (
+              <div className="mt-3 -mb-1">
+                <Sparkline
+                  values={pnlSeries}
+                  width={220}
+                  height={32}
+                  zeroLine
+                  strokeWidth={1.6}
+                  ariaLabel="cumulative P&L"
+                />
+              </div>
+            )}
           </ExpandableCard>
 
           {/* Open positions — 3×1 */}
@@ -414,32 +454,86 @@ function BalanceDetail({
   pnlPct?: number
   currency?: string
 }) {
+  const { data: history } = useQuery({
+    queryKey: ['portfolio-history'],
+    queryFn: api.portfolioHistory,
+    staleTime: 60_000,
+  })
+  const equity = history?.equity_values ?? []
+  const pnlSeries = history?.pnl_values ?? []
+  const startEquity = equity[0]
+  const endEquity = equity[equity.length - 1]
+  const peak = equity.length ? Math.max(...equity) : null
+  const drawdown =
+    peak != null && endEquity != null && peak > 0
+      ? ((endEquity - peak) / peak) * 100
+      : null
+
   return (
-    <div className="grid grid-cols-3 gap-6">
-      <Stat
-        size="md"
-        label="Balance"
-        numeric={balance ?? null}
-        format={{ style: 'decimal', maximumFractionDigits: 2 }}
-        suffix={currency ? ` ${currency}` : ''}
-      />
-      <Stat
-        size="md"
-        label="Unrealized P&L"
-        numeric={pnl ?? null}
-        format={{ style: 'decimal', maximumFractionDigits: 2, signDisplay: 'exceptZero' }}
-      />
-      <Stat
-        size="md"
-        label="Net %"
-        numeric={pnlPct ?? null}
-        format={{ minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' }}
-        suffix="%"
-      />
-      <div className="col-span-3 text-caption text-ink-600">
-        Equity curve and per-day P&L breakdown coming in v4.1 — backend endpoint
-        <code className="font-mono mx-1">/api/portfolio/equity-series</code>
-        is the planned source.
+    <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-3 gap-6">
+        <Stat
+          size="md"
+          label="Balance"
+          numeric={balance ?? null}
+          format={{ style: 'decimal', maximumFractionDigits: 2 }}
+          suffix={currency ? ` ${currency}` : ''}
+        />
+        <Stat
+          size="md"
+          label="Unrealized P&L"
+          numeric={pnl ?? null}
+          format={{ style: 'decimal', maximumFractionDigits: 2, signDisplay: 'exceptZero' }}
+        />
+        <Stat
+          size="md"
+          label="Net %"
+          numeric={pnlPct ?? null}
+          format={{ minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' }}
+          suffix="%"
+        />
+      </div>
+
+      {/* Equity curve from /api/portfolio/history (falls back to trades) */}
+      <div className="rounded-xl2 border border-white/[0.06] bg-ink-50/40 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <div className="text-micro uppercase tracking-wider text-ink-600">Equity curve</div>
+            <div className="text-caption text-ink-700 mt-0.5">
+              {equity.length > 0
+                ? `${equity.length} resolved trades · ${history?.timestamps[0]?.slice(0, 10)} → ${history?.timestamps.at(-1)?.slice(0, 10)}`
+                : 'No resolved trades yet — curve will populate as trades close.'}
+            </div>
+          </div>
+          {startEquity != null && endEquity != null && (
+            <div className="text-right">
+              <div className="text-micro uppercase tracking-wider text-ink-600">Net</div>
+              <div className={`num text-headline ${endEquity >= startEquity ? 'text-bull' : 'text-bear'}`}>
+                {endEquity >= startEquity ? '+' : ''}
+                {(endEquity - startEquity).toFixed(2)}
+              </div>
+            </div>
+          )}
+        </div>
+        <Sparkline values={equity} width={760} height={140} strokeWidth={2} ariaLabel="equity curve" />
+        {drawdown != null && peak != null && (
+          <div className="mt-3 flex items-center gap-6 text-caption text-ink-600">
+            <span>
+              peak <span className="num text-ink-800">{peak.toFixed(2)}</span>
+            </span>
+            <span>
+              drawdown <span className={`num ${drawdown < 0 ? 'text-bear' : 'text-ink-800'}`}>{drawdown.toFixed(2)}%</span>
+            </span>
+            {pnlSeries.length > 0 && (
+              <span>
+                cum P&L <span className={`num ${pnlSeries.at(-1)! >= 0 ? 'text-bull' : 'text-bear'}`}>
+                  {pnlSeries.at(-1)! >= 0 ? '+' : ''}
+                  {pnlSeries.at(-1)!.toFixed(2)}
+                </span>
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -1130,6 +1130,8 @@ app.include_router(agent.router, prefix="/api/agent", tags=["AI Agent"])
 app.include_router(risk.router, prefix="/api/risk", tags=["Risk Management"])
 app.include_router(export.router, prefix="/api/export", tags=["Data Export"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+from api.routers import scanner as _scanner_router
+app.include_router(_scanner_router.router, prefix="/api/scanner", tags=["Scanner Control"])
 
 
 @app.get("/api/metrics", tags=["System"])

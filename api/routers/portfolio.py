@@ -122,10 +122,14 @@ def get_portfolio_status():
     "/history",
     response_model=PortfolioHistory,
     summary="Get portfolio history",
-    description="Get historical portfolio values in PLN"
+    description=(
+        "Equity timeline. Returns the cached `dynamic_params.portfolio_history` "
+        "JSON when present; otherwise reconstructs the timeline from the `trades` "
+        "table (cumulative P&L over `initial_balance`)."
+    ),
 )
 def get_portfolio_history():
-    """Get portfolio equity history (in PLN)"""
+    """Get portfolio equity history (in PLN)."""
     try:
         db = NewsDB()
         history = db.get_param("portfolio_history", None)
@@ -134,13 +138,44 @@ def get_portfolio_history():
         if history:
             import json
             try:
-                # history may be a string (JSON) or a numeric value from REAL column
                 if isinstance(history, str):
                     hist_data = json.loads(history)
                 else:
                     logger.debug(f"portfolio_history is not JSON string: {type(history)}")
             except (json.JSONDecodeError, TypeError):
                 pass
+
+        # Fallback: reconstruct from resolved trades when cache is empty.
+        # Cheap query (~1 ms even at 10k rows) and produces a usable curve
+        # for the BalanceDetail expandable on the frontend.
+        if not hist_data.get("timestamps"):
+            rows = db._query(
+                "SELECT timestamp, profit FROM trades "
+                "WHERE status IN ('WIN','LOSS','PROFIT','LOSE','CLOSED') "
+                "AND profit IS NOT NULL "
+                "ORDER BY timestamp ASC, id ASC"
+            )
+            if rows:
+                portfolio = _get_portfolio()
+                initial = float(portfolio.get("initial_balance") or 0.0)
+                ts: list[str] = []
+                eq: list[float] = []
+                pnl_series: list[float] = []
+                cum = 0.0
+                for r in rows:
+                    try:
+                        p = float(r[1] or 0.0)
+                    except (TypeError, ValueError):
+                        continue
+                    cum += p
+                    ts.append(str(r[0]))
+                    pnl_series.append(round(cum, 2))
+                    eq.append(round(initial + cum, 2))
+                hist_data = {
+                    "timestamps": ts,
+                    "equity_values": eq,
+                    "pnl_values": pnl_series,
+                }
 
         return PortfolioHistory(
             timestamps=hist_data.get("timestamps", []),

@@ -276,6 +276,44 @@ async def get_lstm_distribution(hours: int = 48):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get(
+    "/ensemble-weights",
+    summary="Live ensemble voter weights",
+    description=(
+        "Returns the current voter weights from `dynamic_params` "
+        "(`ensemble_weight_*` keys). Used by the Models page to drive the "
+        "AnimatedBeam intensity per voter."
+    ),
+)
+async def get_ensemble_weights():
+    """Read voter weights live from the SQLite `dynamic_params` table."""
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        rows = db._query(
+            "SELECT param_name, param_value FROM dynamic_params "
+            "WHERE param_name LIKE 'ensemble_weight_%' AND param_value IS NOT NULL"
+        )
+        weights: dict[str, float] = {}
+        for name, value in rows or []:
+            voter = name.replace("ensemble_weight_", "")
+            try:
+                weights[voter] = float(value)
+            except (TypeError, ValueError):
+                continue
+        total = sum(weights.values()) or 1.0
+        normalized = {k: round(v / total, 4) for k, v in weights.items()}
+        return {
+            "weights": weights,
+            "normalized": normalized,
+            "total": round(total, 4),
+            "voters": sorted(weights.keys()),
+        }
+    except Exception as e:
+        logger.error(f"ensemble-weights error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/alerts/{alert_id}/resolve", summary="Resolve a model alert")
 async def resolve_model_alert(alert_id: int):
     """Mark a model alert as resolved."""
