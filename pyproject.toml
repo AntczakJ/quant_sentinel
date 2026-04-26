@@ -80,6 +80,8 @@ dependencies = [
     # Pinned to 1.5.x stable — global `prerelease=allow` (set for pandas-ta)
     # would otherwise pick 1.6.0.dev*.
     "duckdb>=1.5.0,<1.6.0",
+    # Error tracking + cron monitor — soft-disabled when SENTRY_DSN unset.
+    "sentry-sdk[fastapi,httpx,asyncio]>=2.0.0",
 ]
 
 [project.optional-dependencies]

@@ -229,6 +229,24 @@ export const api = {
       voters: string[]
     }>('/models/ensemble-weights'),
 
+  /** Per-voter forward-move accuracy over recent N hours. */
+  voterLiveAccuracy: (hours = 72, horizonCandles = 12) =>
+    get<{
+      hours_window: number
+      horizon_candles: number
+      horizon_label: string
+      voters: Record<
+        string,
+        {
+          decisive_samples: number
+          combined_accuracy_pct: number | null
+          bullish_accuracy_pct: number | null
+          bearish_accuracy_pct: number | null
+          status: 'insufficient' | 'anti_signal' | 'ok' | 'good' | 'underperforming' | string
+        }
+      >
+    }>('/voter-live-accuracy', { hours, horizon_candles: horizonCandles }),
+
   /** Equity timeline — falls back to trades-derived series when cache is empty. */
   portfolioHistory: () =>
     get<{
@@ -260,6 +278,32 @@ export const api = {
   scannerPause: (reason?: string) =>
     ax.post<{ ok: boolean }>('/scanner/pause', { reason }).then((r) => r.data),
   scannerResume: () => ax.post<{ ok: boolean }>('/scanner/resume').then((r) => r.data),
+
+  // Grid backtest winner control
+  gridList: () =>
+    get<{ grids: Array<{ name: string; stages: Array<{ stage: string; n_cells: number; best_composite: number | null; modified: number }> }> }>(
+      '/grid/list',
+    ),
+  gridPreview: (grid: string, cellHash?: string) =>
+    get<{
+      grid: string
+      stage: string
+      cell_hash: string
+      metrics: Record<string, number | null>
+      diff: Array<{ param: string; current: unknown; winner: unknown; change_pct: number | null; unchanged: boolean }>
+      winner_params: Record<string, number | null>
+      code_level_params: Record<string, unknown>
+    }>('/grid/preview', { grid, cell_hash: cellHash }),
+  gridApply: (grid: string, cellHash?: string, confirm = false) =>
+    ax.post<{
+      ok: boolean
+      applied: boolean
+      grid?: string
+      cell_hash?: string
+      winner?: Record<string, number>
+      backup_path?: string
+      reason?: string
+    }>('/grid/apply', { grid, cell_hash: cellHash, confirm }).then((r) => r.data),
 }
 
 export const isCircuitOpen = () => cb.state !== 'CLOSED'

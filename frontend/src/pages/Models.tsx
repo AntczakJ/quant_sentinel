@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { useRef } from 'react'
-import { motion } from 'framer-motion'
+import { useRef, useState, forwardRef } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import NumberFlow from '@number-flow/react'
 import { api, type ModelStat, type Trade } from '@/api/client'
 import { Card } from '@/components/Card'
@@ -14,6 +14,12 @@ export default function Models() {
     queryFn: api.ensembleWeights,
     refetchInterval: 60_000,
   })
+  const { data: liveAcc } = useQuery({
+    queryKey: ['voter-live-accuracy'],
+    queryFn: () => api.voterLiveAccuracy(72, 12),
+    refetchInterval: 90_000,
+  })
+  const liveVoters = liveAcc?.voters ?? {}
   const norm = weightsResp?.normalized ?? {}
 
   // LSTM has historical key migrations (`lstm` ↔ `lstm_prev`); take the
@@ -74,9 +80,9 @@ export default function Models() {
         <div className="grid grid-cols-3 gap-12 items-center relative z-10 h-full">
           {/* ─── Left: voters ─────────────────────────────────────── */}
           <div className="flex flex-col gap-5 items-stretch">
-            <VoterCard ref={lstmRef} kind="LSTM" model={lstm} accent="#3b82f6" weight={lstmW} />
-            <VoterCard ref={xgbRef}  kind="XGB"  model={xgb}  accent="#22c55e" weight={xgbW} />
-            <VoterCard ref={rlRef}   kind="RL"   model={rl}   accent="#d4af37" weight={dqnW} />
+            <VoterCard ref={lstmRef} kind="LSTM" model={lstm} accent="#3b82f6" weight={lstmW} live={liveVoters.lstm} />
+            <VoterCard ref={xgbRef}  kind="XGB"  model={xgb}  accent="#22c55e" weight={xgbW}  live={liveVoters.xgb} />
+            <VoterCard ref={rlRef}   kind="RL"   model={rl}   accent="#d4af37" weight={dqnW}  live={liveVoters.dqn} />
           </div>
 
           {/* ─── Center: ensemble ─────────────────────────────────── */}
@@ -239,7 +245,6 @@ export default function Models() {
 }
 
 // ─── Voter card (forwardRef so AnimatedBeam can target it) ────────────
-import { forwardRef } from 'react'
 
 interface VoterCardProps {
   kind: 'LSTM' | 'XGB' | 'RL'
@@ -247,18 +252,37 @@ interface VoterCardProps {
   accent: string
   /** Normalized voter weight (0..1) from `dynamic_params`. */
   weight: number
+  /** Forward-move accuracy stats (72 h window). */
+  live?: {
+    decisive_samples: number
+    combined_accuracy_pct: number | null
+    bullish_accuracy_pct: number | null
+    bearish_accuracy_pct: number | null
+    status: string
+  }
+}
+
+const STATUS_STYLE: Record<string, string> = {
+  ok:               'pill border-bull/30 bg-bull/[0.08] text-bull',
+  good:             'pill border-bull/30 bg-bull/[0.08] text-bull',
+  underperforming:  'pill border-gold-500/30 bg-gold-500/[0.08] text-gold-400',
+  anti_signal:      'pill border-bear/30 bg-bear/[0.08] text-bear',
+  insufficient:     'pill text-ink-600',
 }
 
 const VoterCard = forwardRef<HTMLDivElement, VoterCardProps>(function VoterCard(
-  { kind, model, accent, weight },
+  { kind, model, accent, weight, live },
   ref,
 ) {
+  const [open, setOpen] = useState(false)
   const acc = model?.win_rate != null
     ? model.win_rate * 100
     : model?.accuracy != null
     ? model.accuracy * 100
     : null
   const weightPct = Math.round(weight * 100)
+  const statusClass = live?.status ? (STATUS_STYLE[live.status] ?? 'pill') : 'pill'
+
   return (
     <motion.div
       ref={ref}
@@ -269,10 +293,23 @@ const VoterCard = forwardRef<HTMLDivElement, VoterCardProps>(function VoterCard(
                  transition-all hover:border-white/15 hover:shadow-lift"
       style={{ borderLeft: `2px solid ${accent}` }}
     >
-      <div className="flex items-center justify-between gap-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-3 text-left"
+        aria-expanded={open}
+        title={open ? 'Hide voter detail' : 'Show voter detail'}
+      >
         <div className="min-w-0">
-          <div className="text-micro uppercase tracking-wider text-ink-600">{kind}</div>
-          <div className="text-body text-ink-900 font-medium truncate max-w-[140px]">
+          <div className="text-micro uppercase tracking-wider text-ink-600 flex items-center gap-2">
+            <span>{kind}</span>
+            {live?.status && live.status !== 'insufficient' && (
+              <span className={statusClass} style={{ fontSize: 9 }}>
+                {live.status.replace('_', ' ')}
+              </span>
+            )}
+          </div>
+          <div className="text-body text-ink-900 font-medium truncate max-w-[160px]">
             {model?.model_name ?? '—'}
           </div>
           <div className="text-micro text-ink-600 mt-1">
@@ -291,8 +328,12 @@ const VoterCard = forwardRef<HTMLDivElement, VoterCardProps>(function VoterCard(
               '—'
             )}
           </div>
+          <div className="text-micro text-ink-600 mt-0.5">
+            {open ? '▴' : '▾'}
+          </div>
         </div>
-      </div>
+      </button>
+
       {/* Weight progress bar — visual reinforcement of the beam intensity */}
       <div
         className="mt-3 h-1 rounded-full bg-white/[0.04] overflow-hidden"
@@ -307,9 +348,76 @@ const VoterCard = forwardRef<HTMLDivElement, VoterCardProps>(function VoterCard(
           }}
         />
       </div>
+
+      {/* Expandable detail panel */}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="mt-4 pt-3 border-t border-white/[0.04] grid grid-cols-3 gap-3">
+              <DetailStat label="Live combined" value={live?.combined_accuracy_pct} suffix="%" />
+              <DetailStat label="Bull" value={live?.bullish_accuracy_pct} suffix="%" tone="bull" />
+              <DetailStat label="Bear" value={live?.bearish_accuracy_pct} suffix="%" tone="bear" />
+            </div>
+            <div className="mt-3 text-micro text-ink-600 leading-relaxed">
+              <div>
+                Window: 72 h · samples{' '}
+                <span className="num text-ink-800">{live?.decisive_samples ?? 0}</span>
+              </div>
+              <div className="mt-1">
+                Trained:{' '}
+                <span className="text-ink-800">
+                  {model?.last_training
+                    ? new Date(model.last_training).toLocaleString(undefined, {
+                        month: 'short', day: 'numeric', year: 'numeric',
+                      })
+                    : '—'}
+                </span>
+              </div>
+              <div className="mt-2 text-ink-700">
+                Retrain via{' '}
+                <code className="font-mono text-ink-800 bg-white/[0.04] rounded px-1">
+                  {kind === 'RL' ? 'python train_rl.py' : `python train_all.py${kind === 'LSTM' ? ' --skip-rl' : ' --skip-rl --skip-lstm'}`}
+                </code>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 })
+
+function DetailStat({
+  label,
+  value,
+  suffix,
+  tone,
+}: {
+  label: string
+  value: number | null | undefined
+  suffix?: string
+  tone?: 'bull' | 'bear'
+}) {
+  const toneClass = tone === 'bull' ? 'text-bull' : tone === 'bear' ? 'text-bear' : 'text-ink-900'
+  return (
+    <div>
+      <div className="text-micro uppercase tracking-wider text-ink-600">{label}</div>
+      <div className={`num text-body mt-0.5 ${toneClass}`}>
+        {value != null ? (
+          <NumberFlow value={value} format={{ maximumFractionDigits: 0 }} suffix={suffix} respectMotionPreference />
+        ) : (
+          '—'
+        )}
+      </div>
+    </div>
+  )
+}
 
 // silence unused-import lint when types are needed transitively
 export type { Trade }

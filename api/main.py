@@ -18,6 +18,48 @@ from typing import Optional
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ── ERROR TRACKING (Sentry) ──────────────────────────────────────────
+# Soft-enabled — only ships when SENTRY_DSN is set. Captures uncaught
+# exceptions everywhere, slow transactions, and lets us emit cron
+# heartbeats from the BG scanner so we get paged if the loop dies.
+try:
+    import sentry_sdk as _sentry
+    _sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
+    if _sentry_dsn:
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.httpx import HttpxIntegration
+        from sentry_sdk.integrations.asyncio import AsyncioIntegration
+        _sentry.init(
+            dsn=_sentry_dsn,
+            release=os.environ.get("SENTRY_RELEASE") or "quant-sentinel@4.0.0",
+            environment=os.environ.get("SENTRY_ENV", "production"),
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES_RATE", "0.05")),
+            profiles_sample_rate=float(os.environ.get("SENTRY_PROFILES_RATE", "0.0")),
+            integrations=[
+                FastApiIntegration(transaction_style="endpoint"),
+                HttpxIntegration(),
+                AsyncioIntegration(),
+            ],
+            # Don't ship request bodies — they contain account state.
+            send_default_pii=False,
+        )
+        _SENTRY_OK = True
+        print(f"[sentry] enabled, env={os.environ.get('SENTRY_ENV', 'production')}", flush=True)
+    else:
+        _SENTRY_OK = False
+except Exception as _se:  # pragma: no cover
+    print(f"[sentry] disabled: {_se}", flush=True)
+
+    class _SentryStub:
+        def __getattr__(self, _name):
+            def _noop(*_a, **_k):
+                return None
+            return _noop
+
+    _sentry = _SentryStub()  # type: ignore
+    _SENTRY_OK = False
+
+
 # ── OBSERVABILITY (Logfire) ──────────────────────────────────────────
 # Soft-enabled: configures unconditionally, but only ships traces when
 # LOGFIRE_TOKEN is set. Without a token Logfire is a near-noop (no
@@ -1241,6 +1283,8 @@ from api.routers import scanner as _scanner_router
 app.include_router(_scanner_router.router, prefix="/api/scanner", tags=["Scanner Control"])
 from api.routers import params as _params_router
 app.include_router(_params_router.router, prefix="/api/params", tags=["Dynamic Params"])
+from api.routers import grid as _grid_router
+app.include_router(_grid_router.router, prefix="/api/grid", tags=["Grid Backtest"])
 
 
 @app.get("/api/metrics", tags=["System"])

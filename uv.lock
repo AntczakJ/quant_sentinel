@@ -1196,6 +1196,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55", size = 78784, upload-time = "2025-04-24T22:06:20.566Z" },
 ]
 
+[package.optional-dependencies]
+asyncio = [
+    { name = "anyio" },
+]
+
 [[package]]
 name = "httptools"
 version = "0.7.1"
@@ -3137,6 +3142,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "sentence-transformers" },
+    { name = "sentry-sdk", extra = ["asyncio", "fastapi", "httpx"] },
     { name = "skl2onnx" },
     { name = "tensorflow" },
     { name = "tf2onnx" },
@@ -3197,6 +3203,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.8.0" },
     { name = "scipy", specifier = ">=1.17.0" },
     { name = "sentence-transformers", specifier = ">=5.0.0" },
+    { name = "sentry-sdk", extras = ["fastapi", "httpx", "asyncio"], specifier = ">=2.0.0" },
     { name = "skl2onnx", specifier = ">=1.20.0" },
     { name = "tensorflow", specifier = ">=2.20.0" },
     { name = "tf2onnx", specifier = ">=1.17.0" },
@@ -3495,6 +3502,30 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4d/68/7f98c221940ce783b492ad6140384daf2e2918cd7175009d6a362c22b9ee/sentence_transformers-5.4.1.tar.gz", hash = "sha256:436bcb1182a0ff42a8fb2b1c43498a70d0a75b688d182f2cd0d1dd115af61ddc", size = 428910, upload-time = "2026-04-14T13:34:59.006Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c5/d9/3a9b6f2ccdedc9dc00fe37b2fc58f58f8efbff44565cf4bf39d8568bb13a/sentence_transformers-5.4.1-py3-none-any.whl", hash = "sha256:a6d640fc363849b63affb8e140e9d328feabab86f83d58ac3e16b1c28140b790", size = 571311, upload-time = "2026-04-14T13:34:57.731Z" },
+]
+
+[[package]]
+name = "sentry-sdk"
+version = "2.58.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/b3/fb8291170d0e844173164709fc0fa0c221ed75a5da740c8746f2a83b4eb1/sentry_sdk-2.58.0.tar.gz", hash = "sha256:c1144d947352d54e5b7daa63596d9f848adf684989c06c4f5a659f0c85a18f6f", size = 438764, upload-time = "2026-04-13T17:23:26.265Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/eb/d875669993b762556ae8b2efd86219943b4c0864d22204d622a9aee3052b/sentry_sdk-2.58.0-py2.py3-none-any.whl", hash = "sha256:688d1c704ddecf382ea3326f21a67453d4caa95592d722b7c780a36a9d23109e", size = 460919, upload-time = "2026-04-13T17:23:24.675Z" },
+]
+
+[package.optional-dependencies]
+asyncio = [
+    { name = "httpcore", extra = ["asyncio"] },
+]
+fastapi = [
+    { name = "fastapi" },
+]
+httpx = [
+    { name = "httpx" },
 ]
 
 [[package]]

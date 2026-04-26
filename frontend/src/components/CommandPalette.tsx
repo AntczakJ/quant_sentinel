@@ -90,9 +90,55 @@ export function CommandPalette({ open: controlled, onOpenChange }: Props = {}) {
     setOpen(false)
   }
 
+  const previewGrid = async (grid = 'prod_v1') => {
+    try {
+      const p = await api.gridPreview(grid)
+      const m = p.metrics
+      const diffLines = p.diff
+        .map((d) => `${d.param}: ${d.current ?? '—'} → ${d.winner ?? '—'}${d.change_pct != null ? ` (${d.change_pct >= 0 ? '+' : ''}${d.change_pct}%)` : ''}`)
+        .join('\n')
+      toast.info(`Grid winner: ${grid} · ${p.cell_hash?.slice(0, 8)}`, {
+        description: `Sharpe ${m.sharpe_mean?.toFixed(2) ?? '—'} · PF ${m.profit_factor_mean?.toFixed(2) ?? '—'} · Ret ${m.return_pct_mean?.toFixed(2) ?? '—'}% · DD ${m.max_drawdown_pct_mean?.toFixed(2) ?? '—'}%\n\n${diffLines}`,
+        duration: 12_000,
+        action: {
+          label: 'Apply',
+          onClick: () => applyGrid(grid, p.cell_hash),
+        },
+      })
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 404) {
+        toast.warning('No grid report found', {
+          description: `Run scripts/run_production_backtest.py with grid name "${grid}" first.`,
+        })
+      } else {
+        toast.error('Grid preview failed', { description: (err as Error).message ?? 'Unknown error' })
+      }
+    }
+    setOpen(false)
+  }
+
+  const applyGrid = async (grid: string, cellHash?: string) => {
+    try {
+      const r = await api.gridApply(grid, cellHash, true)
+      if (r.applied) {
+        toast.success(`Applied grid winner ${r.cell_hash?.slice(0, 8)}`, {
+          description: `Backup written to ${r.backup_path}. Restart scanner to pick up new params.`,
+          duration: 12_000,
+        })
+        qc.invalidateQueries()
+      } else {
+        toast.warning('Apply not confirmed', { description: r.reason })
+      }
+    } catch (err) {
+      toast.error('Grid apply failed', { description: (err as Error).message ?? 'Unknown error' })
+    }
+  }
+
   const actions: Action[] = [
     { id: 'scan-pause', label: 'Pause scanner', hint: 'Stop opening new positions', perform: () => callScannerControl('pause') },
     { id: 'scan-resume', label: 'Resume scanner', hint: 'Continue background loop', perform: () => callScannerControl('resume') },
+    { id: 'grid-preview', label: 'Preview grid winner', hint: 'Show top cell diff (no write)', perform: () => previewGrid() },
     { id: 'refresh', label: 'Refresh all data', hint: 'Re-query every endpoint', perform: refreshAll },
     { id: 'motion', label: 'Toggle reduced motion', hint: 'Animation accessibility', perform: toggleReducedMotion },
   ]
