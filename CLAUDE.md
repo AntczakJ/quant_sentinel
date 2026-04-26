@@ -49,7 +49,38 @@ isolation.py:enforce_isolation()` swaps DATABASE_URL before any
 `src.*` import. **Grid and backtest scripts must call
 enforce_isolation() FIRST** or they'll write to production DB.
 
-## Recent state (as of 2026-04-24 — after loss streak #165-186 audit)
+## Recent state (as of 2026-04-26 — sweep + lot-sizing rebuild + frontend v3)
+
+### Tonight's findings + commits (bbf8702, c217ad9, fcc412d)
+- **Asymmetry FLIPPED**: with B1-B5 active, LONG is now neutral and SHORT
+  bleeds in current XAU bull regime. Old asymmetry memo is stale.
+- **B1 softened** −15→−7 (macro+ichi_bull LONG)
+- **B4 softened** −25→−10 (asian LONG)
+- **B7 added** −20 (SHORT in macro=zielony — symmetric inverse)
+- **Per-grade `risk_percent × 1.5/0.7` REMOVED** in finance.py (was inverse-EV)
+- **DISABLE_TRAILING env flag** in api/main.py resolver (active in .env)
+- **MAX_LOT_CAP=0.01** in .env hard-caps lot until lot rebuild validates
+- **Streak threshold 5 → 8** to tolerate normal variance
+- **Phase 1 warehouse provider**: `HistoricalProvider.from_warehouse()` reads
+  3 years XAU 5m/15m/1h/4h parquet directly, no API calls.
+  `run_production_backtest.py --warehouse` flag.
+- **Frontend rebuilt from scratch** as v3 (commit fcc412d). Tailwind, Apple/
+  Revolut/Outfit aesthetic. Old preserved at `frontend_v1/`.
+
+### Best backtest variant (30-day window)
+`flat_risk_combo` (Phase B + DISABLE_TRAILING + MAX_LOT_CAP):
+PF **2.14**, return **+7.43%**, max DD **-3.02%**, 54 trades, WR 47%.
+First profitable variant.
+
+### Lot-sizing bug (CRITICAL — partial fix tonight)
+Backtest revealed lot was inverse-correlated with outcome:
+- Winners avg lot 0.026
+- Losers avg lot 0.084 (3.2x bigger)
+A+ grade `risk_percent × 1.5` bumped lot when setup looked confident, but
+those setups lose more often. MAX_LOT_CAP=0.01 + per-grade-mult removal
+tonight is the safety net. Full rebuild = next session.
+
+## Pre-2026-04-26 state (as of 2026-04-24 — after loss streak #165-186 audit)
 
 ### Live trading defense stack (added 2026-04-22 → 24)
 - **Pause flag kill-switch**: create `data/SCANNER_PAUSED` file → BG scanner
@@ -182,5 +213,7 @@ assuming state.
 - Check both `api/main.py` and `src/trading/scanner.py` when changing
   trading behavior — dual-impl risk.
 - For UI changes: `cd frontend && npm run dev`, hard-refresh browser.
-  Layout cached in localStorage; bump `LAYOUT_VERSION` in
-  `DraggableGrid.tsx` if defaults change.
+  Frontend was rebuilt 2026-04-26 (commit fcc412d) — Tailwind + minimalist
+  design (Apple/Revolut/Outfit-inspired). Old dashboard preserved at
+  `frontend_v1/`. New frontend uses react-query (no Zustand store) and
+  has 5 pages: Dashboard, Chart, Trades, Models, Settings.

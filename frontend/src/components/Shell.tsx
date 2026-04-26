@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Logo } from './Logo'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import { OfflineBanner } from './OfflineBanner'
 
 const NAV = [
   { to: '/', label: 'Dashboard' },
@@ -16,12 +17,12 @@ const NAV = [
 export function Shell({ children }: { children: ReactNode }) {
   const loc = useLocation()
   const [navOpen, setNavOpen] = useState(false)
-  const { data: health } = useQuery({
+  const { data: health, isError } = useQuery({
     queryKey: ['health'],
     queryFn: api.health,
     refetchInterval: 10_000,
   })
-  const apiOk = health?.status === 'ok' || health?.status === 'healthy'
+  const apiOk = !isError && (health?.status === 'ok' || health?.status === 'healthy')
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -112,6 +113,9 @@ export function Shell({ children }: { children: ReactNode }) {
           )}
         </AnimatePresence>
       </header>
+
+      {/* ─── Offline banner ──────────────────────────────────────────── */}
+      <OfflineBanner show={!apiOk} />
 
       {/* ─── Main content ────────────────────────────────────────────── */}
       <main className="flex-1">
