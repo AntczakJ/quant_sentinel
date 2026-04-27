@@ -58,18 +58,33 @@ APP_NAME = "quant-sentinel-train"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+_IGNORE_DIRS = {
+    ".venv", "node_modules", "__pycache__", "dist", "build", ".git",
+    "backups", "logs", ".pytest_cache", ".ruff_cache", ".mypy_cache",
+    "frontend", "frontend_v3_baseline", "frontend_v1", ".logfire",
+    "historical",   # warehouse goes via Volume, not the bundled image
+    "optuna_studies", "param_backups",
+}
+_IGNORE_FILES = {"sentinel.db", "sentinel.db-wal", "sentinel.db-shm",
+                 "backtest.db", "backtest.db-wal", "backtest.db-shm",
+                 "uv.lock"}
+
+
 def _ignore_path(path) -> bool:
-    """`add_local_dir` ignore-callback. Returns True if path should be skipped."""
-    s = str(path).replace("\\", "/")
-    needles = (
-        "/.venv/", "/node_modules/", "/__pycache__/", "/dist/", "/build/",
-        "/.git/", "/data/sentinel.db", "/data/backups/", "/data/_",
-        "/data/historical/",   # warehouse goes via Volume, not bundle
-        "/logs/", "/.pytest_cache/", "/.ruff_cache/", "/.mypy_cache/",
-        "/frontend/", "/frontend_v3_baseline/", "/frontend_v1/",
-        "/.logfire/",
-    )
-    return any(n in s for n in needles)
+    """`add_local_dir` ignore-callback. Path-component matching so Windows
+    backslashes / forward-slashes / mixed work identically. Returns True
+    when the path should NOT be uploaded into the image."""
+    p = Path(path)
+    parts = set(p.parts)
+    if parts & _IGNORE_DIRS:
+        return True
+    if p.name in _IGNORE_FILES:
+        return True
+    # data/_<anything>cache<anything>/  — sweep caches
+    for part in p.parts:
+        if part.startswith("_") and "cache" in part.lower():
+            return True
+    return False
 
 
 image = (
