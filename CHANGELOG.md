@@ -4,6 +4,33 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-27 — Logfire / Sentry / Modal wired up
+
+End-to-end activation of the three external services that the v4 push
+left as soft-stub. All three now actively shipping data:
+
+- **Logfire**: project `antczak-j/quant-sentinel` created at
+  `https://logfire-eu.pydantic.dev/antczak-j/quant-sentinel`, EU region,
+  credentials in `.logfire/logfire_credentials.json` (gitignored). API
+  startup picks them up automatically. `POST /api/system/test-trace`
+  returned `{ok: true}` and the span landed in the dashboard.
+- **Sentry**: DSN in `.env` (gitignored), env report confirms
+  `SENTRY_DSN: OK` at startup. `POST /api/system/test-error` raised
+  the intentional ZeroDivisionError and Sentry captured it (500 in
+  the API log; event in Issues).
+- **Modal Labs**: token at `~/.modal.toml`, workspace `antczakj`. App
+  deployed at `https://modal.com/apps/antczakj/main/deployed/quant-sentinel-train`.
+  First deploy with the full ML stack (TF + Torch + transformers +
+  sentence-transformers + treelite ≈ 6 GB) hit the free-tier image-build
+  shutdown; trimmed `tools/modal_train.py` to what `train_all.py`
+  actually imports (numpy / pandas / sklearn / xgboost / TF / scipy /
+  tqdm / pydantic ≈ 2-3 GB) and the second deploy succeeded in 76 s.
+
+#### Fixed
+- `_safe_version` in `api/routers/system.py` falls back to `.VERSION`
+  attr — `sentry_sdk` exposes `VERSION` (uppercase), not
+  `__version__`, so /api/system/info was returning null for it.
+
 ### 2026-04-26 → 2026-04-27 — v4 frontend redesign + observability + ML perf push
 
 A two-day session producing 18 commits. Frontend redesigned end-to-end,

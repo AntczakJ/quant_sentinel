@@ -58,21 +58,22 @@ APP_NAME = "quant-sentinel-train"
 image = (
     modal.Image.debian_slim(python_version="3.13")
     .apt_install("git", "build-essential")
+    # Slim install — only what `train_all.py` actually imports.
+    # First Modal deploy attempt (with torch + transformers +
+    # sentence-transformers + treelite) hit "image build terminated due
+    # to external shut-down" — too big for free-tier build window.
+    # Treelite / news similarity / torch are NOT needed for the
+    # XGB+LSTM retrain, so they're dropped here. Add them back if
+    # `train_all.py` ever grows to need them.
     .pip_install(
         "numpy>=2.2,<2.5",
         "pandas>=3.0",
         "scikit-learn>=1.8",
         "xgboost>=3.0",
-        "torch>=2.11",      # CUDA wheels on Modal are auto-resolved
-        "tensorflow>=2.20",
-        "transformers>=5.4",
-        "sentence-transformers>=5.0",
+        "tensorflow>=2.20",   # for keras LSTM
         "scipy>=1.17",
-        "pywavelets>=1.8",
         "tqdm>=4.67",
         "pydantic>=2.12",
-        "treelite>=4.7",
-        "tl2cgen>=1.0",
     )
 )
 
