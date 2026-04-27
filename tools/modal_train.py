@@ -102,7 +102,11 @@ image = (
         "pandas>=3.0",
         "scikit-learn>=1.8",
         "xgboost>=3.0",
-        "tensorflow>=2.20",   # for keras LSTM
+        # `[and-cuda]` extra pulls CUDA 12.x toolkit + cuDNN through pip.
+        # Without it the container had GPU device but TF crashed with
+        # "Failed call to cudaGetRuntimeVersion: Error loading CUDA
+        # libraries. GPU will not be used." — i.e. paying T4 for CPU.
+        "tensorflow[and-cuda]>=2.20",
         "scipy>=1.17",
         "tqdm>=4.67",
         "pydantic>=2.12",
