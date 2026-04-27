@@ -44,13 +44,18 @@ class RateLimiter:
     - Bucket refills every 60 seconds
     """
 
-    def __init__(self, credits_per_minute: int = 55, safe_margin: int = 52):
+    def __init__(self, credits_per_minute: int = 55, safe_margin: int = 52,
+                 alarm_threshold: int = 45, alarm_cooldown_sec: int = 300):
         """
         Initialize rate limiter
 
         Args:
             credits_per_minute: Hard limit from Twelve Data (55 for Grow plan)
             safe_margin: Operational limit to leave buffer (52 to be safe)
+            alarm_threshold: WARN once when last-min usage crosses this (default
+                45 — early warning before the 52-credit skip-cycle guard kicks in)
+            alarm_cooldown_sec: Min seconds between alarms (default 5 min — avoids
+                log spam if a hot path is sustained)
         """
         self.max_credits = credits_per_minute
         self.safe_credits = safe_margin
@@ -58,8 +63,14 @@ class RateLimiter:
         self.last_refill = time.time()
         self.lock = Lock()
         self.requests_made = []  # For analytics
+        self.alarm_threshold = alarm_threshold
+        self.alarm_cooldown_sec = alarm_cooldown_sec
+        self._last_alarm_ts = 0.0  # epoch — used to enforce cooldown
 
-        logger.info(f"🔧 RateLimiter initialized: {credits_per_minute} credits/min, safe margin: {safe_margin}")
+        logger.info(
+            f"🔧 RateLimiter initialized: {credits_per_minute} credits/min, "
+            f"safe margin: {safe_margin}, alarm at: {alarm_threshold}/min"
+        )
 
     def _refill_bucket(self):
         """Refill bucket based on elapsed time"""
@@ -130,6 +141,7 @@ class RateLimiter:
                     f"Remaining: {int(self.current_credits)}/{self.safe_credits} | "
                     f"Endpoint: {endpoint} | Symbol: {symbol}"
                 )
+                self._maybe_alarm_high_usage()
                 return True
             else:
                 credits_deficit = credits_needed - self.current_credits
@@ -139,6 +151,57 @@ class RateLimiter:
                     f"Wait {wait_time:.1f}s | Endpoint: {endpoint}"
                 )
                 return False
+
+    def _maybe_alarm_high_usage(self) -> None:
+        """Emit a single WARN (+ optional Logfire/Sentry signal) when the rolling
+        last-min usage crosses the alarm threshold. Caller must already hold
+        ``self.lock``. Cooldown prevents log spam during sustained hot paths.
+
+        Why: the 52-credit skip-cycle guard in api/main.py only triggers when
+        the bucket is already drained — by then we've lost a scan cycle. This
+        gives ~7 credits of head-room to investigate before that happens.
+        """
+        try:
+            now = time.time()
+            if now - self._last_alarm_ts < self.alarm_cooldown_sec:
+                return
+
+            cutoff = datetime.now() - timedelta(minutes=1)
+            recent = sum(r['credits'] for r in self.requests_made if r['timestamp'] > cutoff)
+            if recent < self.alarm_threshold:
+                return
+
+            self._last_alarm_ts = now
+            msg = (
+                f"⚠️ TwelveData credit usage HIGH: {recent}/{self.max_credits} "
+                f"in last min (alarm at {self.alarm_threshold}). "
+                f"Skip-cycle guard fires at {self.safe_credits}."
+            )
+            logger.warning(msg)
+
+            # Best-effort Logfire breadcrumb — soft-import + config check so
+            # we don't trigger LogfireNotConfiguredWarning in scripts/tests
+            # that import this module outside the FastAPI app.
+            try:
+                import logfire as _lf
+                _cfg = getattr(_lf, "DEFAULT_LOGFIRE_INSTANCE", None)
+                if _cfg is not None and getattr(_cfg.config, "token", None):
+                    _lf.warn("rate_limiter.high_usage",
+                             credits_last_min=recent,
+                             threshold=self.alarm_threshold,
+                             max_limit=self.max_credits)
+            except Exception:
+                pass
+
+            # Best-effort Sentry breadcrumb
+            try:
+                import sentry_sdk as _sentry
+                _sentry.capture_message(msg, level="warning")
+            except Exception:
+                pass
+        except Exception:
+            # Alarm path must never break the trading loop
+            pass
 
     def wait_for_credits(self, credits_needed: int, max_wait_seconds: int = 10) -> bool:
         """
@@ -216,6 +279,9 @@ class RateLimiter:
                 'recent_requests': len(recent_requests),
                 'last_refill': self.last_refill,
                 'all_requests_count': len(self.requests_made),
+                'alarm_threshold': self.alarm_threshold,
+                'alarm_cooldown_sec': self.alarm_cooldown_sec,
+                'last_alarm_ts': self._last_alarm_ts,
             }
 
 
@@ -340,8 +406,14 @@ class ExponentialBackoff:
             return await self.wait_and_retry(attempt + 1, callback, *args, **kwargs)
 
 
-# Global rate limiter instance
-global_rate_limiter = RateLimiter(credits_per_minute=55, safe_margin=52)
+# Global rate limiter instance — alarm tunable via env (default 45/min, 5-min cooldown)
+import os as _os
+_ALARM_THR = int(_os.environ.get("TWELVEDATA_ALARM_THRESHOLD", "45"))
+_ALARM_CD = int(_os.environ.get("TWELVEDATA_ALARM_COOLDOWN_SEC", "300"))
+global_rate_limiter = RateLimiter(
+    credits_per_minute=55, safe_margin=52,
+    alarm_threshold=_ALARM_THR, alarm_cooldown_sec=_ALARM_CD,
+)
 global_batch_grouper = BatchRequestGrouper(max_symbols_per_batch=10)
 global_backoff = ExponentialBackoff(base_delay=1.0, max_delay=65.0, max_retries=5)
 
