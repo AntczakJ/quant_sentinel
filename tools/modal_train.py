@@ -124,6 +124,8 @@ image = (
         "pandas_ta>=0.4.0b0",        # technical indicators in feature engineering
         "pywavelets>=1.8.0",         # signal processing
         "numba>=0.61.0",             # compute hot path JIT
+        "tf2onnx>=1.17.0",           # train_all.py converts .keras → .onnx after train
+        "onnx>=1.21.0",              # tf2onnx dep — without it conversion silently warns
     )
     # Bundle the repo source into the image once (Modal 1.x API —
     # the legacy `Mount.from_local_dir` + `run.with_options(mounts=...)`
@@ -192,13 +194,28 @@ def run(
               "  Inspect the lines above this for the real traceback.")
         raise SystemExit(result.returncode)
 
-    # Persist trained artifacts back to the volume.
-    out = Path("/repo/models")
-    if out.exists():
-        for f in out.glob("*"):
-            dest = Path("/models") / f.name
+    # Persist trained artifacts back to the volume. Walk recursively so
+    # subdirs (e.g. models/_archive, models/v2/) are mirrored, not blow
+    # up with IsADirectoryError on Path.write_bytes(). Copy each *file*
+    # into /models preserving its relative path.
+    src_root = Path("/repo/models")
+    if src_root.exists():
+        n = 0
+        for f in src_root.rglob("*"):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(src_root)
+            dest = Path("/models") / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(f.read_bytes())
-        print(f"[modal_train] copied {len(list(out.glob('*')))} model files to /models")
+            n += 1
+        # `commit()` flushes the volume so subsequent `modal volume get`
+        # calls actually see the new artifacts.
+        try:
+            models_volume.commit()
+        except Exception:
+            pass
+        print(f"[modal_train] copied {n} model files to /models volume")
 
 
 @app.local_entrypoint()
