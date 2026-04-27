@@ -14,8 +14,28 @@ import os
 import numpy as np
 import pandas as pd
 from typing import Any, Dict, Optional, Tuple
+from contextlib import nullcontext
 from src.core.logger import logger
 from src.analysis.compute import compute_features, FEATURE_COLS
+
+# ── Logfire voter spans (soft-noop without Logfire) ──────────────────
+# Wraps each predict_*_direction call so the dashboard can show
+# per-voter latency + chosen kernel (treelite / onnx / sklearn / etc.).
+try:
+    import logfire as _voter_logfire  # noqa: F401
+except Exception:
+    _voter_logfire = None
+
+
+def _voter_span(name: str, **attrs):
+    """Return a Logfire span context manager when configured, else
+    `contextlib.nullcontext` so the call site can stay simple."""
+    if _voter_logfire is None:
+        return nullcontext()
+    try:
+        return _voter_logfire.span(f"ml.voter.{name}", **attrs)
+    except Exception:
+        return nullcontext()
 
 # ============================================================================
 # LAZY LOADING - modele ładują się tylko przy pierwszym użyciu
@@ -358,11 +378,13 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
 
         # Dispatch: ONNX GPU or Keras CPU
         model_type, model = lstm_loaded
-        if model_type == "onnx":
-            from src.analysis.compute import onnx_predict
-            pred = onnx_predict(model, X.astype(np.float32))
-        else:
-            pred = model(X, training=False).numpy()
+        with _voter_span("lstm", kind=model_type, seq_len=int(seq_len),
+                         n_features=int(X.shape[2])):
+            if model_type == "onnx":
+                from src.analysis.compute import onnx_predict
+                pred = onnx_predict(model, X.astype(np.float32))
+            else:
+                pred = model(X, training=False).numpy()
 
         if pred is None:
             return None
@@ -505,6 +527,7 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
         model_type, model = xgb_loaded
 
         try:
+          with _voter_span("xgb", kind=model_type, n_features=int(X.shape[1])):
             if model_type == "onnx":
                 import onnxruntime as ort
                 input_name = model.get_inputs()[0].name
