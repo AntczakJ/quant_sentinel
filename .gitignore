@@ -246,3 +246,8 @@ reports/
 data/historical/
 models/v2/
 models/v2_lstm_alt/
+
+# 2026-04-27: models_modal = local pull dir for `modal volume get qs-models …`.
+# Populated with .keras/.onnx/.pkl that are derived training output, not source.
+# Regenerate from Modal volume after weekly cron.
+models_modal/

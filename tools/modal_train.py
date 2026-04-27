@@ -92,36 +92,48 @@ def _ignore_path(path) -> bool:
     return False
 
 
+# ── GPU image (2026-04-27 rebuild) ───────────────────────────────
+#
+# Why this changed: the previous attempt used
+# `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04` as a base + `add_python=
+# "3.13"` + `tensorflow[and-cuda]>=2.20`. The base ships an older cuDNN
+# (~9.0/9.1 with CUDA 12.4) than what TF 2.21 expects (CUDA 12.5+, cuDNN
+# 9.3+). `tensorflow[and-cuda]` does pull the right `nvidia-*` packages
+# into site-packages, but the older system cuDNN was getting picked up
+# first by the dynamic loader, leaving TF's GPU init silently broken
+# (visible in logs only as "GPU will not be used"). Net: T4 paid for,
+# zero GPU work.
+#
+# New strategy: drop the heavy CUDA base and let TF's pip extras own the
+# CUDA + cuDNN install end-to-end. This is the canonical Modal pattern.
+# `debian_slim` provides a clean userland with no conflicting CUDA libs.
+# TF 2.18+ auto-discovers `site-packages/nvidia/*/lib` at import time, so
+# no extra `LD_LIBRARY_PATH` is needed (we set one anyway as belt+braces
+# for any sub-process / native lib that doesn't go through Python).
+#
+# Verification path: `modal run tools/modal_train.py::gpu_check` runs the
+# diagnostic function below — confirms TF sees a CUDA device, runs a
+# tiny GPU matmul, prints versions + paths. Run that BEFORE every full
+# training run when stack changes.
 image = (
-    # nvidia/cuda runtime image — has the libcuda + libcudnn shared
-    # libraries TF needs at startup. Without this base, the slim Debian
-    # variant + `tensorflow[and-cuda]` pip extras still failed to dlopen
-    # CUDA libs ("Cannot dlopen some GPU libraries"). With cudnn-runtime
-    # base, TF detects the T4 directly. add_python="3.13" pulls in a
-    # matching Python interpreter on top of the CUDA layer.
-    modal.Image.from_registry(
-        "nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04",
-        add_python="3.13",
-    )
-    # tzdata is required for `zoneinfo.ZoneInfo("America/New_York")` —
-    # without it yfinance fails immediately with "No time zone found
-    # with key America/New_York" on a fresh CUDA Ubuntu base.
+    modal.Image.debian_slim(python_version="3.13")
+    # tzdata: yfinance needs `zoneinfo.ZoneInfo("America/New_York")`.
+    # build-essential: numba / pandas_ta / pywavelets occasionally need
+    # a C toolchain at install or runtime. git: harmless, useful for
+    # any pip-from-vcs deps that may slip in.
     .apt_install("git", "build-essential", "tzdata")
-    # Slim install — only what `train_all.py` actually imports.
-    # First Modal deploy attempt (with torch + transformers +
-    # sentence-transformers + treelite) hit "image build terminated due
-    # to external shut-down" — too big for free-tier build window.
     .pip_install(
         # Core ML stack
         "numpy>=2.2,<2.5",
         "pandas>=3.0",
         "scikit-learn>=1.8",
         "xgboost>=3.0",
-        # `[and-cuda]` extra pulls CUDA 12.x toolkit + cuDNN through pip.
-        # Without it the container had GPU device but TF crashed with
-        # "Failed call to cudaGetRuntimeVersion: Error loading CUDA
-        # libraries. GPU will not be used." — i.e. paying T4 for CPU.
-        "tensorflow[and-cuda]>=2.20",
+        # `[and-cuda]` brings cuda-runtime, cublas, cudnn, cufft, curand,
+        # cusolver, cusparse, nccl, nvjitlink — all version-locked to
+        # what TF was built against. Pinning the major-minor avoids the
+        # auto-bump-to-2.22-tomorrow surprise. Stays in sync with the
+        # local pyproject.toml `tensorflow>=2.20` constraint.
+        "tensorflow[and-cuda]==2.21.0",
         "scipy>=1.17",
         "tqdm>=4.67",
         "pydantic>=2.12",
@@ -142,9 +154,28 @@ image = (
         "tf2onnx>=1.17.0",           # train_all.py converts .keras → .onnx after train
         "onnx>=1.21.0",              # tf2onnx dep — without it conversion silently warns
     )
-    # Bundle the repo source into the image once (Modal 1.x API —
-    # the legacy `Mount.from_local_dir` + `run.with_options(mounts=...)`
-    # was removed). Volumes still carry warehouse + models per-run.
+    # Belt-and-braces LD_LIBRARY_PATH. TF 2.18+ does auto-discovery of
+    # `nvidia-*` packages in site-packages at import time; this env is
+    # for anything that calls a native lib outside that path
+    # (subprocesses, ldd inspections, debugging). debian_slim default
+    # site-packages is `/usr/local/lib/python3.13/site-packages`.
+    .env({
+        "LD_LIBRARY_PATH": ":".join([
+            "/usr/local/lib/python3.13/site-packages/nvidia/cublas/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/cuda_cupti/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/cuda_nvrtc/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/cuda_runtime/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/cudnn/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/cufft/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/curand/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/cusolver/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/cusparse/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/nccl/lib",
+            "/usr/local/lib/python3.13/site-packages/nvidia/nvjitlink/lib",
+        ]),
+    })
+    # Bundle the repo source into the image once. Volumes still carry
+    # warehouse + models per-run.
     .add_local_dir(str(_REPO_ROOT), remote_path="/repo", ignore=_ignore_path)
 )
 
@@ -225,6 +256,151 @@ def run(
         print("[modal_train] /models volume committed")
     except Exception as e:
         print(f"[modal_train] volume.commit() warning: {e}")
+
+
+@app.function(
+    gpu="T4",
+    timeout=300,    # 5 min hard cap — diagnostic should be < 60 s
+)
+def gpu_diagnostic() -> dict:
+    """Fast GPU sanity check — prints what TF sees and runs a tiny matmul.
+
+    Run via `modal run tools/modal_train.py::gpu_check`. Use this BEFORE
+    every full training run when the image stack changes, and any time
+    a new TF / CUDA / cuDNN combination is introduced. Cheap (~30 s
+    cold start, ~10 s warm) so iterating on image config is painless.
+
+    Returns a dict with the structured findings so the caller can assert
+    on them in CI / wrapper scripts later.
+    """
+    import os
+    import platform
+    import subprocess
+    import sys
+    import time
+
+    findings: dict = {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "ld_library_path": os.environ.get("LD_LIBRARY_PATH", "<unset>"),
+    }
+
+    print("=" * 72)
+    print(f"GPU diagnostic — Python {findings['python']} on {findings['platform']}")
+    print("=" * 72)
+
+    # 1. nvidia-smi — confirms the host actually exposes a CUDA device
+    print("\n[1/5] nvidia-smi")
+    try:
+        smi = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,driver_version,memory.total",
+             "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if smi.returncode == 0:
+            findings["nvidia_smi"] = smi.stdout.strip()
+            print(f"  OK: {smi.stdout.strip()}")
+        else:
+            findings["nvidia_smi"] = f"FAILED rc={smi.returncode}: {smi.stderr.strip()}"
+            print(f"  FAIL: {findings['nvidia_smi']}")
+    except FileNotFoundError:
+        findings["nvidia_smi"] = "nvidia-smi not on PATH"
+        print(f"  FAIL: {findings['nvidia_smi']}")
+    except Exception as e:
+        findings["nvidia_smi"] = f"error: {e!r}"
+        print(f"  FAIL: {findings['nvidia_smi']}")
+
+    # 2. site-packages/nvidia/* — confirms the [and-cuda] extras shipped
+    print("\n[2/5] tensorflow[and-cuda] — site-packages/nvidia/*")
+    try:
+        site_dir = next(
+            (p for p in sys.path if p.endswith("site-packages")),
+            None,
+        )
+        if site_dir:
+            nv_dir = os.path.join(site_dir, "nvidia")
+            if os.path.isdir(nv_dir):
+                libs = sorted(os.listdir(nv_dir))
+                findings["nvidia_pkgs"] = libs
+                print(f"  OK ({len(libs)} pkgs): {', '.join(libs)}")
+            else:
+                findings["nvidia_pkgs"] = f"missing dir: {nv_dir}"
+                print(f"  FAIL: {findings['nvidia_pkgs']}")
+        else:
+            findings["nvidia_pkgs"] = "no site-packages on sys.path"
+            print(f"  FAIL: {findings['nvidia_pkgs']}")
+    except Exception as e:
+        findings["nvidia_pkgs"] = f"error: {e!r}"
+        print(f"  FAIL: {findings['nvidia_pkgs']}")
+
+    # 3. Import TF, capture init warnings — first import is the moment of
+    #    truth for cuDNN / CUDA library version compatibility.
+    print("\n[3/5] tensorflow import")
+    t_import_start = time.time()
+    try:
+        import tensorflow as tf  # noqa: PLC0415
+        findings["tf_version"] = tf.__version__
+        findings["tf_import_sec"] = round(time.time() - t_import_start, 2)
+        print(f"  OK: tf={tf.__version__} (imported in {findings['tf_import_sec']} s)")
+    except Exception as e:
+        findings["tf_version"] = None
+        findings["tf_import_error"] = repr(e)
+        print(f"  FAIL: {e!r}")
+        return findings
+
+    # 4. tf.config.list_physical_devices('GPU') — the canonical TF check
+    print("\n[4/5] tf.config.list_physical_devices('GPU')")
+    try:
+        gpus = tf.config.list_physical_devices("GPU")
+        findings["tf_gpus"] = [str(g) for g in gpus]
+        if gpus:
+            print(f"  OK: {len(gpus)} GPU(s): {findings['tf_gpus']}")
+        else:
+            print("  FAIL: TF sees zero GPUs (would fall back to CPU)")
+    except Exception as e:
+        findings["tf_gpus"] = None
+        findings["tf_gpus_error"] = repr(e)
+        print(f"  FAIL: {e!r}")
+
+    # 5. Tiny GPU compute — proves end-to-end CUDA path actually works.
+    #    A pass on 4) but fail here means cuDNN missing / version skew.
+    print("\n[5/5] GPU matmul")
+    try:
+        if not findings.get("tf_gpus"):
+            findings["gpu_matmul"] = "skipped (no GPU)"
+            print("  SKIP (no GPU)")
+        else:
+            with tf.device("/GPU:0"):
+                a = tf.random.normal((512, 512))
+                b = tf.random.normal((512, 512))
+                t0 = time.time()
+                c = tf.matmul(a, b)
+                _ = c.numpy()  # force sync
+                elapsed_ms = round((time.time() - t0) * 1000, 2)
+            findings["gpu_matmul"] = f"OK ({elapsed_ms} ms)"
+            print(f"  OK: 512×512 matmul in {elapsed_ms} ms on /GPU:0")
+    except Exception as e:
+        findings["gpu_matmul"] = f"error: {e!r}"
+        print(f"  FAIL: {e!r}")
+
+    print("\n" + "=" * 72)
+    print(f"VERDICT: TF GPU is {'OPERATIONAL ✓' if findings.get('tf_gpus') and 'OK' in str(findings.get('gpu_matmul', '')) else 'BROKEN ✗'}")
+    print("=" * 72)
+    return findings
+
+
+@app.local_entrypoint()
+def gpu_check():
+    """Run gpu_diagnostic and pretty-print the result. Cheap (~30-60 s
+    cold start). Use it as the first step whenever the image stack
+    changes, before kicking off a full retrain.
+
+      modal run tools/modal_train.py::gpu_check
+    """
+    findings = gpu_diagnostic.remote()
+    print("\n--- structured findings ---")
+    import json as _json
+    print(_json.dumps(findings, indent=2, default=str))
 
 
 @app.local_entrypoint()

@@ -275,7 +275,7 @@ async def recommendations():
     items: list[dict] = []
     integ = _integrations_status()
     env = {k: bool(os.environ.get(k, "").strip()) for k in (
-        "TWELVEDATA_KEY", "ALPHA_VANTAGE_KEY", "FRED_API_KEY", "FINNHUB_KEY",
+        "TWELVE_DATA_API_KEY", "ALPHA_VANTAGE_KEY", "FRED_API_KEY", "FINNHUB_API_KEY",
         "API_SECRET_KEY",
     )}
 
@@ -306,7 +306,7 @@ async def recommendations():
         })
 
     # --- Data provider keys ---
-    if not env["TWELVEDATA_KEY"]:
+    if not env["TWELVE_DATA_API_KEY"]:
         items.append({
             "id": "twelvedata-missing",
             "severity": "warn",
@@ -607,8 +607,8 @@ async def rate_limit_status():
 @router.get("/info", summary="System / runtime / ML stack diagnostic")
 async def system_info():
     try:
-        env_keys = ("LOGFIRE_TOKEN", "SENTRY_DSN", "TWELVEDATA_KEY",
-                    "FRED_API_KEY", "FINNHUB_KEY", "ONNX_FORCE_CPU",
+        env_keys = ("LOGFIRE_TOKEN", "SENTRY_DSN", "TWELVE_DATA_API_KEY",
+                    "FRED_API_KEY", "FINNHUB_API_KEY", "ONNX_FORCE_CPU",
                     "DISABLE_TRAILING", "MAX_LOT_CAP")
         env_status = {k: bool(os.environ.get(k, "").strip()) for k in env_keys}
 

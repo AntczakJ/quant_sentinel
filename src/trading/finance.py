@@ -6,7 +6,6 @@ Zmiany:
 - Stały minimalny dystans TP = 5$.
 - Dodano dynamiczny filtr: min_tp_distance = max(atr * min_tp_distance_mult, 5.0).
 - Parametr min_tp_distance_mult jest przechowywany w dynamic_params i może być optymalizowany.
-- Kurs walutowy pobierany przez DataProvider (nie bezpośrednie requesty).
 """
 
 import os
@@ -26,26 +25,13 @@ def _bump_metric(name: str) -> None:
         pass
 
 
-def get_fx_rate(base: str = "USD", target: str = "PLN") -> float:
-    """Pobiera kurs walutowy (fallback 4.0)."""
-    try:
-        import yfinance as yf
-        symbol = f"{base}{target}=X"
-        data = yf.Ticker(symbol).history(period="1d")
-        if not data.empty:
-            return round(float(data['Close'].iloc[-1]), 4)
-        return 4.00
-    except Exception:
-        return 4.00
-
-
 def calculate_position(analysis_data: dict, balance: float, user_currency: str,
                        td_api_key: str = "", df=None) -> dict:
     """
     SMC MASTER VERSION: Oblicza pozycję w oparciu o Liquidity Grab, MSS, FVG, DBR/RBD, makro i ALL ML MODELS.
 
-    Note: `td_api_key` is DEPRECATED and unused (FX rate fetch uses yfinance).
-    Kept in signature for backward compat with existing callers.
+    Note: `td_api_key` is DEPRECATED and unused. Kept in signature for
+    backward compat with existing callers.
 
     Integruje:
     - SMC Engine (trend, struktura, FVG)
