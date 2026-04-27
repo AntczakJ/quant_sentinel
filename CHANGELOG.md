@@ -31,6 +31,52 @@ left as soft-stub. All three now actively shipping data:
   attr — `sentry_sdk` exposes `VERSION` (uppercase), not
   `__version__`, so /api/system/info was returning null for it.
 
+#### Added later in the same day (after the auth flow)
+
+After the three integrations were live, an extension batch added:
+
+- **Cmd+K "External" group** — three palette actions (Open Logfire
+  dashboard / Open Sentry Issues / Open Modal app), each just a
+  `window.open()` with the right URL. Entries also bump the Recent
+  ring so they show up at the top of the palette after first use.
+- **Settings ExternalServicesBlock** — three sub-cards with status
+  pills (`✓ ACTIVE` green when configured, else muted) and "Open
+  dashboard ↗" button per service. Status comes from a new
+  `/api/system/info.integrations` field that probes file presence
+  beyond just env vars (Logfire credentials file, ~/.modal.toml).
+- **`scripts/start.ps1`** — PowerShell wrapper for everyday DX:
+  `api`, `dev`, `both`, `stop`, `status`, `restart` subcommands.
+  Idempotent (checks ports first, won't double-spawn). Auto-runs
+  `npm install` if frontend/node_modules is missing.
+- **Logfire structured event in resolver loop** — every
+  `_auto_resolve_trades` cycle ends with
+  `_logfire.info("resolver.cycle.done", open_count=N,
+  trades_resolved=K, spot_price=X)` so the resolver path is as
+  searchable in the Logfire dashboard as the scanner side. An
+  `resolver.cycle.failed` exception event covers the error path.
+- **`GET /api/scanner/peek`** — read-only ad-hoc indicator
+  snapshot. Computes ATR(14), RSI(14), EMA-20 distance, 14-bar
+  high/low, 20-bar volatility on the latest 100 bars of any TF.
+  No SMC scoring, no ML inference, no DB writes — answers "why no
+  trade today?" without dropping into a shell. Settings page
+  ScannerPeekBlock card with TF picker (5m/15m/30m/1h/4h),
+  bias pill (bullish/bearish/neutral from EMA distance + RSI),
+  and 8-tile metric grid. 30 s polling.
+
+#### Modal pipeline — ongoing issues
+- TF inside the T4 container still falls back to CPU despite
+  `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04` base + `tensorflow
+  [and-cuda]`. XGBoost CUDA does work (`device='cuda'` confirmed).
+  Cost overhead at weekly cadence: ~$0.50/mc wasted on T4 that's
+  underused by LSTM. Tracked for next session.
+- First end-to-end Modal run produced model files identical SHA1
+  to local pre-train versions because the bundled `/repo/models`
+  was overwriting freshly-trained weights post-run. Fixed in
+  `ce63402` by excluding `models` from the image bundle.
+- Local network glitch (100% packet loss to `api.modal.com` after
+  laptop sleep) blocked subsequent retries — neither bug nor
+  Modal-side, just ISP/router. Weekly cron will retry on its own.
+
 ### 2026-04-26 → 2026-04-27 — v4 frontend redesign + observability + ML perf push
 
 A two-day session producing 18 commits. Frontend redesigned end-to-end,
