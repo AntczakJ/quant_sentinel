@@ -182,6 +182,10 @@ models/*_treelite.so
 
 # Optuna study databases — local search artifacts, regenerable.
 data/optuna_studies/
+
+# Logfire project credentials (already gitignored by .logfire/.gitignore but
+# pin it here too for defence in depth — token is sensitive).
+.logfire/
 models/*_scaler.pre_*_promote.pkl
 
 # Autonomous overnight session artefacts.

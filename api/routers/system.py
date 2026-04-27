@@ -26,10 +26,14 @@ MODELS_DIR = ROOT / "models"
 
 
 def _safe_version(import_name: str) -> str | None:
-    """Return `<pkg>.__version__` if importable, else None."""
+    """Return `<pkg>.__version__` (or `.VERSION`) if importable, else None.
+
+    sentry_sdk in particular exposes `VERSION` rather than `__version__`,
+    so we fall back to that as a second probe before giving up.
+    """
     try:
         mod = __import__(import_name)
-        return getattr(mod, "__version__", None)
+        return getattr(mod, "__version__", None) or getattr(mod, "VERSION", None)
     except Exception:
         return None
 
