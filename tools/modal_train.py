@@ -63,7 +63,10 @@ _IGNORE_DIRS = {
     ".idea", ".vscode",   # IDE state — PyCharm rewrites workspace.xml mid-build
     "backups", "logs", ".pytest_cache", ".ruff_cache", ".mypy_cache",
     "frontend", "frontend_v3_baseline", "frontend_v1", ".logfire",
-    "historical",   # warehouse goes via Volume, not the bundled image
+    "historical",     # warehouse goes via Volume, not the bundled image
+    "models",         # models go via the qs-models Volume — bundled stale
+                      # weights would otherwise overwrite freshly-trained ones
+    "models_modal",   # local pull dir, irrelevant on remote
     "optuna_studies", "param_backups",
     "tasks",   # claude task transcripts
 }
@@ -90,7 +93,16 @@ def _ignore_path(path) -> bool:
 
 
 image = (
-    modal.Image.debian_slim(python_version="3.13")
+    # nvidia/cuda runtime image — has the libcuda + libcudnn shared
+    # libraries TF needs at startup. Without this base, the slim Debian
+    # variant + `tensorflow[and-cuda]` pip extras still failed to dlopen
+    # CUDA libs ("Cannot dlopen some GPU libraries"). With cudnn-runtime
+    # base, TF detects the T4 directly. add_python="3.13" pulls in a
+    # matching Python interpreter on top of the CUDA layer.
+    modal.Image.from_registry(
+        "nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04",
+        add_python="3.13",
+    )
     .apt_install("git", "build-essential")
     # Slim install — only what `train_all.py` actually imports.
     # First Modal deploy attempt (with torch + transformers +
@@ -198,28 +210,18 @@ def run(
               "  Inspect the lines above this for the real traceback.")
         raise SystemExit(result.returncode)
 
-    # Persist trained artifacts back to the volume. Walk recursively so
-    # subdirs (e.g. models/_archive, models/v2/) are mirrored, not blow
-    # up with IsADirectoryError on Path.write_bytes(). Copy each *file*
-    # into /models preserving its relative path.
-    src_root = Path("/repo/models")
-    if src_root.exists():
-        n = 0
-        for f in src_root.rglob("*"):
-            if not f.is_file():
-                continue
-            rel = f.relative_to(src_root)
-            dest = Path("/models") / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(f.read_bytes())
-            n += 1
-        # `commit()` flushes the volume so subsequent `modal volume get`
-        # calls actually see the new artifacts.
-        try:
-            models_volume.commit()
-        except Exception:
-            pass
-        print(f"[modal_train] copied {n} model files to /models volume")
+    # train_all.py writes via relative `models/...` paths — subprocess
+    # cwd is `/`, so those land directly inside the /models Volume mount.
+    # The earlier "copy /repo/models/* → /models/" loop here was a bug:
+    # because models/ was bundled into the image, the loop kept clobbering
+    # freshly-trained weights with the stale bundle copies. We now exclude
+    # `models` from the bundle entirely (see _IGNORE_DIRS) and let the
+    # trainer write to the volume natively.
+    try:
+        models_volume.commit()
+        print("[modal_train] /models volume committed")
+    except Exception as e:
+        print(f"[modal_train] volume.commit() warning: {e}")
 
 
 @app.local_entrypoint()
