@@ -287,8 +287,32 @@ export const api = {
       integrations?: Record<'logfire' | 'sentry' | 'modal', { active: boolean; url: string; what: string }>
     }>('/system/info'),
 
+  /** Multi-TF scanner peek — all 5 timeframes in one call + agreement label. */
+  scannerPeekAll: (symbol = 'XAU/USD', count = 100) =>
+    get<{
+      symbol: string
+      by_tf: Record<string, {
+        symbol: string
+        interval: string
+        bars_used: number
+        last_bar: { ts: string; close: number; high: number; low: number }
+        indicators: {
+          atr_14: number; rsi_14: number; ema_20: number; ema_distance_pct: number
+          high_14: number; low_14: number; volatility_20: number
+        }
+        bias: 'bullish' | 'bearish' | 'neutral'
+      }>
+      errors: Record<string, string>
+      agreement: {
+        label: 'strong_bull' | 'strong_bear' | 'lean_bull' | 'lean_bear' | 'mixed'
+        bull_count: number; bear_count: number; neutral_count: number
+        tfs_ok: string[]; tfs_failed: string[]
+      }
+    }>('/scanner/peek-all', { symbol, count }),
+
   /** Scanner diagnostic — what indicators look like RIGHT NOW (no scoring/ML). */
   scannerPeek: (symbol = 'XAU/USD', interval = '15m', count = 100) =>
+
     get<{
       symbol: string
       interval: string

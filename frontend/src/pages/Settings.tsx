@@ -174,12 +174,21 @@ function Row({ label, value }: { label: string; value: string }) {
 
 // ─── Scanner diagnostic — what would the scanner see right now ────────
 function ScannerPeekBlock() {
+  const [view, setView] = useState<'single' | 'all'>('single')
   const [tf, setTf] = useState<'5m' | '15m' | '30m' | '1h' | '4h'>('15m')
   const { data, isError } = useQuery({
     queryKey: ['scanner-peek', tf],
     queryFn: () => api.scannerPeek('XAU/USD', tf, 100),
-    refetchInterval: 30_000,
+    refetchInterval: view === 'single' ? 30_000 : false,
     staleTime: 15_000,
+    enabled: view === 'single',
+  })
+  const { data: allData, isError: allErr } = useQuery({
+    queryKey: ['scanner-peek-all'],
+    queryFn: () => api.scannerPeekAll('XAU/USD', 100),
+    refetchInterval: view === 'all' ? 60_000 : false,
+    staleTime: 30_000,
+    enabled: view === 'all',
   })
 
   const biasClass = data?.bias === 'bullish' ? 'pill-bull'
@@ -195,24 +204,124 @@ function ScannerPeekBlock() {
             "why no trade today?".
           </p>
         </div>
-        <div className="flex gap-1">
-          {(['5m', '15m', '30m', '1h', '4h'] as const).map((t) => (
+        <div className="flex gap-2 items-center">
+          <div className="flex gap-1 mr-2">
             <button
-              key={t}
-              onClick={() => setTf(t)}
+              onClick={() => setView('single')}
               className={`px-2.5 py-1 rounded-full text-micro uppercase tracking-wider transition-colors ${
-                tf === t
-                  ? 'bg-white/[0.08] text-ink-900 border border-white/15'
-                  : 'border border-white/[0.06] text-ink-600 hover:border-white/15'
+                view === 'single' ? 'bg-white/[0.08] text-ink-900 border border-white/15' : 'border border-white/[0.06] text-ink-600 hover:border-white/15'
               }`}
-            >
-              {t}
-            </button>
-          ))}
+            >Single</button>
+            <button
+              onClick={() => setView('all')}
+              className={`px-2.5 py-1 rounded-full text-micro uppercase tracking-wider transition-colors ${
+                view === 'all' ? 'bg-white/[0.08] text-ink-900 border border-white/15' : 'border border-white/[0.06] text-ink-600 hover:border-white/15'
+              }`}
+            >All TFs</button>
+          </div>
+          {view === 'single' && (
+            <div className="flex gap-1">
+              {(['5m', '15m', '30m', '1h', '4h'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTf(t)}
+                  className={`px-2.5 py-1 rounded-full text-micro uppercase tracking-wider transition-colors ${
+                    tf === t
+                      ? 'bg-white/[0.08] text-ink-900 border border-white/15'
+                      : 'border border-white/[0.06] text-ink-600 hover:border-white/15'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
-      {isError && <p className="text-caption text-bear mt-3">/api/scanner/peek failed.</p>}
-      {data && (
+
+      {/* All-TFs view */}
+      {view === 'all' && (
+        <>
+          {allErr && <p className="text-caption text-bear mt-3">/api/scanner/peek-all failed.</p>}
+          {allData && (
+            <>
+              <div className="mt-4 flex items-center gap-3 flex-wrap">
+                <span className={`pill ${
+                  allData.agreement.label.includes('bull') ? 'pill-bull' :
+                  allData.agreement.label.includes('bear') ? 'pill-bear' : ''
+                }`} style={{ fontSize: 11 }}>
+                  {allData.agreement.label.replace('_', ' ').toUpperCase()}
+                </span>
+                <span className="text-caption text-ink-600">
+                  bull {allData.agreement.bull_count} · bear {allData.agreement.bear_count} · neutral {allData.agreement.neutral_count}
+                </span>
+                {allData.agreement.tfs_failed.length > 0 && (
+                  <span className="text-caption text-bear">
+                    failed: {allData.agreement.tfs_failed.join(', ')}
+                  </span>
+                )}
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-caption">
+                  <thead>
+                    <tr className="border-b border-white/[0.04] text-micro uppercase tracking-wider text-ink-600">
+                      <th className="text-left py-2 px-2">TF</th>
+                      <th className="text-right py-2 px-2">Close</th>
+                      <th className="text-right py-2 px-2">RSI</th>
+                      <th className="text-right py-2 px-2">ATR</th>
+                      <th className="text-right py-2 px-2">EMA dist</th>
+                      <th className="text-right py-2 px-2">Range</th>
+                      <th className="text-right py-2 px-2">Bias</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(['5m', '15m', '30m', '1h', '4h'] as const).map((t) => {
+                      const r = allData.by_tf[t]
+                      if (!r) {
+                        return (
+                          <tr key={t} className="border-b border-white/[0.03]">
+                            <td className="py-2 px-2 num text-ink-700">{t}</td>
+                            <td colSpan={6} className="py-2 px-2 text-ink-600 italic">{allData.errors[t] ?? '—'}</td>
+                          </tr>
+                        )
+                      }
+                      const dist = r.indicators.ema_distance_pct
+                      const rangePct = ((r.indicators.high_14 - r.indicators.low_14) / r.indicators.low_14 * 100)
+                      return (
+                        <tr key={t} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
+                          <td className="py-2 px-2 num text-ink-800 font-medium">{t}</td>
+                          <td className="py-2 px-2 num text-right">${r.last_bar.close.toFixed(2)}</td>
+                          <td className={`py-2 px-2 num text-right ${
+                            r.indicators.rsi_14 > 70 ? 'text-bear' :
+                            r.indicators.rsi_14 < 30 ? 'text-bull' : 'text-ink-700'
+                          }`}>{r.indicators.rsi_14.toFixed(1)}</td>
+                          <td className="py-2 px-2 num text-right text-ink-700">{r.indicators.atr_14.toFixed(2)}</td>
+                          <td className={`py-2 px-2 num text-right ${dist > 0 ? 'text-bull' : 'text-bear'}`}>
+                            {dist >= 0 ? '+' : ''}{dist.toFixed(3)}%
+                          </td>
+                          <td className="py-2 px-2 num text-right text-ink-700">{rangePct.toFixed(2)}%</td>
+                          <td className="py-2 px-2 text-right">
+                            <span className={`pill ${
+                              r.bias === 'bullish' ? 'pill-bull' :
+                              r.bias === 'bearish' ? 'pill-bear' : ''
+                            }`} style={{ fontSize: 9 }}>
+                              {r.bias.toUpperCase()}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* Single-TF view */}
+      {view === 'single' && isError && <p className="text-caption text-bear mt-3">/api/scanner/peek failed.</p>}
+      {view === 'single' && data && (
         <>
           <div className="mt-4 flex items-center gap-3 flex-wrap">
             <span className={biasClass} style={{ fontSize: 11 }}>

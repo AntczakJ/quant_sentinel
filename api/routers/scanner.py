@@ -162,6 +162,59 @@ async def scanner_peek(symbol: str = "XAU/USD", interval: str = "15m", count: in
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get(
+    "/peek-all",
+    summary="Multi-TF diagnostic snapshot — all 5 timeframes in one call",
+    description=(
+        "Returns the same indicator set as /peek but for every TF in the "
+        "scanner cascade (5m, 15m, 30m, 1h, 4h). Useful for the 'is XAU "
+        "in agreement across timeframes?' check. ~5 provider calls — "
+        "skip the rate-limit budget if you're poll-spamming. Cache TTL "
+        "30 s."
+    ),
+)
+async def scanner_peek_all(symbol: str = "XAU/USD", count: int = 100):
+    intervals = ("5m", "15m", "30m", "1h", "4h")
+    results: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    # Run sequentially — provider already caches recent candles, so 5
+    # back-to-back calls usually share the same fetch round.
+    for tf in intervals:
+        try:
+            results[tf] = await scanner_peek(symbol=symbol, interval=tf, count=count)
+        except HTTPException as he:
+            errors[tf] = f"{he.status_code}: {he.detail}"
+        except Exception as e:
+            errors[tf] = str(e)
+    # Aggregate bias — multi-TF agreement signal
+    biases = [r.get("bias") for r in results.values()]
+    bull_count = sum(1 for b in biases if b == "bullish")
+    bear_count = sum(1 for b in biases if b == "bearish")
+    if bull_count >= 4:
+        agreement = "strong_bull"
+    elif bear_count >= 4:
+        agreement = "strong_bear"
+    elif bull_count >= 3:
+        agreement = "lean_bull"
+    elif bear_count >= 3:
+        agreement = "lean_bear"
+    else:
+        agreement = "mixed"
+    return {
+        "symbol": symbol,
+        "by_tf": results,
+        "errors": errors,
+        "agreement": {
+            "label": agreement,
+            "bull_count": bull_count,
+            "bear_count": bear_count,
+            "neutral_count": len(biases) - bull_count - bear_count,
+            "tfs_ok": list(results.keys()),
+            "tfs_failed": list(errors.keys()),
+        },
+    }
+
+
 @router.post(
     "/resume",
     summary="Resume the background scanner",
