@@ -60,10 +60,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _IGNORE_DIRS = {
     ".venv", "node_modules", "__pycache__", "dist", "build", ".git",
+    ".idea", ".vscode",   # IDE state — PyCharm rewrites workspace.xml mid-build
     "backups", "logs", ".pytest_cache", ".ruff_cache", ".mypy_cache",
     "frontend", "frontend_v3_baseline", "frontend_v1", ".logfire",
     "historical",   # warehouse goes via Volume, not the bundled image
     "optuna_studies", "param_backups",
+    "tasks",   # claude task transcripts
 }
 _IGNORE_FILES = {"sentinel.db", "sentinel.db-wal", "sentinel.db-shm",
                  "backtest.db", "backtest.db-wal", "backtest.db-shm",
