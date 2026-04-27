@@ -118,6 +118,11 @@ export default function Settings() {
           <DbStatsBlock />
         </Card>
 
+        {/* ─── Scanner peek ─────────────────────────────────── */}
+        <Card variant="raised" className="p-6 lg:col-span-2">
+          <ScannerPeekBlock />
+        </Card>
+
         {/* ─── System diagnostic ─────────────────────────────── */}
         <Card variant="raised" className="p-6 lg:col-span-2">
           <SystemInfoBlock />
@@ -163,6 +168,96 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
       <span className="text-caption text-ink-600">{label}</span>
       <span className="num text-body">{value}</span>
+    </div>
+  )
+}
+
+// ─── Scanner diagnostic — what would the scanner see right now ────────
+function ScannerPeekBlock() {
+  const [tf, setTf] = useState<'5m' | '15m' | '30m' | '1h' | '4h'>('15m')
+  const { data, isError } = useQuery({
+    queryKey: ['scanner-peek', tf],
+    queryFn: () => api.scannerPeek('XAU/USD', tf, 100),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  })
+
+  const biasClass = data?.bias === 'bullish' ? 'pill-bull'
+    : data?.bias === 'bearish' ? 'pill-bear' : 'pill'
+
+  return (
+    <div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 className="text-title font-display">Scanner peek · XAU/USD</h3>
+          <p className="text-caption text-ink-600 mt-1">
+            Indicators on the latest 100 bars — no SMC, no ML, no DB write. Useful when asking
+            "why no trade today?".
+          </p>
+        </div>
+        <div className="flex gap-1">
+          {(['5m', '15m', '30m', '1h', '4h'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTf(t)}
+              className={`px-2.5 py-1 rounded-full text-micro uppercase tracking-wider transition-colors ${
+                tf === t
+                  ? 'bg-white/[0.08] text-ink-900 border border-white/15'
+                  : 'border border-white/[0.06] text-ink-600 hover:border-white/15'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+      {isError && <p className="text-caption text-bear mt-3">/api/scanner/peek failed.</p>}
+      {data && (
+        <>
+          <div className="mt-4 flex items-center gap-3 flex-wrap">
+            <span className={biasClass} style={{ fontSize: 11 }}>
+              {data.bias.toUpperCase()}
+            </span>
+            <span className="text-caption text-ink-600">
+              last bar: <span className="num text-ink-800">{data.last_bar.ts}</span>
+            </span>
+            <span className="text-caption text-ink-600">
+              close <span className="num text-ink-900">${data.last_bar.close.toFixed(2)}</span>
+            </span>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <PeekStat label="RSI 14"
+                      value={data.indicators.rsi_14.toFixed(1)}
+                      tone={data.indicators.rsi_14 > 70 ? 'bear' : data.indicators.rsi_14 < 30 ? 'bull' : undefined} />
+            <PeekStat label="ATR 14" value={data.indicators.atr_14.toFixed(2)} />
+            <PeekStat label="EMA-20 distance"
+                      value={`${data.indicators.ema_distance_pct >= 0 ? '+' : ''}${data.indicators.ema_distance_pct.toFixed(3)}%`}
+                      tone={data.indicators.ema_distance_pct > 0 ? 'bull' : 'bear'} />
+            <PeekStat label="Volatility 20"
+                      value={(data.indicators.volatility_20 * 100).toFixed(3) + '%'} />
+            <PeekStat label="14-bar high"
+                      value={'$' + data.indicators.high_14.toFixed(2)} />
+            <PeekStat label="14-bar low"
+                      value={'$' + data.indicators.low_14.toFixed(2)} />
+            <PeekStat label="Range %"
+                      value={((data.indicators.high_14 - data.indicators.low_14) / data.indicators.low_14 * 100).toFixed(2) + '%'} />
+            <PeekStat label="Position in range"
+                      value={(((data.last_bar.close - data.indicators.low_14)
+                              / (data.indicators.high_14 - data.indicators.low_14)) * 100).toFixed(0) + '%'} />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function PeekStat({ label, value, tone }: { label: string; value: string; tone?: 'bull' | 'bear' }) {
+  const cls = tone === 'bull' ? 'text-bull' : tone === 'bear' ? 'text-bear' : 'text-ink-900'
+  return (
+    <div className="surface p-3 rounded-xl">
+      <div className="text-micro uppercase tracking-wider text-ink-600">{label}</div>
+      <div className={`num text-body mt-0.5 ${cls}`}>{value}</div>
     </div>
   )
 }

@@ -287,6 +287,25 @@ export const api = {
       integrations?: Record<'logfire' | 'sentry' | 'modal', { active: boolean; url: string; what: string }>
     }>('/system/info'),
 
+  /** Scanner diagnostic — what indicators look like RIGHT NOW (no scoring/ML). */
+  scannerPeek: (symbol = 'XAU/USD', interval = '15m', count = 100) =>
+    get<{
+      symbol: string
+      interval: string
+      bars_used: number
+      last_bar: { ts: string; close: number; high: number; low: number }
+      indicators: {
+        atr_14: number
+        rsi_14: number
+        ema_20: number
+        ema_distance_pct: number
+        high_14: number
+        low_14: number
+        volatility_20: number
+      }
+      bias: 'bullish' | 'bearish' | 'neutral'
+    }>('/scanner/peek', { symbol, interval, count }),
+
   /** sentinel.db row counts + file size. */
   dbStats: () =>
     get<{
