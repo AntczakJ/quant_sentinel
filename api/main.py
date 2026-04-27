@@ -1107,10 +1107,27 @@ async def _auto_resolve_trades():
             if resolved > 0:
                 logger.info(f"📊 [Resolver] Resolved {resolved}/{len(open_trades)} trades @ ${current_price:.2f}")
 
+            # Logfire structured event so the resolver loop is searchable
+            # by the operator alongside scanner spans. Attrs end up as
+            # filterable columns in the dashboard.
+            try:
+                _logfire.info(
+                    "resolver.cycle.done",
+                    open_count=len(open_trades),
+                    trades_resolved=resolved,
+                    spot_price=float(current_price),
+                )
+            except Exception:
+                pass
+
         except asyncio.CancelledError:
             return
         except Exception as e:
             logger.warning(f"[Resolver] Error: {e}")
+            try:
+                _logfire.exception("resolver.cycle.failed")
+            except Exception:
+                pass
 
         await asyncio.sleep(300)  # Every 5 minutes
 
