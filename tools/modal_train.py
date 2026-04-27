@@ -134,27 +134,30 @@ app = modal.App(APP_NAME, image=image)
     secrets=[modal.Secret.from_name("qs-keys")] if os.environ.get("MODAL_USE_SECRETS") else [],
 )
 def run(
-    skip_lstm: bool = False,
     skip_rl: bool = True,
-    skip_xgb: bool = False,
-    days: int = 365,
+    skip_backtest: bool = True,
+    skip_bayes: bool = True,
+    epochs: int = 50,
+    symbol: str = "GC=F",
 ):
     """Mirror of `train_all.py` invocation, executed on Modal infrastructure.
 
-    The actual training script ships with the function via the
-    `add_local_dir` mount below in `local_entrypoint`. This function then
-    invokes it as a subprocess so logging behaves identically to local.
+    train_all.py supports: --skip-rl, --skip-backtest, --skip-bayes,
+    --epochs N, --rl-episodes N, --symbol <ticker>. There is NO per-voter
+    skip flag (LSTM and XGB are always trained together unless backtest
+    pieces are skipped).
     """
     import subprocess
     import sys
 
-    cmd = [sys.executable, "/repo/train_all.py", "--days", str(days)]
-    if skip_lstm:
-        cmd.append("--skip-lstm")
+    cmd = [sys.executable, "/repo/train_all.py",
+           "--symbol", symbol, "--epochs", str(epochs)]
     if skip_rl:
         cmd.append("--skip-rl")
-    if skip_xgb:
-        cmd.append("--skip-xgb")
+    if skip_backtest:
+        cmd.append("--skip-backtest")
+    if skip_bayes:
+        cmd.append("--skip-bayes")
 
     print(f"[modal_train] running: {' '.join(cmd)}")
     subprocess.run(cmd, check=True, env={**os.environ, "PYTHONPATH": "/repo"})
@@ -169,13 +172,28 @@ def run(
 
 
 @app.local_entrypoint()
-def main(skip_lstm: bool = False, skip_rl: bool = True, skip_xgb: bool = False):
-    """Local CLI hook: `modal run tools/modal_train.py::main --skip-lstm`.
+def main(
+    skip_rl: bool = True,
+    skip_backtest: bool = True,
+    skip_bayes: bool = True,
+    epochs: int = 10,        # cheap default — bump for real runs
+    symbol: str = "GC=F",
+):
+    """Local CLI hook. Examples:
 
-    The repo is bundled into the image at build time (see `image`
-    above), so we just call `.remote(...)` here.
+      # Cheap smoke test (10 epochs, no RL, no backtest, no bayes)
+      modal run tools/modal_train.py::main --epochs 10
+
+      # Realistic LSTM retrain (50 epochs, ~30-45 min on T4)
+      modal run tools/modal_train.py::main --epochs 50
+
+      # Full deal (with RL + backtest + bayes; long, expensive)
+      modal run tools/modal_train.py::main --no-skip-rl --no-skip-backtest --no-skip-bayes
     """
-    run.remote(skip_lstm=skip_lstm, skip_rl=skip_rl, skip_xgb=skip_xgb)
+    run.remote(
+        skip_rl=skip_rl, skip_backtest=skip_backtest, skip_bayes=skip_bayes,
+        epochs=epochs, symbol=symbol,
+    )
 
 
 if __name__ == "__main__":
