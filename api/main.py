@@ -173,10 +173,10 @@ async def lifespan(app: FastAPI):
     # providers are wired up. Runs once per uvicorn boot, log-only (never
     # raises). Mirrors the keys documented in .env.example.
     _env_groups: list[tuple[str, list[str]]] = [
-        ("data providers", ["TWELVEDATA_KEY", "ALPHA_VANTAGE_KEY", "FRED_API_KEY", "FINNHUB_KEY"]),
+        ("data providers", ["TWELVE_DATA_API_KEY", "ALPHA_VANTAGE_KEY", "FRED_API_KEY", "FINNHUB_API_KEY"]),
         ("auth/security",  ["API_SECRET_KEY"]),
         ("observability",  ["LOGFIRE_TOKEN", "SENTRY_DSN"]),
-        ("turso (cloud DB)", ["TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN"]),
+        ("turso (cloud DB)", ["TURSO_URL", "TURSO_TOKEN"]),
         ("ml flags",       ["ONNX_FORCE_CPU", "DISABLE_TRAILING", "MAX_LOT_CAP"]),
     ]
     logger.info("[ENV] startup status:")
@@ -271,8 +271,32 @@ async def lifespan(app: FastAPI):
     # silent rename gets caught early. Always-on, very cheap.
     drift_task = asyncio.create_task(_dynamic_params_drift_watchdog())
 
+    # Macro-snapshot persister (5-min cadence). Decoupled from trade
+    # evaluation so historical regime data is captured even on scan-paused
+    # cycles. Cost: ~3 TwelveData credits per cycle (XAU 1h + USDJPY 1h
+    # + macro proxies via cached path) — well inside the 55/min budget.
+    # Why we built it: 2026-04-27 audit found B7 efficacy can only be
+    # verified by checking macro_regime at trade time, but regime was
+    # never persisted. SHORT #200 forensics relied on inferring regime
+    # from factors-dict presence — fragile and indirect. With snapshots
+    # we get direct ground truth.
+    macro_snapshot_task = asyncio.create_task(_persist_macro_snapshots())
+
+    # Daily rejection replay. Resolves `would_have_won` on rejected_setups
+    # rows that have accumulated since the last replay, using forward
+    # bars from the local 5-min warehouse parquet. Zero API hits, ~15s
+    # per 9k rows. Cheap, observability-only, never touches live trade
+    # path. Why we built it: 2026-04-27 audit found 9k+ rejection rows
+    # sitting unresolved (no resolver had been built). With this cron,
+    # future factor audits get rich rejection-side data automatically.
+    # Caveat: rejection within ~2 days of "now" can't be resolved until
+    # the warehouse is refreshed past their hold-cap window — those
+    # rows just stay NULL and get picked up on a later night.
+    replay_task = asyncio.create_task(_replay_rejections_daily())
+
     logger.info("Background tasks started (scanner 5min | prices 5s | resolver 5min | "
-                "monitor 1h | retention 24h | health 10min | params-drift 30min)")
+                "monitor 1h | retention 24h | health 10min | params-drift 30min | "
+                "macro-snapshot 5min | replay 24h)")
 
     yield
 
@@ -286,7 +310,7 @@ async def lifespan(app: FastAPI):
         pass
 
     # 2. Cancel background tasks with drain timeout
-    tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task, retention_task]
+    tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task, retention_task, macro_snapshot_task, replay_task]
     for task in tasks:
         task.cancel()
 
@@ -306,6 +330,145 @@ async def lifespan(app: FastAPI):
         pass
 
     logger.info("QUANT SENTINEL API shutdown complete")
+
+
+async def _persist_macro_snapshots():
+    """Persist macro_regime + USDJPY z-score every 5 min into
+    `macro_snapshots`. Independent of trade evaluation so historical
+    regime is preserved even when no trades fire.
+
+    All exceptions swallowed — observability must never break live.
+    Cadence matches scanner (5 min) so each cycle has matching macro
+    state. Initial 60s delay lets the API finish startup first.
+    """
+    await asyncio.sleep(60)
+    while True:
+        try:
+            from src.core.database import NewsDB
+            from src.data.data_sources import get_provider
+            from src.trading.smc_engine import (
+                calculate_atr, get_macro_regime, get_macro_quotes,
+            )
+            from src.analysis.regime import classify_regime
+
+            provider = get_provider()
+            xau_df = await asyncio.to_thread(provider.get_candles, "XAU/USD", "1h", 200)
+            uj_df = await asyncio.to_thread(provider.get_candles, "USD/JPY", "1h", 100)
+
+            usdjpy_zscore = None
+            usdjpy_price = None
+            macro_regime = None
+            atr_ratio = None
+            market_regime = None
+            signals = None
+
+            if uj_df is not None and len(uj_df) >= 20:
+                uj_close = uj_df["close"].astype(float).tolist()
+                usdjpy_price = float(uj_close[-1])
+                # Use the same z-score window as the scanner — 20 bars.
+                import numpy as _np
+                window = uj_close[-20:]
+                mean = float(_np.mean(window))
+                std = float(_np.std(window))
+                usdjpy_zscore = (usdjpy_price - mean) / std if std > 0 else 0.0
+
+            if xau_df is not None and len(xau_df) >= 30 and uj_df is not None and len(uj_df) >= 20:
+                # ATR ratio (current ATR / 20-bar mean of TR) for vol regime
+                _df = xau_df.copy()
+                atr = calculate_atr(_df, length=14)
+                atr_mean = float(_df["tr"].rolling(20).mean().iloc[-1]) if "tr" in _df.columns else atr
+                atr_ratio = (atr / atr_mean) if atr_mean else None
+
+                regime_dict = await asyncio.to_thread(
+                    get_macro_regime,
+                    uj_df["close"].astype(float).tolist(),
+                    usdjpy_price,
+                    atr,
+                    atr_mean,
+                )
+                if isinstance(regime_dict, dict):
+                    macro_regime = regime_dict.get("regime")
+                    signals = regime_dict.get("signals")
+
+                # Market regime (squeeze / trending / ranging) from BBW + ADX
+                try:
+                    market_regime = str(classify_regime(xau_df))
+                except Exception:
+                    pass
+
+            quotes = await asyncio.to_thread(get_macro_quotes)
+
+            db = NewsDB()
+            db.write_macro_snapshot(
+                macro_regime=macro_regime,
+                usdjpy_zscore=usdjpy_zscore,
+                usdjpy_price=usdjpy_price,
+                atr_ratio=atr_ratio,
+                uup=quotes.get("uup") if quotes else None,
+                tlt=quotes.get("tlt") if quotes else None,
+                vixy=quotes.get("vixy") if quotes else None,
+                market_regime=market_regime,
+                signals=signals,
+            )
+        except Exception as _e:
+            logger.debug(f"[macro-snapshot] tick failed: {_e}")
+        await asyncio.sleep(300)  # every 5 min
+
+
+async def _replay_rejections_daily():
+    """Run the rejection replay script once per 24h to resolve any
+    rejected_setups rows that have ground truth available in the local
+    warehouse parquet.
+
+    Uses subprocess (same pattern as walk_forward → run_production_backtest)
+    so the heavy script imports happen in a child process and don't bloat
+    this API process. Result is logged at INFO level; failures at DEBUG so
+    they don't spam the operator log if warehouse is briefly missing.
+
+    First run delayed 30 min after boot — gives scanner time to settle and
+    avoids hitting the DB during the open-trade resolver's busy window.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "replay_directional_alignment.py"
+    venv_py = repo_root / ".venv" / "Scripts" / "python.exe"
+    py_exec = str(venv_py) if venv_py.exists() else sys.executable
+
+    await asyncio.sleep(1800)   # 30-min initial delay
+    while True:
+        try:
+            cmd = [py_exec, str(script)]
+            env = os.environ.copy()
+            env.setdefault("PYTHONIOENCODING", "utf-8")
+            env.setdefault("PYTHONUTF8", "1")
+            # Run in a thread so the asyncio loop isn't blocked for the
+            # ~15-30 s the script needs.
+            def _run() -> tuple[int, str, str]:
+                r = subprocess.run(
+                    cmd, capture_output=True, text=True, env=env,
+                    cwd=str(repo_root), timeout=600,
+                    encoding="utf-8", errors="replace",
+                )
+                return (r.returncode, r.stdout or "", r.stderr or "")
+            rc, out, err = await asyncio.to_thread(_run)
+            # Parse the headline "DB updated: N rows" if it landed in stdout.
+            n_updated = "?"
+            for line in out.splitlines():
+                if "DB updated:" in line:
+                    # e.g. "[replay] DB updated: 8,450 rows"
+                    n_updated = line.split("DB updated:")[-1].strip().split()[0]
+                    break
+            if rc == 0:
+                logger.info(f"[replay] daily run done — {n_updated} rows resolved")
+            else:
+                logger.warning(f"[replay] daily run rc={rc}; stderr tail: "
+                               f"{(err or '').splitlines()[-1] if err else '<empty>'}")
+        except Exception as _e:
+            logger.debug(f"[replay] daily run failed: {_e}")
+        # 24h until next run
+        await asyncio.sleep(86400)
 
 
 async def _dynamic_params_drift_watchdog():
@@ -2988,6 +3151,127 @@ async def orb_health():
         }
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+
+
+@app.get("/api/macro/snapshots", tags=["System"])
+async def macro_snapshots(limit: int = 200):
+    """Recent macro_regime snapshots (per-cycle persistence, see
+    `_persist_macro_snapshots`). Returns id, timestamp, macro_regime,
+    usdjpy_zscore, usdjpy_price, atr_ratio, market_regime — newest
+    first. Caller can ?limit=N (cap 1000) for longer history."""
+    try:
+        from src.core.database import NewsDB
+        rows = NewsDB().get_recent_macro_snapshots(limit=min(int(limit), 1000))
+        return {
+            "items": [
+                {
+                    "id": r[0],
+                    "timestamp": r[1],
+                    "macro_regime": r[2],
+                    "usdjpy_zscore": r[3],
+                    "usdjpy_price": r[4],
+                    "atr_ratio": r[5],
+                    "market_regime": r[6],
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+        }
+    except Exception as e:
+        logger.error(f"/api/macro/snapshots failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/replay/stats", tags=["System"])
+async def replay_stats(filter_name: Optional[str] = None,
+                       direction: Optional[str] = None):
+    """Per-filter rejection-replay verdicts from `rejected_setups`.
+
+    Returns WR_strict (TP / TP+SL — the actionable metric, comparable
+    to the ~33.7% R=1.96 breakeven), WR_loose (any-positive-close),
+    and the four outcome counts (TP / SL / time-win / time-loss).
+    Filter via `?filter_name=rsi_extreme` and / or `?direction=SHORT`.
+
+    Built on top of the daily replay cron (`_replay_rejections_daily`).
+    Each row in `rejected_setups` with a non-NULL `would_have_won`
+    contributes here. NULL rows = either the rejection happened too
+    recently for forward bars to exist in the warehouse, or atr/price
+    were missing.
+    """
+    try:
+        from src.core.database import NewsDB
+        # Build the SQL with optional WHERE clauses
+        where = ["would_have_won IS NOT NULL"]
+        args: list = []
+        if filter_name:
+            where.append("filter_name = ?")
+            args.append(filter_name)
+        if direction:
+            where.append("direction = ?")
+            args.append(direction.upper())
+        sql_per_filter = f"""
+            SELECT filter_name,
+                   COUNT(*) AS n,
+                   SUM(CASE WHEN would_have_won = 1 THEN 1 ELSE 0 END) AS tp,
+                   SUM(CASE WHEN would_have_won = 0 THEN 1 ELSE 0 END) AS sl,
+                   SUM(CASE WHEN would_have_won = 2 THEN 1 ELSE 0 END) AS time_win,
+                   SUM(CASE WHEN would_have_won = 3 THEN 1 ELSE 0 END) AS time_loss
+            FROM rejected_setups
+            WHERE {' AND '.join(where)}
+            GROUP BY filter_name
+            ORDER BY n DESC
+        """
+        db = NewsDB()
+        rows = db.cursor.execute(sql_per_filter, args).fetchall()
+
+        # Same R=1.96 breakeven the audit uses — kept as a constant in
+        # the response so callers don't have to recompute. If the live
+        # target_rr is ever changed, update here too.
+        breakeven_r = 1.963
+        breakeven_wr_strict = 1.0 / (1.0 + breakeven_r)
+
+        items = []
+        for filter_name_, n, tp, sl, tw, tl in rows:
+            n_lvl = (tp or 0) + (sl or 0)
+            wr_strict = (tp / n_lvl) if n_lvl else None
+            wr_loose = ((tp or 0) + (tw or 0)) / n if n else None
+            items.append({
+                "filter_name": filter_name_,
+                "n_rejected": n,
+                "n_resolved_at_level": n_lvl,
+                "tp": tp or 0, "sl": sl or 0,
+                "time_win": tw or 0, "time_loss": tl or 0,
+                "wr_strict": wr_strict,
+                "wr_loose": wr_loose,
+                "delta_vs_breakeven_pp": (
+                    (wr_strict - breakeven_wr_strict) * 100
+                    if wr_strict is not None else None
+                ),
+            })
+        # Aggregate across the filtered set
+        total_n = sum(i["n_rejected"] for i in items)
+        total_tp = sum(i["tp"] for i in items)
+        total_sl = sum(i["sl"] for i in items)
+        total_tw = sum(i["time_win"] for i in items)
+        total_n_lvl = total_tp + total_sl
+
+        return {
+            "items": items,
+            "aggregate": {
+                "n_rejected": total_n,
+                "n_resolved_at_level": total_n_lvl,
+                "tp": total_tp, "sl": total_sl, "time_win": total_tw,
+                "wr_strict": (total_tp / total_n_lvl) if total_n_lvl else None,
+                "wr_loose": ((total_tp + total_tw) / total_n) if total_n else None,
+            },
+            "breakeven_wr_strict": breakeven_wr_strict,
+            "breakeven_R": breakeven_r,
+            "filter_name": filter_name,
+            "direction": direction.upper() if direction else None,
+        }
+    except Exception as e:
+        logger.error(f"/api/replay/stats failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/macro/context", tags=["System"])

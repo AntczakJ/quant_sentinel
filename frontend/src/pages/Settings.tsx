@@ -123,6 +123,11 @@ export default function Settings() {
           <RateLimitBlock />
         </Card>
 
+        {/* ─── Macro regime history ────────────────────────── */}
+        <Card variant="raised" className="p-6 lg:col-span-2">
+          <MacroRegimeBlock />
+        </Card>
+
         {/* ─── Database stats ───────────────────────────────── */}
         <Card variant="raised" className="p-6">
           <DbStatsBlock />
@@ -694,11 +699,25 @@ function RateLimitBlock() {
     )
   }
 
-  const pct = data.max_limit > 0 ? (data.current_credits / data.max_limit) * 100 : 0
-  const safePct = data.max_limit > 0 ? (data.safe_limit / data.max_limit) * 100 : 100
-  const tone = pct < 20 ? 'bear' : pct < 50 ? 'gold' : 'bull'
+  // Usage-oriented view: bar fills as credits are spent in the rolling minute.
+  // Color ramps green → gold (≥ alarm) → bear (≥ safe-limit hard guard).
+  const used = data.credits_used_last_min
+  const max = data.max_limit
+  const safe = data.safe_limit
+  const alarm = data.alarm_threshold ?? 45
+  const usedPct = max > 0 ? (used / max) * 100 : 0
+  const alarmPct = max > 0 ? (alarm / max) * 100 : 0
+  const safePct = max > 0 ? (safe / max) * 100 : 100
+
+  const tone = used >= safe ? 'bear' : used >= alarm ? 'gold' : 'bull'
   const toneClass = tone === 'bear' ? 'text-bear' : tone === 'gold' ? 'text-gold-400' : 'text-bull'
-  const fillBg = tone === 'bear' ? 'bg-bear/60' : tone === 'gold' ? 'bg-gold-500/60' : 'bg-bull/60'
+  const fillBg = tone === 'bear' ? 'bg-bear/70' : tone === 'gold' ? 'bg-gold-500/70' : 'bg-bull/70'
+
+  const lastAlarmAge = data.last_alarm_ts && data.last_alarm_ts > 0
+    ? Math.max(0, Math.round(Date.now() / 1000 - data.last_alarm_ts))
+    : null
+  const cooldownSec = data.alarm_cooldown_sec ?? 300
+  const inCooldown = lastAlarmAge !== null && lastAlarmAge < cooldownSec
 
   return (
     <div>
@@ -706,43 +725,59 @@ function RateLimitBlock() {
         <div>
           <h3 className="text-title font-display">API credits</h3>
           <p className="text-caption text-ink-600 mt-1">
-            TwelveData primary bucket · refilled {Math.max(0, Math.round((Date.now() / 1000) - data.last_refill))} s ago
+            TwelveData primary bucket · {data.current_credits}/{safe} available
           </p>
         </div>
         <div className="text-right">
-          <div className="text-micro uppercase tracking-wider text-ink-600">Now</div>
+          <div className="text-micro uppercase tracking-wider text-ink-600">Used / min</div>
           <div className={`num text-headline font-display ${toneClass}`}>
             <NumberFlow
-              value={data.current_credits}
+              value={used}
               format={{ maximumFractionDigits: 0 }}
               respectMotionPreference
             />
-            <span className="text-caption text-ink-600"> / {data.max_limit}</span>
+            <span className="text-caption text-ink-600"> / {max}</span>
           </div>
         </div>
       </div>
 
-      {/* Bucket bar */}
+      {/* Usage bar — fills as credits are spent in the rolling minute */}
       <div className="mt-4 relative h-2 rounded-full bg-white/[0.04] overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-700 ${fillBg}`}
-          style={{ width: `${Math.min(100, pct)}%` }}
+          style={{ width: `${Math.min(100, usedPct)}%` }}
         />
-        {/* Safe-limit dashed marker */}
+        {/* Alarm-threshold marker (gold) */}
         <div
-          className="absolute top-0 bottom-0 w-px bg-white/30"
+          className="absolute top-0 bottom-0 w-px bg-gold-400/60"
+          style={{ left: `${Math.min(100, alarmPct)}%` }}
+          title={`alarm: ${alarm}/min`}
+        />
+        {/* Safe-limit marker (red — skip-cycle guard) */}
+        <div
+          className="absolute top-0 bottom-0 w-px bg-bear/70"
           style={{ left: `${Math.min(100, safePct)}%` }}
-          title={`safe limit: ${data.safe_limit}`}
+          title={`skip-cycle guard: ${safe}/min`}
         />
       </div>
 
+      {/* Threshold legend */}
+      <div className="mt-2 flex items-center gap-4 text-micro text-ink-600">
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full bg-bull/70" />
+          0–{alarm - 1} OK
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full bg-gold-500/70" />
+          {alarm}–{safe - 1} warn
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full bg-bear/70" />
+          ≥{safe} skip-cycle
+        </span>
+      </div>
+
       <div className="mt-3 grid grid-cols-3 gap-4 text-caption">
-        <div>
-          <div className="text-micro uppercase tracking-wider text-ink-600">Used / min</div>
-          <div className="num text-body mt-0.5">
-            <NumberFlow value={data.credits_used_last_min} format={{ maximumFractionDigits: 0 }} respectMotionPreference />
-          </div>
-        </div>
         <div>
           <div className="text-micro uppercase tracking-wider text-ink-600">Recent reqs</div>
           <div className="num text-body mt-0.5">
@@ -755,7 +790,139 @@ function RateLimitBlock() {
             <NumberFlow value={data.all_requests_count} format={{ maximumFractionDigits: 0 }} respectMotionPreference />
           </div>
         </div>
+        <div>
+          <div className="text-micro uppercase tracking-wider text-ink-600">Last alarm</div>
+          <div className="num text-body mt-0.5">
+            {lastAlarmAge === null
+              ? <span className="text-ink-600">—</span>
+              : inCooldown
+                ? <span className="text-gold-400">{lastAlarmAge}s ago</span>
+                : <span className="text-ink-600">{Math.round(lastAlarmAge / 60)}m ago</span>}
+          </div>
+        </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Macro regime history strip ────────────────────────────────────────
+function MacroRegimeBlock() {
+  const { data, isError } = useQuery({
+    queryKey: ['macro-snapshots'],
+    queryFn: () => api.macroSnapshots(96),  // ~8h of 5-min snapshots
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+
+  if (isError) {
+    return (
+      <div>
+        <h3 className="text-title font-display">Macro regime</h3>
+        <p className="text-caption text-bear mt-2">/api/macro/snapshots failed.</p>
+      </div>
+    )
+  }
+
+  const items = data?.items ?? []
+  // API returns newest-first. Reverse for left-to-right oldest-first display.
+  const ordered = [...items].reverse()
+  const latest = items[0]   // newest
+
+  // Color per regime — matches design token vocabulary used elsewhere
+  const colorFor = (regime: string | null | undefined) => {
+    if (regime === 'zielony') return 'bg-bull/70'
+    if (regime === 'czerwony') return 'bg-bear/70'
+    if (regime === 'neutralny') return 'bg-ink-600/40'
+    return 'bg-white/[0.04]'   // unknown / no data
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-title font-display">Macro regime</h3>
+          <p className="text-caption text-ink-600 mt-1">
+            Per-cycle persistence · {ordered.length} samples shown
+            {ordered.length === 0 && ' · awaiting next API restart to start collecting'}
+          </p>
+        </div>
+        {latest && (
+          <div className="text-right">
+            <div className="text-micro uppercase tracking-wider text-ink-600">Now</div>
+            <div className="text-headline font-display capitalize">
+              <span className={
+                latest.macro_regime === 'zielony' ? 'text-bull' :
+                latest.macro_regime === 'czerwony' ? 'text-bear' :
+                'text-ink-700'
+              }>
+                {latest.macro_regime ?? '—'}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Strip: one cell per snapshot */}
+      <div className="mt-4 flex gap-[2px] h-6 rounded-md overflow-hidden bg-white/[0.02]">
+        {ordered.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center text-micro text-ink-600">
+            No snapshots yet — table populates after API restart picks up the new BG task.
+          </div>
+        ) : ordered.map((snap) => (
+          <div
+            key={snap.id}
+            className={`flex-1 ${colorFor(snap.macro_regime)} transition-all`}
+            title={`${snap.timestamp} — ${snap.macro_regime ?? 'unknown'}\n` +
+                   `USDJPY z=${snap.usdjpy_zscore?.toFixed(2) ?? '—'}\n` +
+                   `ATR ratio=${snap.atr_ratio?.toFixed(2) ?? '—'}\n` +
+                   `Market regime: ${snap.market_regime ?? '—'}`}
+          />
+        ))}
+      </div>
+
+      {/* Legend */}
+      <div className="mt-3 flex items-center gap-4 text-micro text-ink-600">
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full bg-bull/70" />
+          zielony (gold-bullish)
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full bg-bear/70" />
+          czerwony (gold-bearish)
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full bg-ink-600/40" />
+          neutralny (mixed)
+        </span>
+      </div>
+
+      {/* Live numerics */}
+      {latest && (
+        <div className="mt-4 grid grid-cols-3 gap-4 text-caption">
+          <div>
+            <div className="text-micro uppercase tracking-wider text-ink-600">USDJPY z</div>
+            <div className="num text-body mt-0.5">
+              {latest.usdjpy_zscore != null
+                ? <NumberFlow value={latest.usdjpy_zscore} format={{ maximumFractionDigits: 2 }} respectMotionPreference />
+                : '—'}
+            </div>
+          </div>
+          <div>
+            <div className="text-micro uppercase tracking-wider text-ink-600">ATR ratio</div>
+            <div className="num text-body mt-0.5">
+              {latest.atr_ratio != null
+                ? <NumberFlow value={latest.atr_ratio} format={{ maximumFractionDigits: 2 }} respectMotionPreference />
+                : '—'}
+            </div>
+          </div>
+          <div>
+            <div className="text-micro uppercase tracking-wider text-ink-600">Market</div>
+            <div className="text-body mt-0.5 capitalize">
+              {latest.market_regime ?? '—'}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

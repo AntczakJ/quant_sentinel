@@ -311,6 +311,29 @@ class NewsDB:
             message TEXT NOT NULL,
             psi_value REAL,
             resolved BOOLEAN DEFAULT 0)""")
+        # ── MACRO SNAPSHOTS — per-cycle persistence of macro_regime + USDJPY z-score
+        # so historical regime data is queryable for audits (e.g. "did B7
+        # actually fire on every SHORT in zielony?", "what was the regime
+        # mix during the loss streak?"). Written each BG scanner cycle by
+        # api/main.py::_persist_macro_snapshot. Index on timestamp for
+        # range queries; macro_regime for grouped stats. ~1 row / 5 min ≈
+        # 288 rows / day = 100k / year — fine for SQLite.
+        self._execute("""CREATE TABLE IF NOT EXISTS macro_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            macro_regime TEXT,
+            usdjpy_zscore REAL,
+            usdjpy_price REAL,
+            atr_ratio REAL,
+            uup REAL,
+            tlt REAL,
+            vixy REAL,
+            market_regime TEXT,
+            signals_json TEXT)""")
+        self._execute("CREATE INDEX IF NOT EXISTS idx_macro_snapshots_ts "
+                      "ON macro_snapshots(timestamp)")
+        self._execute("CREATE INDEX IF NOT EXISTS idx_macro_snapshots_regime "
+                      "ON macro_snapshots(macro_regime)")
         # ── TRADE JOURNAL — rationale, emotions, lessons per trade ──
         self._execute("""CREATE TABLE IF NOT EXISTS trade_journal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1079,6 +1102,44 @@ class NewsDB:
         return self._query(
             "SELECT id, direction, entry, sl, tp, trailing_sl, setup_grade, factors, lot FROM trades WHERE status = 'OPEN'"
         )
+
+    # ── MACRO SNAPSHOTS ──
+
+    def write_macro_snapshot(
+        self,
+        macro_regime: Optional[str] = None,
+        usdjpy_zscore: Optional[float] = None,
+        usdjpy_price: Optional[float] = None,
+        atr_ratio: Optional[float] = None,
+        uup: Optional[float] = None,
+        tlt: Optional[float] = None,
+        vixy: Optional[float] = None,
+        market_regime: Optional[str] = None,
+        signals: Optional[dict] = None,
+    ) -> None:
+        """Persist one regime snapshot. Called by the BG scanner each cycle.
+
+        All args are optional — fields that couldn't be computed (e.g.
+        macro proxies unavailable) are stored as NULL. ``signals`` carries
+        the per-component vote dict (-1/0/+1 per signal) as JSON for
+        future audits ("did USDJPY agree with vol on this day?").
+        """
+        signals_json = json.dumps(signals, default=str) if signals else None
+        self._execute("""
+            INSERT INTO macro_snapshots
+            (macro_regime, usdjpy_zscore, usdjpy_price, atr_ratio,
+             uup, tlt, vixy, market_regime, signals_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (macro_regime, usdjpy_zscore, usdjpy_price, atr_ratio,
+              uup, tlt, vixy, market_regime, signals_json))
+
+    def get_recent_macro_snapshots(self, limit: int = 200) -> list:
+        """Most-recent N snapshots (descending timestamp). Useful for
+        regime-change detection and quick API endpoint preview."""
+        return self._query(
+            "SELECT id, timestamp, macro_regime, usdjpy_zscore, usdjpy_price, "
+            "atr_ratio, market_regime FROM macro_snapshots "
+            "ORDER BY id DESC LIMIT ?", (limit,))
 
     # ── REJECTED SETUPS ──
 

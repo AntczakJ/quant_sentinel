@@ -239,41 +239,81 @@ def _default_backtest_runner(start: datetime, end: datetime) -> dict:
     days = (end - start).days
     if days < 1:
         return {"total_trades": 0}
-    # Defer import to avoid TF init at module load
-    import subprocess, json as _json, os
-    cmd = [
-        ".venv/Scripts/python.exe",
-        "run_production_backtest.py",
-        "--reset",
-        "--days", str(days),
-    ]
-    env = os.environ.copy()
-    env["BACKTEST_START_DATE"] = start.strftime("%Y-%m-%d")
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, env=env, timeout=3600,
-    )
-    # Parse FINAL RESULTS block from stdout
-    stdout = result.stdout
-    metrics = {}
-    in_results = False
-    for line in stdout.splitlines():
-        if "FINAL RESULTS" in line:
-            in_results = True
-            continue
-        if in_results and line.strip().startswith("=="):
-            in_results = False
-            continue
-        if in_results and ":" not in line:
-            parts = line.split()
-            if len(parts) >= 2:
-                key = parts[0]
-                val_str = parts[1]
-                try:
-                    val = float(val_str)
-                    metrics[key] = val
-                except ValueError:
-                    pass
-    return metrics
+    import json as _json
+    import subprocess, sys, os, tempfile
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    # Prefer the .venv python if available (matches local dev), else
+    # fall back to whatever Python is running this process — both work
+    # on Windows + Unix and don't depend on CWD.
+    venv_py = repo_root / ".venv" / "Scripts" / "python.exe"
+    py_exec = str(venv_py) if venv_py.exists() else sys.executable
+
+    # Use --output to write the stats dict to a temp JSON file. We read
+    # that file instead of parsing stdout. Two reasons:
+    #   1. Stdout encoding is platform-dependent (Windows cp1252 vs UTF-8)
+    #      and the child prints Unicode dashes / Polish chars that break
+    #      the parent's decode.
+    #   2. The text-parser was fragile — colon-containing values, value
+    #      strings with multiple tokens, etc. JSON gives the dict directly.
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as _tmp:
+        out_path = _tmp.name
+    try:
+        cmd = [
+            py_exec,
+            str(repo_root / "run_production_backtest.py"),
+            "--reset",
+            # Pass explicit --start AND --end. The original walk_forward
+            # set a `BACKTEST_START_DATE` env var that nothing in
+            # `run_production_backtest.py` reads — so every window
+            # backtested the same default range (last N days from data
+            # tail) and produced identical metrics across all 4 windows
+            # (caught 2026-04-27 evening). Now each window gets the
+            # right slice.
+            "--start", start.strftime("%Y-%m-%d"),
+            "--end", end.strftime("%Y-%m-%d"),
+            # Use the local 3-year parquet warehouse instead of yfinance.
+            # 10× faster (no HTTP) AND matches TwelveData spot the live
+            # scanner uses (yfinance GC=F is futures, $65-75 different).
+            "--warehouse",
+            "--output", out_path,
+        ]
+        env = os.environ.copy()
+        # Defense-in-depth on encoding (the JSON path doesn't actually
+        # depend on stdout, but error logs from a failure run still go
+        # through stdout/stderr so we want them readable).
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        env.setdefault("PYTHONUTF8", "1")
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, env=env, timeout=3600,
+            cwd=str(repo_root),
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            logger.warning(
+                f"Backtest subprocess returned {result.returncode} for "
+                f"{start} → {end}: "
+                f"{(result.stderr or '')[-500:]}"
+            )
+        # Read the JSON output (always present unless backtest crashed
+        # before writing — in which case the file stays empty).
+        try:
+            with open(out_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            if not content:
+                return {"total_trades": 0}
+            return _json.loads(content)
+        except (FileNotFoundError, _json.JSONDecodeError) as e:
+            logger.warning(f"Could not read backtest stats for {start}: {e}")
+            return {"total_trades": 0}
+    finally:
+        try:
+            os.unlink(out_path)
+        except OSError:
+            pass
 
 
 def print_summary(results: WalkForwardResults) -> None:

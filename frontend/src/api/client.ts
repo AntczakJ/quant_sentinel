@@ -382,6 +382,21 @@ export const api = {
       }>
     }>('/system/health/deep'),
 
+  /** Recent macro_regime snapshots (per-cycle persistence). */
+  macroSnapshots: (limit = 200) =>
+    get<{
+      items: Array<{
+        id: number
+        timestamp: string
+        macro_regime: 'zielony' | 'czerwony' | 'neutralny' | null
+        usdjpy_zscore: number | null
+        usdjpy_price: number | null
+        atr_ratio: number | null
+        market_regime: string | null
+      }>
+      count: number
+    }>('/macro/snapshots', { limit }),
+
   /** API credit-bucket status (TwelveData primary). */
   rateLimit: () =>
     get<{
@@ -392,6 +407,9 @@ export const api = {
       recent_requests: number
       last_refill: number
       all_requests_count: number
+      alarm_threshold?: number
+      alarm_cooldown_sec?: number
+      last_alarm_ts?: number
     }>('/system/rate-limit'),
 
   // Scanner control
