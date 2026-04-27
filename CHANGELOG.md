@@ -4,6 +4,255 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-27 (late evening) — Factor audit + macro snapshots + walk-forward unblock
+
+WR-improvement push that intentionally avoids touching live trading
+config (live cohort still N=3 — too small for any tuning). Three
+research-side deliverables:
+
+#### Added — `scripts/factor_importance_audit.py`
+Twin-view factor importance analysis with overfitting guards:
+- **Trade-side** (n=32): per-factor presence vs WIN/LOSS, Fisher exact,
+  Bonferroni multi-comparison correction, direction split, time slice
+  pre/post Phase-B.
+- **Rejection-side** (n=9227 logged, only n=40 resolved): per-filter
+  would-have-WR vs baseline. Reveals the rejection resolver was never
+  built — `docs/SHADOW_LOG_DIRECTIONAL_ALIGNMENT.md` designs
+  `scripts/replay_directional_alignment.py` but it doesn't exist.
+- Output: `docs/strategy/2026-04-27_factor_importance_audit.md`.
+
+**Realne odkrycie** (early signal, sample limited):
+`bos` (Break of Structure) jest najsilniejszym predyktorem WR mamy:
++40.9pp delta (46% z vs 5% bez), n=13/32, raw p=0.010. LONG-only
+view nawet ostrzejszy: +50pp przy n=4. Hypothesis worth re-testing
+when sample reaches 100+. **Nie podejmujemy akcji** dopóki próbka
+nie urośnie i nie przejdzie Bonferroni.
+
+#### Added — `macro_snapshots` table + persister BG task
+- New SQLite table `macro_snapshots` (id, timestamp, macro_regime,
+  usdjpy_zscore, usdjpy_price, atr_ratio, uup, tlt, vixy,
+  market_regime, signals_json) with indexes on timestamp + regime.
+- `NewsDB.write_macro_snapshot(...)` and `get_recent_macro_snapshots()`.
+- `_persist_macro_snapshots` BG task in `api/main.py` lifespan —
+  5 min cadence, decoupled from trade evaluation, survives
+  scanner pause. Activates on next API restart.
+- New endpoint `GET /api/macro/snapshots?limit=N` — paginated history.
+- **Why:** the 2026-04-27 SHORT #200 forensics had to infer
+  `macro_regime` from `factors`-dict presence (no `short_in_bull_regime`
+  key meant regime wasn't zielony). With persistence we get direct
+  ground truth — enables future B7-efficacy audits, regime-conditioned
+  WR analyses, and the factor-audit's "did edge depend on regime?"
+  question.
+- **First snapshot recorded** (smoke test):
+  `regime=zielony, USDJPY z=−1.14, ATR ratio=1.00, market=ranging`,
+  i.e. B7 currently ARMED for any SHORT setup.
+
+#### Fixed — `src/backtest/walk_forward.py` (three bugs in one harness)
+
+The walk-forward harness existed in `src/backtest/walk_forward.py` +
+`scripts/run_walk_forward.py` but had three layered bugs that meant it
+had never produced honest results:
+
+1. **WinError 2 — relative interpreter path.** `.venv/Scripts/python.exe`
+   was passed as the subprocess argv[0] without resolving against the
+   repo root, so it only worked when CWD was the repo root. Fixed with
+   absolute path from `__file__`, `sys.executable` fallback, and
+   explicit `cwd=repo_root` on the subprocess.
+
+2. **AttributeError — Windows cp1252 stdout.** `subprocess.run(text=True)`
+   uses the platform locale codec for decode, which is cp1252 on
+   Windows. The backtest's UTF-8 dashes / Polish chars trip that decode
+   and `result.stdout` becomes `None`, then `splitlines()` explodes.
+   Fixed by `encoding="utf-8", errors="replace"` plus child env
+   `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`. Also rerouted the
+   results parsing — instead of fragile stdout grep on the FINAL
+   RESULTS block, use `--output <tmp.json>` and load the dict directly.
+
+3. **Silently identical windows — env var nobody reads.** The runner
+   set `BACKTEST_START_DATE=<window>` env var per cycle, but
+   `run_production_backtest.py` doesn't read that variable. It uses
+   `--start` / `--end` CLI flags or falls back to "last N days from
+   data tail". So **every window backtested the same default range**
+   and produced identical metrics. Caught only when window 0-3 all
+   came back as `4 trades, 0 wins, -27.30 PnL` exactly. Fixed by
+   passing `--start` and `--end` explicitly to the subprocess.
+
+After all three fixes, `scripts/run_walk_forward.py --quick` runs
+end-to-end and produces window-distinct results. Smoke run on
+2026-Q1 warehouse data is a 30/7/14 walk-forward (4 windows).
+
+#### Added — `scripts/replay_directional_alignment.py` (built + run)
+
+Implements the spec from `docs/SHADOW_LOG_DIRECTIONAL_ALIGNMENT.md`.
+Reads forward bars from the local 5-min warehouse parquet (no API hits)
+and walks bar-by-bar to determine whether each rejected setup would have
+hit TP or SL first. Updates `would_have_won` per row.
+
+**First full run resolved 8,450 of 9,294 unresolved rejections in 15 s**
+(844 skipped because they happened after the warehouse cutoff). The DB
+went from "40 resolved / 9,227 NULL" to "8,490 resolved / 844 NULL"
+in one execution.
+
+Two metrics surfaced separately to avoid the loose-criterion bias:
+- **WR_strict** = TP-hits / (TP-hits + SL-hits) — only setups that
+  resolved at a level. Compares directly to the `1 / (1 + R_target)`
+  break-even (33.8% at R=1.96).
+- **WR_loose** = any-positive / total — includes time-exits with
+  PnL>0 from a barely-green close. Easy to confuse with edge.
+
+**Findings on the resolved sample (mostly W15-W17 of 2026):**
+
+| Filter | n@level | WR_strict | Verdict |
+|---|---:|---:|---|
+| `session_performance` | 43 | 0.0% | ✅ catches losers (perfect) |
+| `directional_alignment` | 419 | 11.5% | ✅ catches losers (closes shadow-log study; <45% bucket → "validate hard-block stays") |
+| `confluence` | 1,305 | 24.1% | ✅ catches losers |
+| `toxic_pattern` | 228 | 19.3% | ✅ catches losers |
+| **`rsi_extreme`** | **154** | **45.5%** | **🚨 BLOCKS WINNERS** (Bonferroni p=0.022) |
+| `atr_filter` | 220 | 40.0% | neutral after correction |
+
+After Bonferroni multi-comparison correction over 6 filters with
+n_at_level ≥ 30, **only `rsi_extreme` clears the 0.05 threshold as a
+"blocks winners" candidate**. (An earlier draft of this changelog
+flagged `atr_filter` too; that was an artefact of an audit-script bug
+treating `would_have_won ∈ {2, 3}` time-exit codes as wins. Fixed.)
+
+**Direction split for `rsi_extreme`** (the one survivor):
+- LONG: 22.6% WR_strict (n=53) — catches losers correctly
+- SHORT: 57.4% WR_strict (n=101) — Bonferroni p<0.0001 corrected
+
+**Per timeframe** (`rsi_extreme`):
+- 30m: 94.4% WR (n=18) ↘ underpowered
+- 15m: 65.2% WR (n=23)
+- 5m:  47.0% WR (n=66)
+- 1h:  36.8% WR (n=19) ↘ underpowered
+- 4h:   0.0% WR (n=28) — sample skewed; SL bias
+
+**Actionable (with overfitting caveats):** `rsi_extreme` appears to
+be over-rejecting SHORT-side setups in the W15-W17 window. But: (1)
+sample is one 17-day window in one regime, (2) `macro_snapshots`
+wasn't persisted then so we can't slice by regime, (3) walk-forward
+is still pending. **Not a live config change.** Hypothesis tracked
+for re-test once `macro_snapshots` accumulates 2+ weeks of regime
+data and the daily replay cron resolves a wider sample.
+
+#### Added — `_replay_rejections_daily` BG task
+
+Runs the replay script once per 24h via subprocess (same pattern
+walk_forward uses for run_production_backtest). 30-min boot delay
+to avoid competing with scanner. Logs `[replay] daily run done — N
+rows resolved` per cycle. Pairs with `_persist_macro_snapshots` so
+each future rejection gets BOTH ground-truth outcome AND regime
+context — the missing piece for proper regime-conditioned filter
+audits. Activates on next API restart.
+
+Caveat: rejections within ~hold_cap (4 h) of "now" can't be replayed
+until the warehouse is refreshed past their forward window, so they
+stay NULL and get picked up on a later night's run. Warehouse refresh
+cadence is a separate question (currently manual).
+
+### 2026-04-27 (evening) — Modal TF GPU fixed end-to-end
+
+The "TF falls back to CPU on Modal T4" issue tracked since the Modal
+pipeline went live is now resolved. Diagnostic verdict:
+
+```
+[1/5] nvidia-smi:        Tesla T4, 15360 MiB, driver 580.95.05    OK
+[2/5] nvidia/* pkgs:     14 (cublas/cudnn/cuda_runtime/...)        OK
+[3/5] TF import:         tf=2.21.0 in 5.86 s                       OK
+[4/5] list GPU devices:  1 GPU [/physical_device:GPU:0]            OK
+[5/5] 512×512 matmul:    55.87 ms on /GPU:0                        OK
+VERDICT: TF GPU is OPERATIONAL ✓
+```
+
+#### Fixed
+- **Image base swap**: `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04`
+  + `add_python="3.13"` → `debian_slim(python_version="3.13")`. The
+  CUDA base shipped cuDNN ~9.0/9.1 (paired with CUDA 12.4) but TF 2.21
+  expects CUDA 12.5+ + cuDNN 9.3+. The system cuDNN was getting
+  resolved before the pip-installed `nvidia-cudnn-cu12==9.21.1.3`,
+  silently breaking GPU init. New image lets `tensorflow[and-cuda]`
+  own all CUDA + cuDNN end-to-end via pip — no system libs to
+  conflict with. Same TF version, same train_all.py — only the
+  underlying base image changed.
+- **TF version pin**: bumped from `>=2.20` to `==2.21.0` in the Modal
+  image so cuDNN co-install version (9.21.1.3) stays locked-in. uv
+  lock already had 2.21.0 resolved; this just stops a future TF 2.22
+  surprise from drifting the cuDNN version.
+
+#### Added
+- **`gpu_diagnostic` Modal function** + **`gpu_check` local entrypoint**
+  in `tools/modal_train.py`. 5-step probe: nvidia-smi → site-packages
+  inventory → TF import → `list_physical_devices('GPU')` → real GPU
+  matmul. Returns structured findings dict for assertion in
+  CI / wrapper scripts. Cost: ~30 s warm / ~3 min first cold start
+  (image build). Run `modal run tools/modal_train.py::gpu_check`
+  before any full training run when the stack changes.
+- **Belt-and-braces `LD_LIBRARY_PATH`** in the image env, listing all
+  11 `nvidia/*/lib` paths. TF 2.18+ auto-discovers these at import
+  time, but the explicit env helps any sub-process or native lib
+  lookup that doesn't go through Python's site-packages logic.
+
+#### Verified next
+- New image deployed under `quant-sentinel-train`. Sunday 03:00 UTC
+  cron will use the GPU build automatically — no further action.
+- 5-epoch smoke training run kicked off as final end-to-end gate.
+
+### 2026-04-27 (afternoon) — TwelveData hardening + lot-sizing design
+
+#### Fixed
+- **Env-name drift in observability layer** — `api/routers/system.py`
+  recommendations + system/info checked `TWELVEDATA_KEY` and
+  `FINNHUB_KEY`, but `.env` (and `src/core/config.py`) actually use
+  `TWELVE_DATA_API_KEY` and `FINNHUB_API_KEY`. Settings → Recommendations
+  was showing a permanent "TwelveData API key missing" warning even
+  though the provider was initialized correctly. Same drift hit the
+  startup `[ENV]` report in `api/main.py` for the Turso keys
+  (`TURSO_AUTH_TOKEN`/`TURSO_DATABASE_URL` → `TURSO_TOKEN`/`TURSO_URL`).
+  Verified: post-restart, recommendations endpoint returns 0 items.
+
+#### Removed
+- Dead `get_fx_rate` in `src/trading/finance.py` — sole yfinance call
+  on the live-trading-adjacent path. Grep confirmed zero callers
+  in repo. Live trading path is now 100 % TwelveData (yfinance lives
+  only in offline training + legacy backtest fallback).
+
+#### Added
+- **Credit-budget alarm** in `RateLimiter` (`src/api_optimizer.py`).
+  Once-per-cooldown WARN when last-min usage crosses
+  `alarm_threshold` (default 45 / safe-limit 52 / hard-limit 55).
+  Alarm fans out to `logger.warning` + Logfire `rate_limiter.high_usage`
+  event + Sentry breadcrumb. Tunable via env vars
+  `TWELVEDATA_ALARM_THRESHOLD` and `TWELVEDATA_ALARM_COOLDOWN_SEC`.
+  `get_stats()` now exposes `alarm_threshold`, `alarm_cooldown_sec`,
+  and `last_alarm_ts` so the Settings widget can show the threshold
+  marker and the most recent alarm age.
+- **Settings `RateLimitBlock` refactor** — bar now visualizes
+  rolling-minute *usage* (0 → 55) with green / gold / red zones,
+  plus marker lines at the alarm threshold (gold) and skip-cycle
+  guard (red). Three-color legend + new "Last alarm" stat.
+- **`twelvedata_plan_policy.md` memory** — declares the project rule
+  that all live data goes through TwelveData (paid plan, 55 / min
+  hard cap), documents env-var name (`TWELVE_DATA_API_KEY`), and
+  notes the rate budget envelope for new live fetches.
+
+#### Investigated
+- **SHORT trade #200** (2026-04-27 01:08 UTC, +14.86 PLN, lot 0.01) —
+  factors dict had no `short_in_bull_regime` key, confirming
+  `macro_regime` was not "zielony" at trade time. B7 logic verified
+  working on the first live SHORT post-flip. Side-finding:
+  `macro_regime` is computed live but not persisted — no
+  `macro_snapshots` table — so historical audits of this kind
+  rely on inferring from `factors` presence.
+
+#### Documented
+- **`docs/strategy/2026-04-27_lot_sizing_rebuild_design.md`** —
+  3-option design doc (constant 0.5 % / model-driven R-mult /
+  ¼-Kelly) with explicit decision gate (≥ 30 post-config trades + 7d
+  PF within ±20 % of backtest 1.21 + B7 verified). Recommendation:
+  **Option A** once gate clears, no implementation before
+  2026-05-04.
+
 ### 2026-04-27 — Logfire / Sentry / Modal wired up
 
 End-to-end activation of the three external services that the v4 push
