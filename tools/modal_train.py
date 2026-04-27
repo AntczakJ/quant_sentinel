@@ -153,6 +153,10 @@ app = modal.App(APP_NAME, image=image)
     #   TWELVEDATA_KEY=... ALPHA_VANTAGE_KEY=... FRED_API_KEY=...`
     # then re-run `modal deploy` to pick it up.
     secrets=[modal.Secret.from_name("qs-keys")] if os.environ.get("MODAL_USE_SECRETS") else [],
+    # Weekly retrain trigger — Sunday 03:00 UTC (~05:00 PL). Conservative
+    # default; bump to daily ("0 3 * * *") in the UI when you trust the
+    # pipeline. Each fire costs ~$0.30-0.60 on T4.
+    schedule=modal.Cron("0 3 * * 0"),
 )
 def run(
     skip_rl: bool = True,
