@@ -23,6 +23,34 @@ interface Props {
 const RECENT_KEY = 'qs.cmdk.recent'
 const RECENT_MAX = 5
 
+/**
+ * External dashboards opened with `window.open()` — purely client-side, no
+ * backend coupling. Edit URLs here when project / workspace name changes.
+ */
+export const EXTERNAL_LINKS = [
+  {
+    id: 'open-logfire',
+    label: 'Open Logfire dashboard',
+    hint: 'Live request spans + scanner traces',
+    url: 'https://logfire-eu.pydantic.dev/antczak-j/quant-sentinel',
+    service: 'logfire' as const,
+  },
+  {
+    id: 'open-sentry',
+    label: 'Open Sentry Issues',
+    hint: 'Captured exceptions + cron heartbeats',
+    url: 'https://sentry.io/issues/?project=4511289079169104',
+    service: 'sentry' as const,
+  },
+  {
+    id: 'open-modal',
+    label: 'Open Modal app',
+    hint: 'Cloud retrain history + cron schedule',
+    url: 'https://modal.com/apps/antczakj/main/deployed/quant-sentinel-train',
+    service: 'modal' as const,
+  },
+]
+
 type RecentEntry = { id: string; label: string; hint?: string }
 
 function loadRecent(): RecentEntry[] {
@@ -321,6 +349,22 @@ export function CommandPalette({ open: controlled, onOpenChange }: Props = {}) {
                   <PaletteItem value="symbol XAU/USD gold" label="XAU/USD" hint="Gold spot — primary" onSelect={() => go('/chart')} />
                   <PaletteItem value="symbol EUR/USD" label="EUR/USD" hint="Eurodollar reference" onSelect={() => go('/chart')} />
                   <PaletteItem value="symbol USD/JPY" label="USD/JPY" hint="Macro context proxy" onSelect={() => go('/chart')} />
+                </Command.Group>
+
+                <Command.Group heading="External" className="px-2 pt-3 pb-1 text-micro uppercase tracking-wider text-ink-600">
+                  {EXTERNAL_LINKS.map((x) => (
+                    <PaletteItem
+                      key={x.id}
+                      value={`external ${x.label}`}
+                      label={x.label}
+                      hint={x.hint}
+                      onSelect={() => {
+                        bumpRecent({ id: x.id, label: x.label, hint: x.hint })
+                        window.open(x.url, '_blank', 'noopener,noreferrer')
+                        setOpen(false)
+                      }}
+                    />
+                  ))}
                 </Command.Group>
 
                 {recent.length > 0 && (

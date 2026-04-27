@@ -96,6 +96,33 @@ def _process_info() -> dict:
         return {"error": str(e)}
 
 
+def _integrations_status() -> dict:
+    """High-level boolean status of external services for the Settings widget.
+    More forgiving than `_env_status` — Logfire stores its token in
+    `.logfire/logfire_credentials.json` (not env), Modal in `~/.modal.toml`."""
+    home = Path.home()
+    return {
+        "logfire": {
+            "active": bool(os.environ.get("LOGFIRE_TOKEN", "").strip())
+                      or (ROOT / ".logfire" / "logfire_credentials.json").exists()
+                      or (home / ".logfire" / "default.toml").exists(),
+            "url": "https://logfire-eu.pydantic.dev/antczak-j/quant-sentinel",
+            "what": "Live request spans + scanner traces. 10M spans/mc free.",
+        },
+        "sentry": {
+            "active": bool(os.environ.get("SENTRY_DSN", "").strip()),
+            "url": "https://sentry.io/issues/?project=4511289079169104",
+            "what": "Captured exceptions + bg-scanner cron heartbeats. 5k events/mc free.",
+        },
+        "modal": {
+            # `~/.modal.toml` is the canonical token location after `modal token new`
+            "active": (home / ".modal.toml").exists(),
+            "url": "https://modal.com/apps/antczakj/main/deployed/quant-sentinel-train",
+            "what": "Weekly Sun 03:00 UTC retrain on T4 GPU. ~$0.30-0.60 per fire.",
+        },
+    }
+
+
 def _gpu_info() -> dict:
     """Lazy GPU probe via the existing helper. Cached at first call upstream."""
     try:
@@ -385,6 +412,7 @@ async def system_info():
             "gpu": _gpu_info(),
             "disk": _disk_info(),
             "env": env_status,
+            "integrations": _integrations_status(),
         }
     except Exception as e:
         logger.error(f"system/info error: {e}")

@@ -103,6 +103,11 @@ export default function Settings() {
           </div>
         </Card>
 
+        {/* ─── External services (Logfire / Sentry / Modal) ── */}
+        <Card variant="raised" className="p-6 lg:col-span-2">
+          <ExternalServicesBlock />
+        </Card>
+
         {/* ─── Rate limit (API credits) ──────────────────────── */}
         <Card variant="raised" className="p-6">
           <RateLimitBlock />
@@ -158,6 +163,76 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
       <span className="text-caption text-ink-600">{label}</span>
       <span className="num text-body">{value}</span>
+    </div>
+  )
+}
+
+// ─── External services panel ─────────────────────────────────────────
+function ExternalServicesBlock() {
+  const { data } = useQuery({
+    queryKey: ['system-info'],
+    queryFn: api.systemInfo,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+  const integ = data?.integrations
+  const services = [
+    { key: 'logfire' as const, name: 'Logfire',
+      tagline: 'Observability — request traces + scanner spans',
+      logo: '🔍', color: 'border-info/30' },
+    { key: 'sentry' as const, name: 'Sentry',
+      tagline: 'Error tracking — captured exceptions + cron heartbeats',
+      logo: '🚨', color: 'border-bear/30' },
+    { key: 'modal' as const, name: 'Modal Labs',
+      tagline: 'Cloud GPU — weekly retrain Sun 03:00 UTC',
+      logo: '🚀', color: 'border-gold-500/30' },
+  ]
+
+  return (
+    <div>
+      <h3 className="text-title font-display">External services</h3>
+      <p className="text-caption text-ink-600 mt-1">
+        Status loaded from <span className="font-mono">/api/system/integrations</span>.
+        Click "Open" to jump to the dashboard.
+      </p>
+      <div className="mt-4 grid sm:grid-cols-3 gap-3">
+        {services.map((s) => {
+          const cfg = integ?.[s.key]
+          const active = cfg?.active ?? false
+          return (
+            <div
+              key={s.key}
+              className={`rounded-xl2 p-4 bg-ink-100 border ${s.color} flex flex-col gap-3`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-headline">{s.logo}</span>
+                  <div className="min-w-0">
+                    <div className="text-body text-ink-900 font-medium truncate">{s.name}</div>
+                    <div className="text-micro text-ink-600 truncate">{cfg?.what ?? s.tagline}</div>
+                  </div>
+                </div>
+                <span className={`pill shrink-0 ${active ? 'pill-bull' : ''}`} style={{ fontSize: 9 }}>
+                  {active ? '✓ ACTIVE' : '○ inactive'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => cfg?.url && window.open(cfg.url, '_blank', 'noopener,noreferrer')}
+                disabled={!cfg?.url}
+                className="px-3 py-1.5 rounded-full text-caption border border-white/10 bg-white/[0.03] hover:border-white/25 hover:bg-white/[0.06] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Open dashboard ↗
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      {!integ && (
+        <div className="text-caption text-ink-600 mt-3">
+          Loading service status…
+        </div>
+      )}
     </div>
   )
 }

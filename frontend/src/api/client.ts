@@ -284,6 +284,7 @@ export const api = {
       gpu: Record<string, unknown>
       disk: { total_gb: number; used_gb: number; free_gb: number; free_pct: number }
       env: Record<string, boolean>
+      integrations?: Record<'logfire' | 'sentry' | 'modal', { active: boolean; url: string; what: string }>
     }>('/system/info'),
 
   /** sentinel.db row counts + file size. */
