@@ -97,6 +97,7 @@ image = (
     # sentence-transformers + treelite) hit "image build terminated due
     # to external shut-down" — too big for free-tier build window.
     .pip_install(
+        # Core ML stack
         "numpy>=2.2,<2.5",
         "pandas>=3.0",
         "scikit-learn>=1.8",
@@ -105,6 +106,20 @@ image = (
         "scipy>=1.17",
         "tqdm>=4.67",
         "pydantic>=2.12",
+        # Data providers — train_all.py pulls XAU history via yfinance
+        "yfinance>=1.2.2",
+        "curl-cffi>=0.15.0",        # transitive yfinance dep, CVE patch
+        "fredapi>=0.5.0",            # macro
+        "finnhub-python>=2.4.0",     # macro
+        "feedparser>=6.0.10",        # news parsing (optional)
+        # Utilities transitively imported by src/* on training path
+        "python-dotenv>=1.2.0",
+        "PyJWT>=2.12.0",
+        "bcrypt>=4.0.0",
+        "psutil>=6.0.0",
+        "pandas_ta>=0.4.0b0",        # technical indicators in feature engineering
+        "pywavelets>=1.8.0",         # signal processing
+        "numba>=0.61.0",             # compute hot path JIT
     )
     # Bundle the repo source into the image once (Modal 1.x API —
     # the legacy `Mount.from_local_dir` + `run.with_options(mounts=...)`
@@ -160,7 +175,18 @@ def run(
         cmd.append("--skip-bayes")
 
     print(f"[modal_train] running: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True, env={**os.environ, "PYTHONPATH": "/repo"})
+    # Stream stdout/stderr live so failures surface in the local terminal
+    # instead of getting hidden behind `subprocess.CalledProcessError`.
+    result = subprocess.run(
+        cmd,
+        env={**os.environ, "PYTHONPATH": "/repo", "PYTHONUNBUFFERED": "1"},
+    )
+    if result.returncode != 0:
+        print(f"\n[modal_train] FAILED — exit code {result.returncode}\n"
+              f"  command: {' '.join(cmd)}\n"
+              f"  cwd: /repo\n"
+              "  Inspect the lines above this for the real traceback.")
+        raise SystemExit(result.returncode)
 
     # Persist trained artifacts back to the volume.
     out = Path("/repo/models")
