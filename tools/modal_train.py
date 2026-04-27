@@ -55,6 +55,23 @@ APP_NAME = "quant-sentinel-train"
 # ── Container image ────────────────────────────────────────────────
 # Pin versions you actually use. Modal caches layers, so this only
 # rebuilds when this list changes.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _ignore_path(path) -> bool:
+    """`add_local_dir` ignore-callback. Returns True if path should be skipped."""
+    s = str(path).replace("\\", "/")
+    needles = (
+        "/.venv/", "/node_modules/", "/__pycache__/", "/dist/", "/build/",
+        "/.git/", "/data/sentinel.db", "/data/backups/", "/data/_",
+        "/data/historical/",   # warehouse goes via Volume, not bundle
+        "/logs/", "/.pytest_cache/", "/.ruff_cache/", "/.mypy_cache/",
+        "/frontend/", "/frontend_v3_baseline/", "/frontend_v1/",
+        "/.logfire/",
+    )
+    return any(n in s for n in needles)
+
+
 image = (
     modal.Image.debian_slim(python_version="3.13")
     .apt_install("git", "build-essential")
@@ -62,9 +79,6 @@ image = (
     # First Modal deploy attempt (with torch + transformers +
     # sentence-transformers + treelite) hit "image build terminated due
     # to external shut-down" — too big for free-tier build window.
-    # Treelite / news similarity / torch are NOT needed for the
-    # XGB+LSTM retrain, so they're dropped here. Add them back if
-    # `train_all.py` ever grows to need them.
     .pip_install(
         "numpy>=2.2,<2.5",
         "pandas>=3.0",
@@ -75,6 +89,10 @@ image = (
         "tqdm>=4.67",
         "pydantic>=2.12",
     )
+    # Bundle the repo source into the image once (Modal 1.x API —
+    # the legacy `Mount.from_local_dir` + `run.with_options(mounts=...)`
+    # was removed). Volumes still carry warehouse + models per-run.
+    .add_local_dir(str(_REPO_ROOT), remote_path="/repo", ignore=_ignore_path)
 )
 
 # Volumes — persistent across runs, mounted at /historical and /models.
@@ -133,37 +151,14 @@ def run(
         print(f"[modal_train] copied {len(list(out.glob('*')))} model files to /models")
 
 
-_MOUNT_IGNORE = (
-    # Anything that would inflate the bundle past the 5 GB Modal limit.
-    "**/.venv/**", "**/node_modules/**", "**/__pycache__/**",
-    "**/dist/**", "**/build/**", "**/.git/**",
-    "**/data/sentinel.db*", "**/data/backups/**", "**/data/_*cache*/**",
-    "**/data/historical/**",   # warehouse goes via the qs-warehouse Volume
-    "**/logs/**", "**/.pytest_cache/**", "**/.ruff_cache/**",
-    "**/frontend/**",          # the trainer never touches the SPA
-    "**/frontend_v3_baseline/**", "**/frontend_v1/**",
-    "**/uv.lock", "**/.mypy_cache/**",
-)
-
-
 @app.local_entrypoint()
 def main(skip_lstm: bool = False, skip_rl: bool = True, skip_xgb: bool = False):
     """Local CLI hook: `modal run tools/modal_train.py::main --skip-lstm`.
 
-    The repo gets attached as a local dir so train_all.py runs unchanged
-    on the remote container. Heavy / irrelevant trees are excluded via
-    `_MOUNT_IGNORE` — without them Modal would refuse the upload.
+    The repo is bundled into the image at build time (see `image`
+    above), so we just call `.remote(...)` here.
     """
-    repo_root = Path(__file__).resolve().parents[1]
-    run.with_options(  # type: ignore[attr-defined]
-        mounts=[modal.Mount.from_local_dir(
-            str(repo_root),
-            remote_path="/repo",
-            condition=lambda p: not any(
-                __import__("fnmatch").fnmatch(p, pat) for pat in _MOUNT_IGNORE
-            ),
-        )]
-    ).remote(skip_lstm=skip_lstm, skip_rl=skip_rl, skip_xgb=skip_xgb)
+    run.remote(skip_lstm=skip_lstm, skip_rl=skip_rl, skip_xgb=skip_xgb)
 
 
 if __name__ == "__main__":
