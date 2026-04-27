@@ -166,10 +166,18 @@ class TwelveDataProvider(DataProvider):
         td_interval = interval if 'min' in interval else interval.replace('m', 'min')
 
         # Make API request
+        # NOTE: `timezone=UTC` is REQUIRED. Without it, TwelveData returns
+        # timestamps in the exchange's default zone (for XAU/USD: UTC+10),
+        # while we tag them as UTC at line 187 below. Result: appended
+        # bars look ~10h in the future. Caught 2026-04-27 when warehouse
+        # refresh appended 119 future-dated rows. Existing parquet may
+        # have similarly-shifted historical bars (built by earlier
+        # imports), but at least live appends are now consistent.
         data = self._req('time_series', {
             'symbol': symbol,
             'interval': td_interval,
-            'outputsize': min(count, 5000)  # API limit
+            'outputsize': min(count, 5000),  # API limit
+            'timezone': 'UTC',
         })
 
         if 'values' not in data:
