@@ -330,6 +330,34 @@ export const api = {
       bias: 'bullish' | 'bearish' | 'neutral'
     }>('/scanner/peek', { symbol, interval, count }),
 
+  /** Heuristic suggestions — missing tokens, stale models, paused scanner, etc. */
+  recommendations: () =>
+    get<{
+      count: number
+      by_severity: { error: number; warn: number; info: number }
+      items: Array<{
+        id: string
+        severity: 'error' | 'warn' | 'info'
+        title: string
+        detail: string
+        action_url?: string
+      }>
+    }>('/system/recommendations'),
+
+  /** sentinel.db query latencies — `fast` / `ok` / `slow` / `concerning`. */
+  dbTiming: (repeats = 5) =>
+
+    get<{
+      queries: Record<string, { median_ms: number; min_ms: number; max_ms: number; rows: number; repeats: number; error?: string }>
+      summary: {
+        total_queries: number
+        ok_queries: number
+        median_of_medians_ms: number | null
+        max_median_ms: number | null
+        verdict: 'fast' | 'ok' | 'slow' | 'concerning'
+      }
+    }>('/system/db-timing', { repeats }),
+
   /** sentinel.db row counts + file size. */
   dbStats: () =>
     get<{

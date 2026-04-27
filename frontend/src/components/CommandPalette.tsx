@@ -245,11 +245,72 @@ export function CommandPalette({ open: controlled, onOpenChange }: Props = {}) {
     setOpen(false)
   }
 
+  const runSmokeTest = async () => {
+    const tid = toast.loading('Smoke test — probing 4 endpoints…')
+    const lines: string[] = []
+    let passes = 0, fails = 0
+    type Probe = { name: string; fn: () => Promise<string> }
+    const probes: Probe[] = [
+      {
+        name: 'health',
+        fn: async () => {
+          const h = await api.health()
+          return `status=${h.status} models=${h.models_loaded ?? '?'} uptime=${h.uptime ?? '?'}`
+        },
+      },
+      {
+        name: 'health/deep',
+        fn: async () => {
+          const d = await api.healthDeep()
+          const failed = Object.entries(d.checks).filter(([, v]) => !v.ok).map(([k]) => k)
+          return d.all_ok
+            ? `5/5 subsystems OK`
+            : `FAIL: ${failed.join(', ')}`
+        },
+      },
+      {
+        name: 'db-timing',
+        fn: async () => {
+          const t = await api.dbTiming(3)
+          return `${t.summary.verdict.toUpperCase()} (max-median ${t.summary.max_median_ms?.toFixed(2)}ms)`
+        },
+      },
+      {
+        name: 'scanner/peek',
+        fn: async () => {
+          const p = await api.scannerPeek('XAU/USD', '15m', 60)
+          return `bias=${p.bias} RSI=${p.indicators.rsi_14.toFixed(1)} ATR=${p.indicators.atr_14.toFixed(2)}`
+        },
+      },
+    ]
+    for (const p of probes) {
+      try {
+        const detail = await p.fn()
+        lines.push(`✓ ${p.name}: ${detail}`)
+        passes++
+      } catch (err) {
+        lines.push(`✗ ${p.name}: ${(err as Error).message ?? 'failed'}`)
+        fails++
+      }
+    }
+    toast.dismiss(tid)
+    const headline = fails === 0
+      ? `Smoke test ✓ ${passes}/4 passed`
+      : `Smoke test — ${passes}/4 passed, ${fails} failed`
+    if (fails === 0) {
+      toast.success(headline, { description: lines.join('\n'), duration: 12_000 })
+    } else {
+      toast.error(headline, { description: lines.join('\n'), duration: 18_000 })
+    }
+    setOpen(false)
+  }
+
   const actions: Action[] = [
     { id: 'scan-pause', label: 'Pause scanner', hint: 'Stop opening new positions', perform: () => callScannerControl('pause') },
     { id: 'scan-resume', label: 'Resume scanner', hint: 'Continue background loop', perform: () => callScannerControl('resume') },
     { id: 'grid-preview', label: 'Preview grid winner', hint: 'Show top cell diff (no write)', perform: () => previewGrid() },
     { id: 'grid-rollback', label: 'Rollback grid params', hint: 'Restore the most recent param-backup', perform: rollbackGridLatest },
+    { id: 'smoke-test', label: 'Run smoke test', hint: 'health + deep + db-timing + scanner peek', perform: runSmokeTest },
     { id: 'refresh', label: 'Refresh all data', hint: 'Re-query every endpoint', perform: refreshAll },
     { id: 'motion', label: 'Toggle reduced motion', hint: 'Animation accessibility', perform: toggleReducedMotion },
   ]

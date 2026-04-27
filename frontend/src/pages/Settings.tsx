@@ -3,7 +3,7 @@ import NumberFlow from '@number-flow/react'
 import { api } from '@/api/client'
 import { Card } from '@/components/Card'
 import { AuroraBackground } from '@/components/AuroraBackground'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { isSoundEnabled, setSoundEnabled } from '@/lib/sound'
 
 export default function Settings() {
@@ -103,9 +103,19 @@ export default function Settings() {
           </div>
         </Card>
 
+        {/* ─── Recommendations — heuristic next-step suggestions ─ */}
+        <Card variant="raised" className="p-6 lg:col-span-2">
+          <RecommendationsBlock />
+        </Card>
+
         {/* ─── External services (Logfire / Sentry / Modal) ── */}
         <Card variant="raised" className="p-6 lg:col-span-2">
           <ExternalServicesBlock />
+        </Card>
+
+        {/* ─── Modal cron schedule preview ───────────────────── */}
+        <Card variant="raised" className="p-6 lg:col-span-2">
+          <CronScheduleBlock />
         </Card>
 
         {/* ─── Rate limit (API credits) ──────────────────────── */}
@@ -168,6 +178,158 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
       <span className="text-caption text-ink-600">{label}</span>
       <span className="num text-body">{value}</span>
+    </div>
+  )
+}
+
+// ─── Modal cron preview — next fire of "0 3 * * 0" ─────────────────
+function CronScheduleBlock() {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30_000)
+    return () => clearInterval(t)
+  }, [])
+
+  // "0 3 * * 0" = Sunday 03:00 UTC
+  const next = useMemo(() => {
+    const r = new Date(now)
+    r.setUTCSeconds(0, 0)
+    r.setUTCMinutes(0)
+    r.setUTCHours(3)
+    let daysUntilSunday = (7 - r.getUTCDay()) % 7
+    if (daysUntilSunday === 0 && now.getTime() >= r.getTime()) {
+      daysUntilSunday = 7
+    }
+    r.setUTCDate(r.getUTCDate() + daysUntilSunday)
+    return r
+  }, [now])
+
+  const deltaMs = next.getTime() - now.getTime()
+  const days = Math.floor(deltaMs / (24 * 3600_000))
+  const hours = Math.floor((deltaMs % (24 * 3600_000)) / 3600_000)
+  const mins = Math.floor((deltaMs % 3600_000) / 60_000)
+
+  const localStr = next.toLocaleString(undefined, {
+    weekday: 'long', year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  })
+
+  return (
+    <div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 className="text-title font-display">Modal weekly retrain</h3>
+          <p className="text-caption text-ink-600 mt-1">
+            Next fire computed locally from the cron expression baked into <span className="font-mono">tools/modal_train.py</span>.
+            Modal triggers <span className="font-mono">run()</span> at this moment without your laptop being on.
+          </p>
+        </div>
+        <span className="pill" style={{ fontSize: 11 }}>0 3 * * 0</span>
+      </div>
+
+      <div className="mt-4 grid sm:grid-cols-3 gap-3">
+        <div className="surface p-3 rounded-xl">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Next fire (your time)</div>
+          <div className="num text-body mt-0.5 text-ink-900">{localStr}</div>
+        </div>
+        <div className="surface p-3 rounded-xl">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Next fire (UTC)</div>
+          <div className="num text-body mt-0.5 text-ink-900">
+            {next.toISOString().replace('T', ' ').slice(0, 16)} UTC
+          </div>
+        </div>
+        <div className="surface p-3 rounded-xl">
+          <div className="text-micro uppercase tracking-wider text-ink-600">Time until</div>
+          <div className="num text-body mt-0.5 text-gold-400">
+            {days > 0 ? `${days}d ` : ''}{hours}h {mins}m
+          </div>
+        </div>
+      </div>
+
+      <p className="text-micro text-ink-600 mt-3">
+        Change cadence: edit <span className="font-mono">tools/modal_train.py</span> →
+        <span className="font-mono"> schedule=modal.Cron("0 3 * * *")</span> for daily, then
+        <span className="font-mono"> .venv/Scripts/modal deploy tools/modal_train.py</span>.
+      </p>
+    </div>
+  )
+}
+
+// ─── Recommendations — heuristic next-step suggestions ──────────────
+function RecommendationsBlock() {
+  const { data } = useQuery({
+    queryKey: ['recommendations'],
+    queryFn: api.recommendations,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+
+  const sevToTone = (sev: string) =>
+    sev === 'error' ? 'pill-bear' : sev === 'warn' ? 'pill border-gold-500/30 bg-gold-500/[0.08] text-gold-400' : 'pill'
+
+  if (!data) {
+    return (
+      <div>
+        <h3 className="text-title font-display">Recommendations</h3>
+        <p className="text-caption text-ink-600 mt-2">Loading…</p>
+      </div>
+    )
+  }
+
+  if (data.count === 0) {
+    return (
+      <div>
+        <h3 className="text-title font-display">Recommendations</h3>
+        <p className="text-caption text-ink-600 mt-2 flex items-center gap-2">
+          <span className="pill pill-bull" style={{ fontSize: 11 }}>ALL CLEAR</span>
+          Nothing flagged — every soft-check passed.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-title font-display">Recommendations</h3>
+        <div className="flex items-center gap-2 text-micro uppercase tracking-wider">
+          {data.by_severity.error > 0 && (
+            <span className="pill pill-bear" style={{ fontSize: 9 }}>{data.by_severity.error} ERR</span>
+          )}
+          {data.by_severity.warn > 0 && (
+            <span className="pill border-gold-500/30 bg-gold-500/[0.08] text-gold-400" style={{ fontSize: 9 }}>
+              {data.by_severity.warn} WARN
+            </span>
+          )}
+          {data.by_severity.info > 0 && (
+            <span className="pill" style={{ fontSize: 9 }}>{data.by_severity.info} INFO</span>
+          )}
+        </div>
+      </div>
+      <div className="mt-4 flex flex-col gap-2">
+        {data.items.map((item) => (
+          <div key={item.id} className="surface p-3 rounded-xl flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className={sevToTone(item.severity)} style={{ fontSize: 9 }}>
+                  {item.severity.toUpperCase()}
+                </span>
+                <span className="text-body text-ink-900 font-medium truncate">{item.title}</span>
+              </div>
+              <p className="text-caption text-ink-600 mt-1">{item.detail}</p>
+            </div>
+            {item.action_url && (
+              <button
+                type="button"
+                onClick={() => window.open(item.action_url, '_blank', 'noopener,noreferrer')}
+                className="px-3 py-1.5 rounded-full text-caption border border-white/10 bg-white/[0.03] hover:border-white/25 hover:bg-white/[0.06] transition-all shrink-0"
+              >
+                Open ↗
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

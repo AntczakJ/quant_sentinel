@@ -264,6 +264,237 @@ async def health_deep():
     }
 
 
+@router.get(
+    "/recommendations",
+    summary="Heuristic next-step suggestions (missing tokens, stale models, etc.)",
+)
+async def recommendations():
+    """Walks a small set of soft-checks and returns a list of suggestions
+    sorted by severity. Each item: {title, severity, detail, action_url?}.
+    Severities: 'info' (FYI), 'warn' (should look at), 'error' (broken)."""
+    items: list[dict] = []
+    integ = _integrations_status()
+    env = {k: bool(os.environ.get(k, "").strip()) for k in (
+        "TWELVEDATA_KEY", "ALPHA_VANTAGE_KEY", "FRED_API_KEY", "FINNHUB_KEY",
+        "API_SECRET_KEY",
+    )}
+
+    # --- External integrations ---
+    if not integ["logfire"]["active"]:
+        items.append({
+            "id": "logfire-missing",
+            "severity": "warn",
+            "title": "Logfire not configured",
+            "detail": "Run `.venv/Scripts/logfire auth` then `logfire projects new --default-org quant-sentinel`. Free 10M spans/mc.",
+            "action_url": "https://logfire-eu.pydantic.dev/",
+        })
+    if not integ["sentry"]["active"]:
+        items.append({
+            "id": "sentry-missing",
+            "severity": "warn",
+            "title": "Sentry DSN not set",
+            "detail": "Create a Python project at sentry.io, paste the DSN into .env as SENTRY_DSN. Free 5k events/mc.",
+            "action_url": "https://sentry.io/signup/",
+        })
+    if not integ["modal"]["active"]:
+        items.append({
+            "id": "modal-missing",
+            "severity": "info",
+            "title": "Modal token absent",
+            "detail": "Run `.venv/Scripts/modal token new` to enable cloud GPU offload (weekly retrain).",
+            "action_url": "https://modal.com/",
+        })
+
+    # --- Data provider keys ---
+    if not env["TWELVEDATA_KEY"]:
+        items.append({
+            "id": "twelvedata-missing",
+            "severity": "warn",
+            "title": "TwelveData API key missing",
+            "detail": "Live price + candle source. Without it the scanner falls back to yfinance which has rate caps.",
+        })
+    if not env["FRED_API_KEY"]:
+        items.append({
+            "id": "fred-missing",
+            "severity": "info",
+            "title": "FRED API key missing",
+            "detail": "Macro snapshots (UUP, TLT, VIXY proxies) won't populate without it.",
+        })
+
+    # --- Auth ---
+    if not env["API_SECRET_KEY"]:
+        items.append({
+            "id": "api-secret-missing",
+            "severity": "warn",
+            "title": "API_SECRET_KEY not set",
+            "detail": "Write endpoints (POST/PUT/DELETE) currently accept anonymous calls. Set it in .env to require auth.",
+        })
+
+    # --- Model freshness ---
+    try:
+        files = _model_files()
+        # xgb.pkl + lstm.keras are the live voters; flag if older than 7 days
+        for m in files:
+            if m["name"] in ("xgb.pkl", "lstm.keras") and m["age_hours"] > 24 * 7:
+                items.append({
+                    "id": f"model-stale-{m['name']}",
+                    "severity": "info",
+                    "title": f"{m['name']} is {int(m['age_hours']/24)} days old",
+                    "detail": "Consider a retrain. Modal cron fires Sun 03:00 UTC if configured; otherwise run `python train_all.py` locally.",
+                })
+    except Exception:
+        pass
+
+    # --- Disk pressure ---
+    try:
+        disk = _disk_info()
+        free_gb = float(disk.get("free_gb") or 0)
+        if 0 < free_gb < 5:
+            items.append({
+                "id": "disk-low",
+                "severity": "error",
+                "title": f"Disk free {free_gb} GB",
+                "detail": "Drive is critically full. Clean data/backups (auto-pruned but check), node_modules, dist/.",
+            })
+        elif 0 < free_gb < 20:
+            items.append({
+                "id": "disk-warn",
+                "severity": "warn",
+                "title": f"Disk free {free_gb} GB",
+                "detail": "Below 20 GB — consider cleaning data/backups and old training artifacts.",
+            })
+    except Exception:
+        pass
+
+    # --- Scanner pause flag ---
+    try:
+        pause_flag = ROOT / "data" / "SCANNER_PAUSED"
+        if pause_flag.exists():
+            import time as _time
+            age_h = (_time.time() - pause_flag.stat().st_mtime) / 3600
+            sev = "error" if age_h > 24 else "warn"
+            items.append({
+                "id": "scanner-paused",
+                "severity": sev,
+                "title": f"Scanner paused for {age_h:.1f}h",
+                "detail": "Background scanner is skipping new entries. Resume via Cmd+K → 'Resume scanner' or delete data/SCANNER_PAUSED.",
+            })
+    except Exception:
+        pass
+
+    # --- Open trades sanity ---
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        row = db._query_one(
+            "SELECT COUNT(*) FROM trades WHERE status IN ('OPEN','PROPOSED')"
+        )
+        n_open = int(row[0] or 0) if row else 0
+        if n_open >= 5:
+            items.append({
+                "id": "open-trades-many",
+                "severity": "warn",
+                "title": f"{n_open} open positions",
+                "detail": "Multiple concurrent positions — check risk_manager halt thresholds didn't get bypassed.",
+            })
+    except Exception:
+        pass
+
+    # --- Sort by severity ---
+    sev_rank = {"error": 0, "warn": 1, "info": 2}
+    items.sort(key=lambda x: sev_rank.get(x.get("severity"), 99))
+    return {
+        "count": len(items),
+        "by_severity": {
+            "error": sum(1 for i in items if i["severity"] == "error"),
+            "warn":  sum(1 for i in items if i["severity"] == "warn"),
+            "info":  sum(1 for i in items if i["severity"] == "info"),
+        },
+        "items": items,
+    }
+
+
+@router.get("/db-timing", summary="Latency probe — common SELECT queries on sentinel.db")
+async def db_timing(repeats: int = 5):
+    """Time a handful of representative SELECTs and return per-query
+    median / min / max in milliseconds. Useful for catching SQLite
+    latency creep (lock contention, WAL bloat, missing index regression)
+    before it shows up as a scanner-cycle slowdown."""
+    import time as _t
+    from src.core.database import NewsDB
+    db = NewsDB()
+    queries = {
+        "select_1": "SELECT 1",
+        "count_trades": "SELECT COUNT(*) FROM trades",
+        "count_open_trades": "SELECT COUNT(*) FROM trades WHERE status IN ('OPEN','PROPOSED')",
+        "count_resolved_today": (
+            "SELECT COUNT(*) FROM trades "
+            "WHERE status IN ('WIN','LOSS','PROFIT','LOSE','CLOSED') "
+            "AND timestamp >= datetime('now','-24 hours')"
+        ),
+        "count_rejections_24h": (
+            "SELECT COUNT(*) FROM rejected_setups "
+            "WHERE timestamp >= datetime('now','-24 hours')"
+        ),
+        "latest_dynamic_params": "SELECT param_name FROM dynamic_params ORDER BY last_updated DESC LIMIT 5",
+        "scanner_signals_recent": (
+            "SELECT id FROM scanner_signals ORDER BY id DESC LIMIT 50"
+        ),
+        "ml_predictions_recent": (
+            "SELECT id FROM ml_predictions ORDER BY id DESC LIMIT 50"
+        ),
+    }
+
+    def _run(sql: str) -> tuple[float, int]:
+        ts = []
+        rows_seen = 0
+        for _ in range(max(1, repeats)):
+            t0 = _t.perf_counter()
+            try:
+                rows = db._query(sql)
+                rows_seen = len(rows) if rows else 0
+            except Exception:
+                rows_seen = -1
+                ts.append(float("nan"))
+                continue
+            ts.append((_t.perf_counter() - t0) * 1000.0)
+        return ts, rows_seen
+
+    out: dict[str, dict] = {}
+    all_medians: list[float] = []
+    for name, sql in queries.items():
+        ts, n = _run(sql)
+        clean = [x for x in ts if x == x]  # drop NaN
+        if not clean:
+            out[name] = {"error": "all probes failed", "sql": sql}
+            continue
+        clean_sorted = sorted(clean)
+        median = clean_sorted[len(clean_sorted) // 2]
+        out[name] = {
+            "median_ms": round(median, 3),
+            "min_ms":    round(min(clean), 3),
+            "max_ms":    round(max(clean), 3),
+            "rows":      n,
+            "repeats":   len(clean),
+        }
+        all_medians.append(median)
+
+    # Aggregate health verdict
+    summary = {
+        "total_queries": len(queries),
+        "ok_queries":    len(all_medians),
+        "median_of_medians_ms": round(sorted(all_medians)[len(all_medians) // 2], 3) if all_medians else None,
+        "max_median_ms":        round(max(all_medians), 3) if all_medians else None,
+        "verdict": (
+            "fast"     if all_medians and max(all_medians) < 5
+            else "ok"  if all_medians and max(all_medians) < 50
+            else "slow" if all_medians and max(all_medians) < 250
+            else "concerning"
+        ),
+    }
+    return {"queries": out, "summary": summary}
+
+
 @router.get("/db-stats", summary="Counts + file size for sentinel.db tables")
 async def db_stats():
     """Quick counts of the tables the operator usually wants to see —
