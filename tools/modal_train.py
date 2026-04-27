@@ -103,7 +103,10 @@ image = (
         "nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04",
         add_python="3.13",
     )
-    .apt_install("git", "build-essential")
+    # tzdata is required for `zoneinfo.ZoneInfo("America/New_York")` —
+    # without it yfinance fails immediately with "No time zone found
+    # with key America/New_York" on a fresh CUDA Ubuntu base.
+    .apt_install("git", "build-essential", "tzdata")
     # Slim install — only what `train_all.py` actually imports.
     # First Modal deploy attempt (with torch + transformers +
     # sentence-transformers + treelite) hit "image build terminated due
