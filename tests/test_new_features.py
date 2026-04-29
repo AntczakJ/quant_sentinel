@@ -1,10 +1,46 @@
 #!/usr/bin/env python3
 """
 test_new_features.py — testy nowych komponentow (Double DQN, backtest, scaler).
+
+2026-04-29: pin DATABASE_URL to tempfile BEFORE any database import. The
+module body runs at pytest collection time (before fixtures), and was
+inserting LONG@2350 trades into production sentinel.db each time pytest
+ran. Same class of bug as the test_local_db.py fix shipped today.
+See `docs/strategy/2026-04-29_pretraining_master.md`.
 """
 import sys
 import os
+import atexit
+import tempfile
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Isolated tempfile DB so module-level test code doesn't pollute prod.
+_tmp_db = tempfile.NamedTemporaryFile(prefix="qs_test_new_features_", suffix=".db", delete=False)
+_tmp_db.close()
+os.environ['DATABASE_URL'] = _tmp_db.name
+os.environ.pop('DATABASE_TOKEN', None)
+
+
+def _cleanup_tmp_db():
+    """Best-effort cleanup. Windows may hold the SQLite file open via the
+    NewsDB connection; OS sweeps %TEMP% on its own otherwise."""
+    try:
+        if os.path.exists(_tmp_db.name):
+            os.unlink(_tmp_db.name)
+    except (OSError, PermissionError):
+        pass
+
+
+atexit.register(_cleanup_tmp_db)
+
+# Force database connection reinit — see test_local_db.py for the same fix.
+# Otherwise an earlier test's import caches _conn against prod sentinel.db.
+try:
+    from src.core.database import _reinit_connection_for_test
+    _reinit_connection_for_test()
+except (ImportError, AttributeError):
+    pass
 
 import numpy as np
 import pandas as pd

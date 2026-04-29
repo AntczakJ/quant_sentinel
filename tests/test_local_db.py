@@ -1,14 +1,48 @@
-"""Test lokalnej bazy danych SQLite — sprawdza czy wszystko dziala."""
+"""Test lokalnej bazy danych SQLite — sprawdza czy wszystko dziala.
+
+2026-04-29 — switched from data/sentinel.db (PRODUCTION!) to a tempfile.
+Earlier wiring forced DATABASE_URL='data/sentinel.db' at module import,
+and pytest's auto-collection ran the script-level body each time the
+suite ran, inserting synthetic LONG@2350 trades into production.
+Eight phantoms (ids 203-210) shipped that way before the bug was
+caught and they were marked CANCELED. See
+`docs/strategy/2026-04-29_pretraining_master.md` for the full audit.
+"""
 import os
 import sys
+import atexit
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Wymus lokalna baze PRZED importem database
-os.environ['DATABASE_URL'] = 'data/sentinel.db'
+# Use an isolated tempfile DB so module-level test code doesn't pollute
+# production sentinel.db. Cleaned up at process exit.
+_tmp_db = tempfile.NamedTemporaryFile(prefix="qs_test_local_db_", suffix=".db", delete=False)
+_tmp_db.close()
+os.environ['DATABASE_URL'] = _tmp_db.name
 os.environ.pop('DATABASE_TOKEN', None)
+def _cleanup_tmp_db():
+    """Best-effort cleanup. Windows may hold the SQLite file open via the
+    NewsDB connection; in that case the OS will sweep %TEMP% later."""
+    try:
+        if os.path.exists(_tmp_db.name):
+            os.unlink(_tmp_db.name)
+    except (OSError, PermissionError):
+        pass
 
-# Reload database module z nowym URL
+atexit.register(_cleanup_tmp_db)
+
+# CRITICAL: src.core.database may have been imported by an earlier test file
+# during the same pytest collection pass — its module-level `_conn` would be
+# cached against the default data/sentinel.db. Force a reinit so log_trade()
+# below writes to our tempfile, not prod.
+try:
+    from src.core.database import _reinit_connection_for_test
+    _reinit_connection_for_test()
+except (ImportError, AttributeError):
+    pass
+
+# Reload database module z nowym URL (legacy guard, kept for safety)
 if 'src.database' in sys.modules:
     del sys.modules['src.database']
 

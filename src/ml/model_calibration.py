@@ -197,6 +197,15 @@ class ModelCalibrator:
         """
         Calibrate a raw prediction using Platt scaling.
 
+        Kill-switch (2026-04-29): when env DISABLE_CALIBRATION=1, return raw
+        unchanged — both the fitted Platt path AND the uncalibrated 20%
+        shrinkage path are bypassed. Reason: audit `2026-04-29_audit_4_label_ensemble.md`
+        revealed Platt was fit on TRADE outcomes (WIN/LOSS) regressed against
+        P(LONG-wins) raw outputs from a mix of LONG and SHORT trades —
+        meaningless correlation produced negative `a`, mathematically inverting
+        every signal that hit the calibrator. Until per-direction calibration
+        is rebuilt, raw passes through.
+
         If the model HAS a fitted scaler → apply it (well-behaved path).
         If the model has NO fitted scaler → apply mild shrinkage toward 0.5
         (the "uncalibrated penalty"). Uncalibrated raw scores are often
@@ -205,6 +214,8 @@ class ModelCalibrator:
         Shrinking 20% toward neutral damps their voting power in the
         ensemble until they earn calibration with enough history.
         """
+        if os.environ.get("DISABLE_CALIBRATION") == "1":
+            return float(raw_prediction)
         if model_name in self._scalers and self._scalers[model_name].fitted:
             return self._scalers[model_name].transform(raw_prediction)
         # Uncalibrated penalty: shrink toward 0.5

@@ -57,16 +57,32 @@ class TestPlattScaler:
 class TestModelCalibrator:
     """Test calibrator singleton."""
 
-    def test_calibrate_unknown_model_applies_shrinkage(self):
+    def test_calibrate_unknown_model_applies_shrinkage(self, monkeypatch):
         """Uncalibrated models get shrunk 20% toward 0.5 (Platt-scaling
         penalty). Uncalibrated raw LSTM was routinely overconfident
         (outputs 0.97 when live accuracy ~0.55), so the penalty damps
         voting power until the model earns calibration with enough
-        history. 0.75 -> 0.5 + (0.75-0.5)*0.8 = 0.70."""
+        history. 0.75 -> 0.5 + (0.75-0.5)*0.8 = 0.70.
+
+        2026-04-29: must explicitly clear DISABLE_CALIBRATION (kill-switch
+        added in same audit) to test the shrinkage path itself."""
+        monkeypatch.delenv("DISABLE_CALIBRATION", raising=False)
         from src.ml.model_calibration import get_calibrator
         cal = get_calibrator()
         result = cal.calibrate("nonexistent", 0.75)
         assert abs(result - 0.70) < 1e-6, f"Expected 0.70, got {result}"
+
+    def test_calibrate_disabled_returns_raw(self, monkeypatch):
+        """With DISABLE_CALIBRATION=1 BOTH paths (fitted Platt + 20%
+        uncalibrated shrinkage) are bypassed and raw passes through
+        unchanged. Audit kill-switch — see
+        docs/strategy/2026-04-29_pretraining_master.md P0.1."""
+        monkeypatch.setenv("DISABLE_CALIBRATION", "1")
+        from src.ml.model_calibration import get_calibrator
+        cal = get_calibrator()
+        for raw in (0.10, 0.30, 0.50, 0.75, 0.90):
+            assert abs(cal.calibrate("lstm", raw) - raw) < 1e-9
+            assert abs(cal.calibrate("nonexistent", raw) - raw) < 1e-9
 
     def test_get_status(self):
         from src.ml.model_calibration import get_calibrator
