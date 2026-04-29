@@ -4,6 +4,124 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-30 (~01:00) — Inspection + preflight + audit polish (waiting for Phase 8)
+
+While Phase 8 (overnight retrain) cooks, autonomous push 3 — close
+the remaining low-hanging audit items + ship operational tooling for
+the morning return.
+
+#### `scripts/inspect_phase8_retrain.py` — overnight retrain summarizer
+
+Parses `logs/phase8_retrain.log`, regex-extracts per-voter walk-forward
+accuracies, DQN reward, Bayesian opt params, holdout backtest stats.
+Compares against audit-derived thresholds:
+
+  - voter accuracy: [0.50, 0.70]   (>0.70 = leak suspected)
+  - DQN reward: > 0
+  - PF: > 1.0
+  - max DD: > -10%
+
+Plus presence checks for required artifacts. Exit 0 = green / 1 = red /
+2 = incomplete. Tested mid-Phase-8: correctly caught XGB 0.629 (OK),
+Attention 0.575 (OK), LSTM 0.702 (RED — see below).
+
+#### LSTM 0.702 finding + auto-purge fix
+
+Mid-Phase-8 inspection caught LSTM walk-forward acc 0.702 — borderline
+above the 0.70 red-flag threshold. Root cause: `WF_PURGE_BARS` defaults
+to 5 (matches binary target's 5-bar lookahead) but triple_barrier with
+`max_holding=12` needs purge=12. Last (12-5)=7 train bars had labels
+depending on prices in the test slice.
+
+XGB picked up only +0.05 lift from this — its stronger regularization
+(depth=6, reg_alpha=0.1, reg_lambda=1.0) limits overfitting on the
+leaky tail. LSTM with 50 epochs + EarlyStopping picked it up.
+
+Fix: `train_all.py` now auto-extracts `max_holding` from the label
+parquet filename pattern `..._max{N}.parquet` and sets
+`WF_PURGE_BARS={N}` automatically when `--target=triple_barrier`.
+Caller can still override via env var.
+
+Phase 8 currently running already loaded train_all.py with default
+purge=5 — its LSTM result is contaminated. Re-run LSTM after Phase 8
+with the fix active. `tests/test_train_all_auto_purge.py` (8 cases)
+locks regex + integration behavior so a future filename convention
+change doesn't silently re-introduce the leak.
+
+#### `scripts/preflight_api_restart.py` — 12-check sanity gate
+
+Run BEFORE every `uvicorn ... start`, especially after a fresh
+retrain. Catches the bug classes that bit us today:
+
+  1. DISABLE_CALIBRATION=1 set in env or .env
+  2. calibration_params.pkl all entries fitted=False
+  3. models/feature_cols.json present + dim matches FEATURE_COLS
+  4. xgb.pkl, lstm.keras, attention.keras + scalers present
+  5. Treelite DLL fresher than xgb.pkl (else stale-DLL guard refuses)
+  6. _load_xgb / _load_lstm / _load_attention all return non-None
+  7. Inference smoke (xgb + lstm) returns finite [0, 1]
+  8. Port 8000 free
+  9. SCANNER_PAUSED flag check
+  10. No phantom OPEN trades with entry < 1000
+  11. Voter weights sum > 0.5 (else ensemble dead via floor mute)
+  12. .env DISABLE_TRAILING + MAX_LOT_CAP set
+
+Exit 0 = green; 1 = at least one failure (DO NOT start API).
+
+#### `scripts/run_walk_forward.py --retrain` flag (P1.12)
+
+Audit P1.12: walk-forward harness was passing `train_runner=None`,
+making it a regime-stability test of static models, NOT walk-forward.
+Now opt-in via `--retrain` flag — each window's `_xgb_only_train_runner`:
+reads train slice from warehouse, joins USDJPY for macro features,
+loads triple-barrier labels (auto-set WF_PURGE_BARS), calls
+`ml.train_xgb` with precomputed_target. XGB-only (LSTM/Attention
+would 30x runtime). Default mode stays --static.
+
+Override target via env: `QUANT_WF_TARGET=binary` for legacy
+compute_target. Default is triple_barrier when labels parquet exists.
+
+#### `src/ml/decompose_model.py` — full delete (P2.5 final)
+
+Voter was already dropped from production fusion in Batch C.1 (default
+weights init + track-record loop). The .py file was kept as inert
+dead code on the basis of "no runtime imports" — but
+`tests/test_compute.py::TestDecomposition` still imported it. Now
+fully gone:
+
+  - src/ml/decompose_model.py: deleted (309 lines)
+  - tests/test_compute.py::TestDecomposition: removed (2 tests)
+  - test_compute.py: kept the deprecation comment as tombstone
+
+The module's centered-convolution leak (`np.convolve(mode='same')`)
+is now physically impossible to reintroduce. Inference stub at
+ensemble_models.py:983 left as NEUTRAL return so DB writers don't break.
+
+#### `LSTM_BULLISH_ONLY` env-overridable (P2.7)
+
+Was hardcoded `True` based on 2026-04-16 finding. That finding was
+on the PRE-cleaning-pipeline LSTM with multiple data leaks. Post-
+Phase-8 retrain on warehouse + triple_barrier with all leaks closed,
+the bearish anti-signal may not persist. Plus LSTM is currently
+weight-floored anyway (0.05 in DB → muted).
+
+Now reads `LSTM_BULLISH_ONLY` env, default "1" (preserves current
+behavior). Flip to "0" via .env after Phase 8 + voter correlation
+re-run validates new LSTM is bidirectionally sane.
+
+#### Master audit closure status
+
+19 of 22 findings closed across the day (86%). Remaining 3:
+
+  - P1.6/P1.7 calibration redesign (DEFER until post-Phase-8 + 1 day live)
+  - P1.10/P1.11 voter diversity (RESEARCH — re-run correlation post-retrain)
+  - P2.4 confidence multipliers (DEFER until calibration redesigned)
+  - P2.6 DeepTrans drop/shrink (DEFER until post-Phase-8 inspection)
+
+All remaining items either need Phase 8 results to act on, OR are
+low-priority polish that has no leverage until calibration is
+redesigned.
+
 ### 2026-04-30 (early morning) — Phases 4 + 5 — canonical triple-barrier + train_all --target
 
 Janek came back online and asked to push through the rest of the
