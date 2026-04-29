@@ -1225,13 +1225,20 @@ def get_ensemble_prediction(
     models_short = 0
     models_neutral = 0
 
-    # LSTM directional filter: 2026-04-16 analysis showed the current
-    # sweep-winner has 100% directional accuracy on bullish predictions
-    # at 1h+ horizons but 0-14% on bearish (anti-signal). Until rollback
-    # or retrain, accept ONLY bullish LSTM calls — skip bearish. This
-    # is gated to the 'lstm' slot only, not lstm_prev (which is the
-    # reliable pre-swap model).
-    LSTM_BULLISH_ONLY = True
+    # LSTM directional filter (P2.7 audit 2026-04-29):
+    # The 2026-04-16 finding "sweep-winner LSTM has 100% bullish acc, 0-14%
+    # bearish" was on the PRE-cleaning-pipeline model with multiple data
+    # leaks (decompose centered convolution, scaler fit-on-full,
+    # features_v2 ffill +30min). After Phase 8 retrain on warehouse +
+    # triple_barrier target with all leaks closed, the bearish-anti-signal
+    # may not persist.
+    #
+    # Currently LSTM is also weight-floored (0.05 in DB → muted by
+    # MIN_ACTIVE_WEIGHT before this filter even runs), so the flag is
+    # inert in current ensemble fusion. Kept ON by default to preserve
+    # behavior; flip via env LSTM_BULLISH_ONLY=0 after Phase 8 + voter
+    # correlation re-run validates new LSTM is bidirectionally sane.
+    LSTM_BULLISH_ONLY = os.environ.get("LSTM_BULLISH_ONLY", "1") == "1"
 
     for model_name, weight in regime_weights.items():
         if model_name in results["predictions"]:
