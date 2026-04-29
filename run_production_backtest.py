@@ -727,7 +727,7 @@ async def _run_backtest(args) -> dict:
         provider = HistoricalProvider.from_warehouse(
             symbol=args.symbol,
             symbol_dir=symbol_dir,
-            intervals=("5m", "15m", "1h", "4h"),
+            intervals=("5m", "15m", "30m", "1h", "4h"),
         )
     else:
         print(f"[backtest] Loading {args.yf} ({args.days} days of 5m/15m/1h/4h)...", flush=True)

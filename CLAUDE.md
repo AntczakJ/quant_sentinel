@@ -152,6 +152,31 @@ isolation.py:enforce_isolation()` swaps DATABASE_URL before any
 `src.*` import. **Grid and backtest scripts must call
 enforce_isolation() FIRST** or they'll write to production DB.
 
+## Backtest real-time-leak bug family (discovered 2026-04-29)
+Several scanner filters use real wall-clock or live API state instead
+of the simulated bar time. One was a hard-blocker (now fixed), three
+remain as soft-bias. Audit pattern when touching scanner:
+`grep -nE "datetime\.now|_persistent_cache|get_current_price" src/trading/`.
+
+- **FIXED:** `scanner.py:243` price-sanity check imported the
+  FastAPI persistent_cache and rejected setups when historical price
+  diverged from live ticker by >20%. Hard-blocked all backtest cycles
+  pre-2025-09-26 (where XAU was below 80% of $4720). Now gated on
+  `QUANT_BACKTEST_MODE` env var.
+- **Still soft-biased:** `scanner.py:702` hourly_stats uses
+  `datetime.now().hour` not simulated hour.
+- **Still soft-biased:** `news.py` event_guard tier checks use
+  `datetime.now(timezone.utc)`, blocking sim cycles when real-time
+  imminent events fall in window.
+- **Still soft-biased:** `smc_engine.py:203` `get_macro_quotes()`
+  fetches LIVE UUP/TLT/VIXY → `macro_regime` reflects today's regime,
+  not historical. Affects `B7 short_in_bull_regime`, `toxic_combo`,
+  `macro` factor scoring across the entire backtest horizon.
+
+The 2026-04-27 walk-forward 2-yr "regime-narrow strategy" finding
+(zero trades pre-2025-09 in 23/32 windows) is **invalid** — it was
+the price-sanity hard-block, not strategy regime narrowness.
+
 ## Recent state (as of 2026-04-26 — sweep + lot-sizing rebuild + frontend v3)
 
 ### Tonight's findings + commits (bbf8702, c217ad9, fcc412d)

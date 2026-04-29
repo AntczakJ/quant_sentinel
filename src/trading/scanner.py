@@ -244,19 +244,27 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     if current_price <= 0:
         logger.debug(f"🔍 [MTF] {tf}: cena <= 0 — pomijam")
         return None
-    try:
-        from api.routers.market import _persistent_cache as _mkt_pc
-        ref = float(_mkt_pc.get("ticker", {}).get("price", 0))
-        if ref > 1000:
-            deviation = abs(current_price - ref) / ref
-            if deviation > 0.20:
-                logger.warning(
-                    f"🔍 [MTF] {tf}: Price sanity FAIL: SMC=${current_price:.2f} vs "
-                    f"ticker=${ref:.2f} (Δ{deviation:.0%}) — pomijam"
-                )
-                return None
-    except (ImportError, AttributeError, TypeError, ValueError):
-        pass  # persistent_cache not available outside FastAPI context
+    # Skip live-ticker sanity in backtest: persistent_cache holds real-time
+    # XAU price (today $4720), but simulated bars walk historical prices
+    # ($2400 in 2024-08). Without this guard the check rejected 100% of
+    # setups whenever |sim_price - live_price| / live_price > 20% — i.e.
+    # the entire pre-2025-09 horizon, producing the spurious "scanner has
+    # zero edge in 2024" walk-forward result.
+    import os as _os_sanity
+    if not _os_sanity.environ.get("QUANT_BACKTEST_MODE"):
+        try:
+            from api.routers.market import _persistent_cache as _mkt_pc
+            ref = float(_mkt_pc.get("ticker", {}).get("price", 0))
+            if ref > 1000:
+                deviation = abs(current_price - ref) / ref
+                if deviation > 0.20:
+                    logger.warning(
+                        f"🔍 [MTF] {tf}: Price sanity FAIL: SMC=${current_price:.2f} vs "
+                        f"ticker=${ref:.2f} (Δ{deviation:.0%}) — pomijam"
+                    )
+                    return None
+        except (ImportError, AttributeError, TypeError, ValueError):
+            pass  # persistent_cache not available outside FastAPI context
     current_structure = analysis.get('structure', 'Stable')
     current_fvg = analysis.get('fvg')
     current_fvg_type = analysis.get('fvg_type')
