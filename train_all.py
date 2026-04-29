@@ -716,6 +716,20 @@ def main():
         n_total = len(precomputed_target)
         print(f"   target=triple_barrier ({args.target_direction}): "
               f"{n_pos}/{n_total} positives ({n_pos/n_total*100:.1f}% TP rate)")
+
+        # Auto-set walk-forward purge to match the parquet's max_holding
+        # (P2.2 + Phase 8 LSTM 0.702 finding). Filename pattern is
+        # ..._max{N}.parquet — extract N. Without this, default WF_PURGE_BARS=5
+        # leaves max_holding-5 bars of label leak in train (LSTM picked it
+        # up as 0.702 walk-forward acc on Phase 8 — borderline above the
+        # red-flag threshold). Caller can still override via env var.
+        import re as _re
+        m = _re.search(r"_max(\d+)", labels_path.name)
+        if m and "WF_PURGE_BARS" not in os.environ:
+            target_purge = int(m.group(1))
+            os.environ["WF_PURGE_BARS"] = str(target_purge)
+            print(f"   📐 Auto-set WF_PURGE_BARS={target_purge} (from "
+                  f"max_holding in label parquet) — prevents lookahead leak in WF folds")
     else:
         print(f"\n📋 Target: binary (legacy compute_target — flagged tautological by audit)")
 
