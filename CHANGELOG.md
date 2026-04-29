@@ -4,6 +4,107 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-29 (evening) — Pre-training audit (NO-GO) + Batch A hotfixes
+
+Four parallel read-only audit agents launched before authorizing any
+retraining. All four reached NO-GO independently. 15 distinct findings
+ranked P0/P1/P2/P3. Batch A (P0 hotfixes) shipped same evening; Batches
+B-E queued for following sessions.
+
+#### Added — `docs/strategy/2026-04-29_audit_{1..4}_*.md` + `_pretraining_master.md`
+
+Five-doc audit set saved to `docs/strategy/`:
+
+- `audit_1_data_leaks.md` — 6 CRITICAL data-leak paths in features
+  (centered convolution in Decompose; scaler fit-on-full-set in all 4
+  neural voters; multi-TF and USDJPY ffill leaking +30 min into v2_xgb
+  which is LIVE @0.10).
+- `audit_2_architecture.md` — capacity vs data ratio, voter diversity
+  (4 ML voters share the same 34-feature vector — different inductive
+  biases on identical info don't decorrelate).
+- `audit_3_reprodeploy.md` — `train_all.py:117-127` fetches yfinance
+  `GC=F` (Gold Futures) for training; live inference uses TwelveData
+  XAU/USD (Spot Gold). $65-75 price gap. Plus zero determinism seeds
+  in `train_all.py` and no stale-dll detection for Treelite XGB.
+- `audit_4_label_ensemble.md` — Platt calibration parameters
+  mathematically inverting signals (`a≈-0.17` for all 3 calibrated
+  voters); `update_ensemble_weights` defined but never called →
+  voter weights frozen at hand-mutated values; the "7-voter ensemble"
+  is in fact 3 voters because the other four sit at floor weight 0.05
+  below the 0.10 active threshold; just-shipped triple-barrier labels
+  not wired anywhere.
+- `pretraining_master.md` — synthesis of all four with severity-
+  ranked deduplication, fix order Batches A–E, pre-training go/no-go
+  checklist.
+
+#### Fixed — `src/ml/model_calibration.py` — `DISABLE_CALIBRATION` env flag (P0.1)
+
+`ModelCalibrator.calibrate` early-returns the raw prediction unchanged
+when `DISABLE_CALIBRATION=1`, bypassing both the fitted-Platt path
+AND the 20% uncalibrated-shrinkage path. Set in `.env`. Reversible.
+
+Pre-existing `models/calibration_params.pkl` backed up to
+`models/calibration_params_2026-04-29_inverted.pkl.bak` and overwritten
+with all `fitted: False` (defense-in-depth — env flag is primary).
+
+The audit verified by loading the .pkl directly and simulating the
+mapping across raw 0.10..0.90: output stuck in 0.36..0.40 monotonic
+DECREASING in raw, i.e. high raw → low calibrated → ensemble votes
+SHORT regardless of model output. Live since the calibration was last
+fit; explains why live cohort PF 0.83, return -1.08% pattern resembles
+near-random with slight negative drift.
+
+#### Fixed — `tests/test_local_db.py`, `tests/test_new_features.py` — pytest no longer pollutes `data/sentinel.db`
+
+While preparing Batch A: discovered 14 phantom trades (ids 203-216) in
+production `sentinel.db` with identical entry=$2350 (live XAU is ~$4574).
+Source:
+
+```
+tests/test_local_db.py:8       os.environ['DATABASE_URL']='data/sentinel.db'  ← prod!
+tests/test_local_db.py:63      db.log_trade('LONG', 2350.0, ..., 'TEST', ...)
+tests/test_new_features.py:214 db.log_trade(direction='LONG', price=2350.0, ...)
+```
+
+Both are script-style (no `def test_*`); pytest imports them during
+collection, runs the module body, inserts trades. Each `pytest tests/`
+ran 2 inserts. Fix:
+
+1. Both files now create a per-process tempfile SQLite, set
+   `DATABASE_URL` to it BEFORE any database import.
+2. After setenv they call `_reinit_connection_for_test()` to invalidate
+   any cached module-level `_conn` from earlier test imports — without
+   this, an earlier test's `from src.core.database import NewsDB` would
+   pin `_conn` to prod and our setenv would have no effect.
+3. Best-effort tempfile cleanup on `atexit` (Windows file-lock
+   tolerated).
+4. Phantom trades 203-216 marked `status='CANCELED'` with audit
+   reference in `failure_reason` — prevents API auto-resolver from
+   trying to close them against $4574 live price (which would mint
+   fake $200 instant-TP profits each).
+5. `data/sentinel_backup_2026-04-29_pre_calibration_neutralize.db`
+   snapshotted before any DB mutation (gitignored).
+
+#### Tests
+
+`tests/test_new_modules.py::TestModelCalibrator` gains
+`test_calibrate_disabled_returns_raw` (verifies kill-switch identity
+for both fitted-voter path and unknown-voter path) +
+`test_calibrate_unknown_model_applies_shrinkage` gains a
+`monkeypatch.delenv` to make the existing test env-independent.
+
+Full pytest: **429 passed / 1 skipped** (was 412/1 yesterday). Verified
+`pytest tests/ -q` does NOT increase `sentinel.db` trade count (59 → 59
+after a clean run).
+
+#### Not changed — pending user approval
+
+- API NOT restarted yet. Calibration kill-switch takes effect on next
+  uvicorn reload because the calibrator caches at module import.
+- No retraining. P0.2 (yfinance vs TwelveData training/inference
+  distribution mismatch) and P0.3 (v2_xgb features_v2 ffill leak) are
+  still active and need Batches B + C before any model is touched.
+
 ### 2026-04-29 (late) — sim_time helper + triple-barrier labels + lot-sizing scaffold
 
 Big-batch session: closed the sim-time leak family on the deepest level,
