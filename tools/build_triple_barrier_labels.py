@@ -114,7 +114,11 @@ def build_labels_df(
     # earn" column. mfe/mae available alongside for richer downstream
     # consumption.
     out = pd.DataFrame({
-        "datetime": df["datetime"].values,
+        # Preserve tz info from input — stripping it via `.values` was the
+        # 2026-04-30 join-failure: warehouse df is tz-aware UTC, but
+        # `.values` on a tz-aware Series yields naive numpy datetimes,
+        # so downstream merge_on='datetime' fails with type mismatch.
+        "datetime": df["datetime"].reset_index(drop=True),
         "close": close,
         "atr": atr,
         "label_long": tb_both["label_long"].values,
