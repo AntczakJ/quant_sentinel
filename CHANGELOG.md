@@ -4,6 +4,111 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-30 (early morning) — Phases 4 + 5 — canonical triple-barrier + train_all --target
+
+Janek came back online and asked to push through the rest of the
+sequence (Phase 1 smoke retrain → Phase 4 canonical TB → Phase 5
+consumer wiring → Phase 6 smoke TB → Phase 8 overnight retrain).
+
+#### Phase 1 — Full-data smoke retrain results
+
+`train_all.py --source warehouse --tf 1h --skip-rl --skip-bayes
+--skip-backtest --epochs 1 --seed 42` on 19,508 bars 1h XAU + USDJPY:
+
+- XGB walk-forward accuracy: **0.526** over 5 folds, 13,655 train bars
+- Top features: trend_strength (0.049), volatility (0.041), atr (0.041),
+  vwap_distance_atr (0.040), atr_ratio (0.040)
+- 36 FEATURE_COLS pinned to `models/feature_cols.json`
+- Determinism block kicked in correctly (seed=42)
+
+**THE honest baseline.** Pre-fix Decompose 0.769 / DPformer 0.78-0.80
+were leak-inflated. Anything claiming 0.7+ accuracy after this point
+should be re-investigated.
+
+#### TF determinism seed bug
+
+LSTM crashed in walk-forward fit with "Random ops require a seed
+to be set when determinism is enabled." `train_all.py` sets
+`TF_DETERMINISTIC_OPS=1` at module load, but the `tf.random.set_seed`
+call was gated `if args.seed != 42` — so default runs left TF unseeded.
+Fixed: ALWAYS seed (numpy + python + tf), regardless of override.
+
+#### Phase 4 — Single canonical triple-barrier impl
+
+Two parallel triple-barrier impls existed with **different encodings**
+that would silently break any cross-consumer:
+
+  src/learning/labels/triple_barrier.py    (canonical, encoding -1/0/1,
+                                             integrated with 5+ scripts)
+  tools/build_triple_barrier_labels.py     (mine, Numba JIT, 0/1/2)
+
+Resolution:
+
+1. **Library kept canonical.** `src/learning/labels/triple_barrier.py`
+   now has a Numba-JIT inner kernel (~60x speedup on 100k+ rows). Public
+   API unchanged. Encoding stays -1/0/1. All 12 existing label tests pass.
+
+2. **CLI rewritten as thin wrapper.** `tools/build_triple_barrier_labels.py`
+   delegates math to the library. Computes ATR (Wilder 14-period) since
+   library expects an `atr` column, then calls
+   `triple_barrier_labels(direction='both')` + `r_multiple_labels`.
+   Output schema:
+     datetime, close, atr,
+     label_long, bars_to_exit_long, exit_price_long,
+     r_long, r_mfe_long, r_mae_long,
+     label_short, bars_to_exit_short, exit_price_short,
+     r_short, r_mfe_short, r_mae_short
+
+3. **Old encoding parquets deleted + regenerated.** Three TFs on full
+   warehouse 2023-04 → 2026-04:
+
+   | TF    | Bars   | LONG TP | LONG avg_R | SHORT TP | SHORT avg_R |
+   |-------|--------|---------|-----------|----------|-------------|
+   | 5min  | 232k   | 33.4%   | +0.272    | 31.0%    | -0.069      |
+   | 15min | 78k    | 30.9%   | +0.245    | 27.4%    | -0.082      |
+   | 1h    | 19k    | 28.5%   | +0.342    | 24.0%    | -0.086      |
+
+   Bull-market sanity: LONG +R drift, SHORT -R for entire period.
+
+4. **CLI bug caught + fixed:** my pre-refactor code did
+   `rm_both.iloc[:, 1].values` for r_short, which is the SECOND
+   column of `r_multiple_labels`' DataFrame — but that's
+   `r_mfe_long`, not `r_realized_short`. Result: SHORT avg_R
+   showed +1.925 (the LONG max-favorable-excursion in a bull market).
+   Now uses explicit `rm_both["r_realized_short"]`.
+
+5. `tests/test_triple_barrier_labels.py` rewritten — schema verifies
+   new column names, encoding asserts canonical -1/0/1. 18/18 label
+   tests pass (12 library + 6 CLI wrapper).
+
+#### Phase 5 — train_all --target {binary, triple_barrier}
+
+`src/ml/ml_models.py::train_xgb` and `train_lstm` accept new optional
+`precomputed_target=None` arg. None → legacy `compute_target`
+(backwards-compatible). When supplied, target overrides the legacy call.
+
+`train_all.py` adds:
+  --target {binary, triple_barrier}    (default: binary)
+  --target-direction {long, short}     (default: long)
+
+When `--target=triple_barrier`:
+  1. Globs `data/historical/labels/triple_barrier_{symbol}_{tf}_*.parquet`
+     and picks the most-recently-modified file.
+  2. Joins labels to train_df by datetime.
+  3. Maps -1/0/1 → binary `(label_long == 1).astype(int)` — model
+     learns "did LONG hit TP" (TIMEOUT and SL both → 0). Directly
+     aligned with how we trade.
+  4. Passes binary Series as `precomputed_target` to XGB and LSTM.
+
+For per-direction training: invoke twice with `--target-direction long`
+then `short`. Future: 3-class classifier head learning -1/0/1 directly
+(Batch E+1).
+
+`scripts/smoke_train_xgb_triple_barrier.py` (new) — XGB-only smoke
+test for the triple-barrier path. Pairs with the existing
+`smoke_train_xgb.py` (binary). When both produce sane numbers, Phase 8
+overnight retrain is ready to ship.
+
 ### 2026-04-29 (night) — P2.2 + P2.3 + smoke validator
 
 Three additional polish commits after Batches B + C + D.1.
