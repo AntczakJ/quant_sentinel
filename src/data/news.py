@@ -320,6 +320,14 @@ def get_imminent_events_by_tier(minutes_window: int = 15) -> dict:
     Drop-in helper for scanner event_guard which wants tier-aware handling.
     """
     out: dict = {"tier1": [], "tier2": [], "tier3": []}
+    # Backtest bypass: imminent-window comparison uses real wall-clock UTC,
+    # so any sim cycle whose real time happens to land within ±15 min of a
+    # real upcoming Tier 1 event would be hard-blocked. We have no
+    # historical news DB for 2024, so the honest backtest behaviour is
+    # "no events known" — let the simulator run.
+    import os as _os_eg
+    if _os_eg.environ.get("QUANT_BACKTEST_MODE"):
+        return out
     try:
         from datetime import datetime, timezone, timedelta
         events = get_economic_calendar() or []
@@ -389,6 +397,12 @@ def get_imminent_high_impact_events(minutes_window: int = 15,
     Returns list of matching events. Empty list = safe to trade.
     """
     from datetime import datetime, timezone, timedelta
+    # Backtest bypass: see get_imminent_events_by_tier above. Returning [] is
+    # the "safe to trade" signal — no fail-closed sentinel because the
+    # backtest provider never errors here.
+    import os as _os_eg
+    if _os_eg.environ.get("QUANT_BACKTEST_MODE"):
+        return []
     try:
         events = get_economic_calendar() or []
     except Exception as e:
