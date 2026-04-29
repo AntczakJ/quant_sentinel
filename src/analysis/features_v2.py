@@ -96,12 +96,37 @@ def _safe_corr(a: pd.Series, b: pd.Series, window: int) -> pd.Series:
     return c.replace([np.inf, -np.inf], np.nan).fillna(0)
 
 
+def _interval_to_timedelta(interval: str) -> pd.Timedelta:
+    """Map '5min'/'1h'/'1d' etc. → Timedelta. Used by _align_to_index and
+    add_multi_tf_features for start-stamp → close-stamp shift (P0.3 fix)."""
+    s = interval.lower().strip()
+    table = {
+        "5m": pd.Timedelta(minutes=5),   "5min": pd.Timedelta(minutes=5),
+        "15m": pd.Timedelta(minutes=15), "15min": pd.Timedelta(minutes=15),
+        "30m": pd.Timedelta(minutes=30), "30min": pd.Timedelta(minutes=30),
+        "1h": pd.Timedelta(hours=1),
+        "4h": pd.Timedelta(hours=4),
+        "1d": pd.Timedelta(days=1), "1day": pd.Timedelta(days=1),
+    }
+    return table.get(s, pd.Timedelta(hours=1))
+
+
 def _align_to_index(other_df: pd.DataFrame, target_index: pd.DatetimeIndex,
-                    col: str = "close") -> pd.Series:
+                    col: str = "close",
+                    source_interval: str = "1h") -> pd.Series:
     """
-    Reindex other_df[col] to target_index using forward-fill.
-    Critical: never use future bars. The asof reindex uses last value
-    available AT each timestamp.
+    Reindex other_df[col] to target_index using forward-fill, with start-stamp
+    correction to prevent future-bar leak.
+
+    Warehouse parquets label bars by their START time (TwelveData convention).
+    A 5m anchor at 14:30 ffilled with the 1h bar labeled 14:00 would read a
+    `close` that materializes at 15:00 — a +30 min look-ahead. Per audit P0.3
+    (docs/strategy/2026-04-29_audit_features_v2_ffill.md), we shift the source
+    index FORWARD by one source-interval before reindexing, so the 5m anchor
+    reads the 1h bar that CLOSED at 14:00, not the bar that OPENED at 14:00.
+
+    `source_interval` is the cadence of `other_df`. Default '1h' matches
+    every existing call site (cross-asset projection at 1h).
     """
     if col not in other_df.columns:
         return pd.Series(np.nan, index=target_index)
@@ -114,6 +139,8 @@ def _align_to_index(other_df: pd.DataFrame, target_index: pd.DatetimeIndex,
         s.index = s.index.tz_convert("UTC").tz_localize(None)
     elif s.index.tz is None and target_index.tz is not None:
         s.index = s.index.tz_localize("UTC")
+    # Start-stamp → close-stamp: shift source forward by +1 source-interval.
+    s.index = s.index + _interval_to_timedelta(source_interval)
     return s.reindex(target_index, method="ffill")
 
 
@@ -220,6 +247,15 @@ def add_multi_tf_features(
             tf_indexed = tf_df.set_index("datetime").sort_index()
         else:
             tf_indexed = tf_df.sort_index()
+
+        # Start-stamp → close-stamp shift (P0.3 / audit_features_v2_ffill.md).
+        # Without this, a 5m anchor at 14:30 ffilled to the 1h bar at 14:00
+        # would read a close that materializes at 15:00 — +30 min look-ahead
+        # on 1h projection, +3h55m on 4h, +23h55m on daily. Shift forward by
+        # one tf_label interval so the anchor reads the bar that already
+        # CLOSED, not the one currently in progress.
+        tf_indexed = tf_indexed.copy()
+        tf_indexed.index = tf_indexed.index + _interval_to_timedelta(tf_label)
 
         # Features to project (must already exist in tf_indexed)
         target_features = {

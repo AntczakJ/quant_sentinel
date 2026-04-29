@@ -85,31 +85,23 @@ def train_attention_model(df, model_dir='models', seq_len=60, usdjpy_df=None):
     n_features = len(FEATURE_COLS)
     batch_size = get_tf_batch_size(32, 64)
 
-    # Scale features
+    # P1.2 fix (audit docs/strategy/2026-04-29_audit_1_data_leaks.md):
+    # Build sliding-window indices on RAW unscaled data — scaling now done
+    # per-fold inside the walk-forward loop to prevent val-fold statistics
+    # from leaking into the train scaler fit.
     from sklearn.preprocessing import MinMaxScaler
     import pickle
 
-    scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(data)
-
-    # Save scaler (atomic write)
-    scaler_path = os.path.join(model_dir, 'attention_scaler.pkl')
-    scaler_tmp = scaler_path + '.tmp'
-    with open(scaler_tmp, 'wb') as f:
-        pickle.dump(scaler, f)
-    os.replace(scaler_tmp, scaler_path)
-
-    # Create sequences (vectorized)
-    n_samples = len(scaled) - seq_len
+    n_samples = len(data) - seq_len
     idx = np.arange(seq_len)[None, :] + np.arange(n_samples)[:, None]
-    X = scaled[idx]
+    X_raw = data[idx]  # UNSCALED — scaled per fold below
     y = features['direction'].values[seq_len:]
 
-    if len(X) == 0:
+    if len(X_raw) == 0:
         return None, 0
 
-    # Walk-forward validation (3 folds — faster than 5)
-    n = len(X)
+    # Walk-forward validation (3 folds — faster than 5) — scaler per fold
+    n = len(X_raw)
     fold_size = n // 4
     fold_accs = []
 
@@ -118,10 +110,20 @@ def train_attention_model(df, model_dir='models', seq_len=60, usdjpy_df=None):
         test_end = min(train_end + fold_size, n)
         if train_end >= n or test_end <= train_end:
             break
-        X_tr, X_te = X[:train_end], X[train_end:test_end]
+        X_tr_raw, X_te_raw = X_raw[:train_end], X_raw[train_end:test_end]
         y_tr, y_te = y[:train_end], y[train_end:test_end]
-        if len(X_tr) < 20 or len(X_te) < 5:
+        if len(X_tr_raw) < 20 or len(X_te_raw) < 5:
             continue
+
+        # Fit scaler on TRAIN-fold only; transform val with train stats.
+        fold_scaler = MinMaxScaler()
+        fold_scaler.fit(X_tr_raw.reshape(-1, n_features))
+        X_tr = fold_scaler.transform(
+            X_tr_raw.reshape(-1, n_features)
+        ).reshape(X_tr_raw.shape)
+        X_te = fold_scaler.transform(
+            X_te_raw.reshape(-1, n_features)
+        ).reshape(X_te_raw.shape)
 
         fold_model = build_attention_model(seq_len, n_features)
         fold_model.compile(
@@ -137,7 +139,16 @@ def train_attention_model(df, model_dir='models', seq_len=60, usdjpy_df=None):
         fold_accs.append(acc)
         logger.debug(f"Attention fold {fold+1}: accuracy {acc:.3f}")
 
-    # Final model
+    # Final model: refit scaler on FULL training data (used for inference).
+    scaler = MinMaxScaler()
+    scaled = scaler.fit_transform(data)
+    scaler_path = os.path.join(model_dir, 'attention_scaler.pkl')
+    scaler_tmp = scaler_path + '.tmp'
+    with open(scaler_tmp, 'wb') as f:
+        pickle.dump(scaler, f)
+    os.replace(scaler_tmp, scaler_path)
+
+    X = scaled[idx]
     split = int(0.8 * len(X))
     X_train, X_test = X[:split], X[split:]
     y_train, y_test = y[:split], y[split:]

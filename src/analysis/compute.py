@@ -869,8 +869,24 @@ def compute_features(df: pd.DataFrame, use_cache: bool = True,
     # features reduce but don't break predictions).
     if usdjpy_df is not None and len(usdjpy_df) >= 20 and 'close' in usdjpy_df.columns:
         # Reindex usdjpy to match df (forward-fill small gaps from session diff).
+        # Start-stamp → close-stamp shift (P0.3 / audit_features_v2_ffill.md):
+        # warehouse parquets label bars by START time, so a 5m XAU anchor at
+        # 14:30 ffilled with USDJPY 1h labeled 14:00 would read a close that
+        # materializes at 15:00 (+30 min look-ahead). Detect USDJPY cadence
+        # from index spacing and shift forward by one cadence.
         try:
-            uj = usdjpy_df['close'].reindex(df.index, method='ffill')
+            uj_src = usdjpy_df.copy()
+            if 'datetime' in uj_src.columns:
+                uj_src = uj_src.set_index('datetime').sort_index()
+            else:
+                uj_src = uj_src.sort_index()
+            # Estimate source cadence from median index spacing.
+            uj_idx = uj_src.index
+            if len(uj_idx) >= 2:
+                _delta_med = pd.Series(uj_idx).diff().median()
+                if pd.notna(_delta_med) and _delta_med > pd.Timedelta(0):
+                    uj_src.index = uj_src.index + _delta_med
+            uj = uj_src['close'].reindex(df.index, method='ffill')
             # 20-bar Z-score — how stretched is USD vs recent mean
             uj_mean = uj.rolling(20).mean()
             uj_std = uj.rolling(20).std()

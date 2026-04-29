@@ -169,28 +169,22 @@ class MLPredictor:
             return None
 
         data = features[FEATURE_COLS].values
-        scaled = self.scaler.fit_transform(data)
 
-        # Persist fitted scaler for consistent inference (atomic write)
-        scaler_path = os.path.join(self.model_dir, 'lstm_scaler.pkl')
-        scaler_tmp = scaler_path + '.tmp'
-        with open(scaler_tmp, 'wb') as f:
-            pickle.dump(self.scaler, f)
-        os.replace(scaler_tmp, scaler_path)
-        logger.info(f"LSTM scaler saved to {scaler_path}")
-
-        # Vectorized sliding window (replaces Python for-loop)
-        n_samples = len(scaled) - seq_len
-        n_features = scaled.shape[1]
-        idx = np.arange(seq_len)[None, :] + np.arange(n_samples)[:, None]  # (n_samples, seq_len)
-        X = scaled[idx]  # fancy indexing → (n_samples, seq_len, n_features)
+        # P1.2 fix (audit docs/strategy/2026-04-29_audit_1_data_leaks.md):
+        # Build sliding-window indices on RAW unscaled data — scaling is now
+        # done per-fold inside the walk-forward loop to prevent test-fold
+        # statistics from leaking into the train fit.
+        n_samples = len(data) - seq_len
+        n_features_count = data.shape[1]
+        idx = np.arange(seq_len)[None, :] + np.arange(n_samples)[:, None]
+        X_raw = data[idx]  # (n_samples, seq_len, n_features) — UNSCALED
         y = features['direction'].values[seq_len:]
-        if len(X) == 0:
+        if len(X_raw) == 0:
             logger.warning("Brak sekwencji do trenowania LSTM")
             return None
 
-        # Walk-forward validation (5 foldów chronologicznych)
-        n = len(X)
+        # Walk-forward validation (5 foldów chronologicznych) — scaler per fold
+        n = len(X_raw)
         fold_size = n // 6
         fold_accuracies = []
 
@@ -199,13 +193,22 @@ class MLPredictor:
             test_end = min(train_end + fold_size, n)
             if train_end >= n or test_end <= train_end:
                 break
-            X_tr, X_te = X[:train_end], X[train_end:test_end]
+            X_tr_raw, X_te_raw = X_raw[:train_end], X_raw[train_end:test_end]
             y_tr, y_te = y[:train_end], y[train_end:test_end]
-            if len(X_tr) < 20 or len(X_te) < 5:
+            if len(X_tr_raw) < 20 or len(X_te_raw) < 5:
                 continue
 
+            # Fit scaler on TRAIN-fold only; transform val with train stats.
+            fold_scaler = MinMaxScaler()
+            tr_flat = X_tr_raw.reshape(-1, n_features_count)
+            fold_scaler.fit(tr_flat)
+            X_tr = fold_scaler.transform(tr_flat).reshape(X_tr_raw.shape)
+            X_te = fold_scaler.transform(
+                X_te_raw.reshape(-1, n_features_count)
+            ).reshape(X_te_raw.shape)
+
             fold_model = Sequential([
-                LSTM(128, return_sequences=True, input_shape=(seq_len, X.shape[2])),
+                LSTM(128, return_sequences=True, input_shape=(seq_len, X_tr.shape[2])),
                 Dropout(0.3),
                 LSTM(64, return_sequences=True),
                 Dropout(0.25),
@@ -224,7 +227,16 @@ class MLPredictor:
             fold_accuracies.append(fold_acc)
             logger.debug(f"LSTM fold {fold+1}: accuracy {fold_acc:.3f}")
 
-        # Final model on all data — ulepszona architektura
+        # Final model: refit scaler on FULL training data (no leak at
+        # inference; fair-ish snapshot for production).
+        scaled = self.scaler.fit_transform(data)
+        scaler_path = os.path.join(self.model_dir, 'lstm_scaler.pkl')
+        scaler_tmp = scaler_path + '.tmp'
+        with open(scaler_tmp, 'wb') as f:
+            pickle.dump(self.scaler, f)
+        os.replace(scaler_tmp, scaler_path)
+        logger.info(f"LSTM scaler saved to {scaler_path}")
+        X = scaled[idx]
         split = int(0.8 * len(X))
         X_train, X_test = X[:split], X[split:]
         y_train, y_test = y[:split], y[split:]

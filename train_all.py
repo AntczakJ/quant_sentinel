@@ -44,15 +44,36 @@ import sys
 import time
 import argparse
 import warnings
+import random
+import json
+from pathlib import Path
 warnings.filterwarnings('ignore')
+
+# ────────────────────────────────────────────────────────────────────
+# Determinism (2026-04-29 audit, P1.8). Same code + same data must
+# produce same weights — without this, reproduce-bug-fix-test cycle
+# is impossible. Block copied from scripts/train_v2.py:43-48.
+# ────────────────────────────────────────────────────────────────────
+os.environ.setdefault("PYTHONHASHSEED", "42")
+os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")
+os.environ.setdefault("TF_CUDNN_DETERMINISTIC", "1")
+random.seed(42)
 
 # Ustaw lokalne DATABASE_URL jeśli nie ustawione (żeby nie mutować Turso)
 if not os.getenv("DATABASE_URL"):
     os.environ["DATABASE_URL"] = "data/sentinel.db"
 
 import numpy as np
+np.random.seed(42)
+
 import pandas as pd
 from src.core.logger import logger as _logger
+
+# Warehouse paths — use TwelveData parquet (training-vs-inference parity).
+# Pre-2026-04-29 the trainer pulled yfinance GC=F (Gold Futures) which is a
+# DIFFERENT instrument from the live TwelveData XAU/USD spot ($65-75 price
+# gap). See docs/strategy/2026-04-29_audit_3_reprodeploy.md P0.2.
+_WAREHOUSE = Path(__file__).resolve().parent / "data" / "historical"
 
 
 # =====================================================================
@@ -102,102 +123,107 @@ def _print_gpu_info():
 # 1. POBIERANIE DANYCH
 # =====================================================================
 
-def fetch_training_data(symbol="GC=F", target_bars=3000) -> pd.DataFrame:
+def fetch_training_data(source: str = "warehouse", tf: str = "1h",
+                        symbol: str = "XAU_USD") -> pd.DataFrame:
     """
-    Pobiera jak najwięcej danych historycznych.
+    Load training data. Default: TwelveData warehouse parquet (matches
+    inference data source). Legacy yfinance kept for emergency fallback.
 
-    Strategia (priorytet):
-      1. 1h data (max 2 lata, ~12k bars) — best balance of depth + resolution
-      2. 15m data (max 60 dni, ~4k bars) — highest resolution, limited depth
-      3. 1d data (max 10 lat) — fallback for deep history
+    2026-04-29: switched from yfinance GC=F (futures) to warehouse XAU/USD
+    spot. The $65-75 price gap meant every prediction was on out-of-distribution
+    data. See docs/strategy/2026-04-29_audit_3_reprodeploy.md P0.2.
 
-    NOTE: GC=F (Gold Futures) is a close proxy for XAU/USD (Spot Gold),
-    but has contango/backwardation. Acceptable for training features.
+    Args:
+        source: 'warehouse' (default — TwelveData parquet) or 'yfinance' (legacy fallback)
+        tf:     '5min' | '15min' | '30min' | '1h' | '4h' | '1day'
+        symbol: warehouse subdir name ('XAU_USD' = spot gold, 'XAG_USD' = silver, ...)
     """
-    import yfinance as yf
     from src.core.logger import logger
 
-    logger.info(f"Fetching training data for {symbol}...")
+    if source == "warehouse":
+        parquet_path = _WAREHOUSE / symbol / f"{tf}.parquet"
+        if not parquet_path.exists():
+            raise FileNotFoundError(
+                f"Warehouse miss: {parquet_path}. Run "
+                "scripts/data_collection/build_data_warehouse.py first, "
+                "or pass --source yfinance for legacy training (NOT recommended)."
+            )
+        df = pd.read_parquet(parquet_path)
+        logger.info(f"Training data: warehouse {symbol}/{tf}, {len(df)} bars "
+                    f"({df['datetime'].min()} → {df['datetime'].max()})")
+        # OHLC validation — remove broken candles
+        before = len(df)
+        df = df[
+            (df['high'] >= df['low']) &
+            (df[['open', 'high', 'low', 'close']] > 0).all(axis=1)
+        ].reset_index(drop=True)
+        if len(df) != before:
+            logger.warning(f"  Removed {before - len(df)} invalid candles")
+        return df
 
-    all_dfs = []
-    ticker = yf.Ticker(symbol)
-
-    # Strategy 1: 1h data — 2 years, ~12,000 bars (best for ML training)
-    try:
-        df_1h = ticker.history(period="2y", interval="1h")
-        if df_1h is not None and len(df_1h) > 100:
-            df_1h = _normalize_df(df_1h)
-            all_dfs.append(("1h", df_1h))
-            logger.info(f"  1h: {len(df_1h)} bars (2 years)")
-    except Exception as e:
-        logger.warning(f"  1h failed: {e}")
-
-    # Strategy 2: 15m data — 60 days, ~4,000 bars (high resolution)
-    try:
-        df_15m = ticker.history(period="60d", interval="15m")
-        if df_15m is not None and len(df_15m) > 100:
-            df_15m = _normalize_df(df_15m)
-            all_dfs.append(("15m", df_15m))
-            logger.info(f"  15m: {len(df_15m)} bars (60 days)")
-    except Exception as e:
-        logger.warning(f"  15m failed: {e}")
-
-    # Strategy 3: 1d data — up to 10 years (macro regime training)
-    try:
-        df_1d = ticker.history(period="10y", interval="1d")
-        if df_1d is not None and len(df_1d) > 100:
-            df_1d = _normalize_df(df_1d)
-            all_dfs.append(("1d", df_1d))
-            logger.info(f"  1d: {len(df_1d)} bars (max history)")
-    except Exception as e:
-        logger.warning(f"  1d failed: {e}")
-
-    if not all_dfs:
-        raise ValueError(f"No data fetched for {symbol}")
-
-    # Select best: prefer 1h (most bars at good resolution)
-    priority = {"1h": 1, "15m": 2, "1d": 3}
-    all_dfs.sort(key=lambda x: (priority.get(x[0], 99), -len(x[1])))
-    best_tf, best_df = all_dfs[0]
-
-    # OHLC validation — remove broken candles
-    before = len(best_df)
-    best_df = best_df[
-        (best_df['high'] >= best_df['low']) &
-        (best_df[['open', 'high', 'low', 'close']] > 0).all(axis=1)
+    # ─── Legacy yfinance path (emergency fallback only) ───
+    logger.warning(
+        "yfinance training source = OUT-OF-DISTRIBUTION vs live inference "
+        "(GC=F futures vs TwelveData XAU/USD spot, $65-75 gap). "
+        "Use --source warehouse unless you know exactly why you're not."
+    )
+    import yfinance as yf
+    yf_symbol = symbol if "=" in symbol else "GC=F"
+    logger.info(f"Fetching training data for {yf_symbol} (yfinance legacy)...")
+    ticker = yf.Ticker(yf_symbol)
+    period = "2y" if tf == "1h" else ("60d" if tf in ("15m", "15min") else "10y")
+    yf_interval = tf.replace("min", "m")
+    df = ticker.history(period=period, interval=yf_interval)
+    if df is None or len(df) < 100:
+        raise ValueError(f"No yfinance data for {yf_symbol}")
+    df = _normalize_df(df)
+    before = len(df)
+    df = df[
+        (df['high'] >= df['low']) &
+        (df[['open', 'high', 'low', 'close']] > 0).all(axis=1)
     ].reset_index(drop=True)
-    after = len(best_df)
-    if before != after:
-        logger.warning(f"  Removed {before - after} invalid candles")
-
-    logger.info(f"Training data: {best_tf}, {len(best_df)} bars")
-    return best_df
+    if len(df) != before:
+        logger.warning(f"  Removed {before - len(df)} invalid candles")
+    logger.info(f"Training data: yfinance {yf_symbol}/{tf}, {len(df)} bars")
+    return df
 
 
-def fetch_usdjpy_aligned(xau_df: pd.DataFrame, interval: str = "1h") -> pd.DataFrame:
-    """Fetch USDJPY historical aligned to the training XAU dataframe.
+def fetch_usdjpy_aligned(xau_df: pd.DataFrame, source: str = "warehouse",
+                         tf: str = "1h") -> pd.DataFrame:
+    """Load USDJPY aligned to the training XAU dataframe.
 
-    USDJPY is the primary USD-strength proxy for gold — gold's single
-    most important macro driver. We don't have DXY access so USDJPY
-    carries the macro signal. Returns a dataframe with 'close' column
-    indexed compatibly with xau_df so compute_features can merge.
+    Default: warehouse parquet (TwelveData, matches inference). Legacy
+    yfinance JPY=X kept as emergency fallback.
 
-    Returns empty DataFrame on fetch failure (compute_features handles
-    None/empty gracefully by zeroing the macro features).
+    Returns empty DataFrame on miss (compute_features handles None/empty
+    gracefully by zeroing the macro features).
     """
-    import yfinance as yf
     from src.core.logger import logger
 
-    # Map xau interval → yfinance period window
-    # (USDJPY has same availability windows as most FX on yfinance)
-    period = "2y" if interval == "1h" else ("60d" if interval == "15m" else "10y")
+    if source == "warehouse":
+        parquet_path = _WAREHOUSE / "USD_JPY" / f"{tf}.parquet"
+        if not parquet_path.exists():
+            logger.warning(f"USDJPY warehouse miss: {parquet_path} — training without macro")
+            return pd.DataFrame()
+        try:
+            uj = pd.read_parquet(parquet_path)
+            logger.info(f"USDJPY: {len(uj)} bars (warehouse {tf})")
+            return uj
+        except Exception as e:
+            logger.warning(f"USDJPY warehouse read failed: {e}")
+            return pd.DataFrame()
+
+    # ─── Legacy yfinance path ───
+    import yfinance as yf
+    period = "2y" if tf == "1h" else ("60d" if tf in ("15m", "15min") else "10y")
+    yf_interval = tf.replace("min", "m")
     try:
-        uj = yf.Ticker("JPY=X").history(period=period, interval=interval)
+        uj = yf.Ticker("JPY=X").history(period=period, interval=yf_interval)
         if uj is None or len(uj) < 100:
-            logger.warning(f"USDJPY fetch returned empty for {interval}/{period}")
+            logger.warning(f"USDJPY fetch returned empty for {yf_interval}/{period}")
             return pd.DataFrame()
         uj = _normalize_df(uj)
-        logger.info(f"USDJPY: {len(uj)} bars ({interval}/{period})")
+        logger.info(f"USDJPY: {len(uj)} bars (yfinance {yf_interval}/{period})")
         return uj
     except Exception as e:
         logger.warning(f"USDJPY fetch failed: {e}")
@@ -557,8 +583,27 @@ def main():
     parser.add_argument("--skip-bayes", action="store_true", help="Pomiń optymalizację Bayesowską")
     parser.add_argument("--epochs", type=int, default=50, help="Liczba epok LSTM (default: 50)")
     parser.add_argument("--rl-episodes", type=int, default=300, help="Liczba epizodów RL (default: 300)")
-    parser.add_argument("--symbol", type=str, default="GC=F", help="Symbol do trenowania (default: GC=F / Gold)")
+    parser.add_argument("--symbol", type=str, default="XAU_USD",
+                        help="Symbol (warehouse subdir or yfinance ticker). Default: XAU_USD")
+    parser.add_argument("--source", choices=["warehouse", "yfinance"], default="warehouse",
+                        help="Data source: 'warehouse' (TwelveData parquet, matches inference) "
+                             "or 'yfinance' (legacy GC=F futures, OUT-OF-DISTRIBUTION). Default: warehouse")
+    parser.add_argument("--tf", type=str, default="1h",
+                        help="Training TF: 5min/15min/30min/1h/4h/1day. Default: 1h")
+    parser.add_argument("--seed", type=int, default=42, help="Global RNG seed (for reproducibility)")
     args = parser.parse_args()
+
+    # Apply explicit seed override (above we set 42 at module load — reseed here
+    # if user passed --seed N). TF seeding happens lazy on first import.
+    if args.seed != 42:
+        os.environ["PYTHONHASHSEED"] = str(args.seed)
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        try:
+            import tensorflow as tf
+            tf.keras.utils.set_random_seed(args.seed)
+        except ImportError:
+            pass
 
     print("=" * 60)
     print("🚀 QUANT SENTINEL — MASTER TRAINING PIPELINE")
@@ -576,7 +621,7 @@ def main():
     results = {}
 
     # ---- 1. Dane ----
-    df = fetch_training_data(args.symbol)
+    df = fetch_training_data(source=args.source, tf=args.tf, symbol=args.symbol)
     train_df, val_df, holdout_df = split_data(df)
 
     # ---- 1a. Fetch USDJPY aligned (macro proxy for USD strength) ----
@@ -584,7 +629,7 @@ def main():
     # (DXY not accessible, UUP/TLT/VIXY have no good intraday history).
     # Graceful degradation — compute_features zeros macro if df is empty.
     print("\n📈 Fetching USDJPY (macro proxy)...")
-    usdjpy_df = fetch_usdjpy_aligned(df, interval="1h")
+    usdjpy_df = fetch_usdjpy_aligned(df, source=args.source, tf=args.tf)
     if len(usdjpy_df) > 0:
         print(f"   ✅ {len(usdjpy_df)} USDJPY bars aligned")
     else:
@@ -592,10 +637,25 @@ def main():
 
     # ---- 1b. Pre-compute features ONCE (reused by XGBoost + LSTM) ----
     print("\n⚙️  Pre-computing features...")
-    from src.analysis.compute import compute_features
+    from src.analysis.compute import compute_features, FEATURE_COLS
     t_feat = time.time()
     precomputed = compute_features(train_df, usdjpy_df=usdjpy_df if len(usdjpy_df) else None)
     print(f"   ✅ {len(precomputed)} rows, {len(precomputed.columns)} features ({time.time()-t_feat:.1f}s)")
+
+    # Pin FEATURE_COLS at training time (P2.1 from master audit). Inference
+    # MUST use the EXACT same list — saving alongside model artifacts so
+    # ensemble_models can read it back and assert dim parity.
+    os.makedirs("models", exist_ok=True)
+    feature_cols_path = Path("models/feature_cols.json")
+    feature_cols_path.write_text(json.dumps({
+        "feature_cols": list(FEATURE_COLS),
+        "n_features": len(FEATURE_COLS),
+        "trained_at": pd.Timestamp.utcnow().isoformat(),
+        "source": getattr(args, "source", "warehouse"),
+        "tf": getattr(args, "tf", "1h"),
+        "symbol": args.symbol,
+    }, indent=2))
+    print(f"   📌 FEATURE_COLS pinned: {len(FEATURE_COLS)} cols → {feature_cols_path}")
 
     # ---- 2. XGBoost ----
     results['xgb'] = train_xgboost(train_df, precomputed_features=precomputed)
@@ -622,14 +682,15 @@ def main():
         print(f"   Attention skipped: {e}")
         results['attention'] = {"error": str(e)}
 
-    # ---- 3c. DPformer-lite (Decomposition + LSTM + Attention Fusion) ----
-    # DISABLED 2026-04-24: Val accuracy 78-80% was flagged as likely data
-    # leakage during the audit (docs/research/2026-04-24_SYNTHESIS_audit_report.md).
-    # ensemble_weight_dpformer is already 0.0 so it contributes nothing live,
-    # but train_all.py still burned ~12 min retraining it. Re-enable only
-    # after investigating the leak and confirming holdout Sharpe > 0.
-    print("\n⏭️  DPformer-lite skipped (suspected data leak, weight=0.0)")
-    results['dpformer'] = {"skipped": True, "reason": "leak_investigation_pending"}
+    # ---- 3c. DPformer-lite — DROPPED 2026-04-29 ----
+    # Audit confirmed the leak: np.convolve(mode='same') uses a symmetric
+    # kernel that pulls 10 future bars into trend at bar t. Explains the
+    # outlier val_acc 78-80%. Voter dropped from default_weights and from
+    # the models track-record loop in src/ml/ensemble_models.py. Keep this
+    # stub in case a downstream consumer reads the dict key.
+    # See docs/strategy/2026-04-29_audit_1_data_leaks.md P1.1.
+    print("\n⏭️  DPformer-lite DROPPED (future-leak — audit P1.1)")
+    results['dpformer'] = {"skipped": True, "reason": "DROPPED 2026-04-29 — future leak in decompose_model.py:48"}
 
     # ---- 4. DQN ----
     if not args.skip_rl:
@@ -685,19 +746,16 @@ def main():
     except Exception as e:
         print(f"   ONNX export skipped: {e}")
 
-    # ---- 8. Calibration fit (Platt Scaling) ----
-    try:
-        from src.ml.model_calibration import get_calibrator
-        cal = get_calibrator()
-        cal.fit_all()
-        status = cal.get_status()
-        for model, info in status.items():
-            if info.get('calibrated'):
-                print(f"   Calibration fitted: {model} (A={info['a']:.3f}, B={info['b']:.3f})")
-            else:
-                print(f"   Calibration: {model} — insufficient data (will auto-fit after 50 trades)")
-    except Exception as e:
-        print(f"   Calibration skipped: {e}")
+    # ---- 8. Calibration fit — DISABLED 2026-04-29 ----
+    # The Platt fit_from_history function regresses TRADE WIN/LOSS labels
+    # against P(LONG-wins) raw outputs from a mix of LONG and SHORT trades —
+    # meaningless correlation produced negative `a` (≈-0.17), mathematically
+    # inverting every signal. Re-running cal.fit_all() here would just refit
+    # the same broken pattern. Kill-switch DISABLE_CALIBRATION=1 in .env
+    # bypasses calibration at inference; keep it that way until per-direction
+    # calibration is rebuilt (Batch D, post-retrain). See
+    # docs/strategy/2026-04-29_pretraining_master.md P0.1/P1.6/P1.7.
+    print(f"   Calibration fit SKIPPED — see audit P0.1 (kill-switch DISABLE_CALIBRATION=1 active)")
 
     # ---- 9. Model validation on val_df ----
     try:

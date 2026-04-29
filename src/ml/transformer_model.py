@@ -208,20 +208,24 @@ def train_deep_transformer(df,
     if n_samples <= 0:
         return None, 0.0
 
-    scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(data)
+    # P1.2 fix (audit docs/strategy/2026-04-29_audit_1_data_leaks.md):
+    # Defer scaler.fit until AFTER the time-ordered train/val split so val
+    # statistics do not leak into the training transform. The final scaler
+    # saved for inference IS fit on the full training data (no leak there;
+    # inference uses a fair-ish snapshot).
+    n_features_count = data.shape[1]
 
-    # Vectorised rolling windows.
+    # Vectorised rolling windows on RAW unscaled data.
     idx = np.arange(seq_len)[None, :] + np.arange(n_samples)[:, None]
-    X = scaled[idx]
+    X_raw = data[idx]
     # Label of the LAST bar of each window. Drop samples where label == -1.
     y = labels[seq_len - 1: seq_len - 1 + n_samples]
     valid = y != -1
-    X = X[valid]
+    X_raw = X_raw[valid]
     y = y[valid]
 
-    if len(X) < 40:
-        logger.warning(f"[{MODEL_NAME}] too few valid samples ({len(X)})")
+    if len(X_raw) < 40:
+        logger.warning(f"[{MODEL_NAME}] too few valid samples ({len(X_raw)})")
         return None, 0.0
 
     # Class balance: HOLD usually dominates — compute class weights.
@@ -230,10 +234,24 @@ def train_deep_transformer(df,
     inv_freq = counts.sum() / (3 * counts)
     class_weight = {i: float(inv_freq[i]) for i in range(3)}
 
-    # 80/20 time-ordered split (no shuffle).
-    split = int(0.8 * len(X))
-    X_tr, X_val = X[:split], X[split:]
+    # 80/20 time-ordered split (no shuffle) — performed on RAW windows.
+    split = int(0.8 * len(X_raw))
+    X_tr_raw, X_val_raw = X_raw[:split], X_raw[split:]
     y_tr, y_val = y[:split], y[split:]
+
+    # Fit scaler on TRAIN portion only; transform val with train stats.
+    train_scaler = MinMaxScaler()
+    train_scaler.fit(X_tr_raw.reshape(-1, n_features_count))
+    X_tr = train_scaler.transform(
+        X_tr_raw.reshape(-1, n_features_count)
+    ).reshape(X_tr_raw.shape).astype(np.float32)
+    X_val = train_scaler.transform(
+        X_val_raw.reshape(-1, n_features_count)
+    ).reshape(X_val_raw.shape).astype(np.float32)
+
+    # Refit a SEPARATE scaler on the full training data for inference use.
+    scaler = MinMaxScaler()
+    scaler.fit(data)
 
     model = build_deep_transformer(seq_len=seq_len, n_features=n_features,
                                    n_blocks=n_blocks)

@@ -140,14 +140,31 @@ def _load_xgb():
         "models/xgb_treelite.dll" if platform.system() == "Windows"
         else "models/xgb_treelite.so"
     )
-    _invalidate_if_stale("xgb", pkl_path, onnx_path)
+    _invalidate_if_stale("xgb", pkl_path, onnx_path, treelite_path)
     if _models_loaded["xgb"]:
         return _models_cache["xgb"]
-    _models_mtime["xgb"] = max(_file_mtime(pkl_path), _file_mtime(onnx_path))
+    _models_mtime["xgb"] = max(_file_mtime(pkl_path), _file_mtime(onnx_path), _file_mtime(treelite_path))
 
     # ── 1. Treelite (compiled .dll/.so) — preferred ─────────────────
+    # P1.9 (2026-04-29 audit): refuse to serve a stale .dll. If the source
+    # xgb.pkl was retrained after the .dll was compiled, the .dll has the
+    # OLD weights — silent serving was a real-bug-surface. Force fall-through
+    # to ONNX/sklearn which read fresh pkl. User must rerun
+    # `tools/compile_xgb_treelite.py` to refresh the .dll.
     try:
         if os.path.exists(treelite_path):
+            dll_mtime = _file_mtime(treelite_path)
+            pkl_mtime = _file_mtime(pkl_path)
+            if dll_mtime < pkl_mtime - 1.0:  # 1s tolerance for fs precision
+                from datetime import datetime
+                logger.warning(
+                    f"XGBoost Treelite DLL is STALE: "
+                    f"{treelite_path} ({datetime.fromtimestamp(dll_mtime).isoformat()}) "
+                    f"is older than {pkl_path} ({datetime.fromtimestamp(pkl_mtime).isoformat()}). "
+                    f"Refusing to serve stale weights — falling back to ONNX/sklearn. "
+                    f"Run `tools/compile_xgb_treelite.py` to refresh the DLL."
+                )
+                raise RuntimeError("treelite stale — fall through")
             # tl2cgen on Windows needs <prefix>/Library/bin to exist or it
             # blows up at import time looking for shipped DLLs.
             from pathlib import Path as _P
@@ -640,7 +657,13 @@ def _load_dynamic_weights() -> Dict[str, float]:
     default_weights = {
         "smc": 0.25,
         "attention": 0.15,
-        "dpformer": 0.15,
+        # 2026-04-29: dpformer DROPPED. The Decompose voter had a future-leak
+        # (np.convolve(mode='same') symmetric kernel pulled 10 future bars
+        # into trend at bar t — see docs/strategy/2026-04-29_audit_1_data_leaks.md
+        # P1.1) and was producing a misleadingly-high 78-80% val_acc.
+        # Already weight=0.05 in DB → muted in fusion; now removed from
+        # default initialization so a fresh DB doesn't re-introduce it.
+        # "dpformer": 0.15,
         "lstm": 0.15,
         "xgb": 0.18,
         "dqn": 0.12,
@@ -753,7 +776,8 @@ def get_model_track_record() -> Dict[str, Dict]:
     try:
         from src.core.database import NewsDB
         db = NewsDB()
-        models = ["smc", "attention", "dpformer", "lstm", "xgb", "dqn", "deeptrans"]
+        # dpformer DROPPED 2026-04-29 (future-leak — see _load_dynamic_weights).
+        models = ["smc", "attention", "lstm", "xgb", "dqn", "deeptrans"]
         result = {}
         for m in models:
             correct = db.get_param(f"model_{m}_correct", 0) or 0

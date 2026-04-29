@@ -1261,6 +1261,53 @@ async def _auto_resolve_trades():
                         except Exception:
                             pass
 
+                        # Wire ensemble voter weights to the resolver event
+                        # (P1.5 / 2026-04-29 audit). Previously
+                        # update_ensemble_weights was defined but never called,
+                        # so voter weights stayed frozen at hand-mutated values
+                        # forever and self-learning was effectively dead.
+                        # `long_was_winning` translates outcome → "did the LONG
+                        # bet succeed?" so we can compare each voter's raw
+                        # P(LONG wins) prediction:
+                        #   correct iff (pred > 0.5) == long_was_winning
+                        try:
+                            from src.ml.ensemble_models import update_ensemble_weights
+                            pred_row = db._query_one(
+                                "SELECT lstm_pred, xgb_pred, smc_pred, "
+                                "attention_pred, deeptrans_pred "
+                                "FROM ml_predictions WHERE trade_id=? "
+                                "ORDER BY id DESC LIMIT 1",
+                                (trade_id,),
+                            )
+                            if pred_row:
+                                long_was_winning = (
+                                    (status == "WIN" and direction == "LONG")
+                                    or (status == "LOSS" and direction == "SHORT")
+                                )
+                                voters = ("lstm", "xgb", "smc", "attention", "deeptrans")
+                                correct, incorrect = [], []
+                                for name, pval in zip(voters, pred_row):
+                                    if pval is None:
+                                        continue
+                                    voted_long = float(pval) > 0.5
+                                    (correct if voted_long == long_was_winning
+                                             else incorrect).append(name)
+                                if correct or incorrect:
+                                    update_ensemble_weights(
+                                        correct_models=correct,
+                                        incorrect_models=incorrect,
+                                        learning_rate=0.02,
+                                    )
+                                    logger.debug(
+                                        f"[Resolver] #{trade_id} weight update — "
+                                        f"correct={correct} incorrect={incorrect}"
+                                    )
+                        except Exception as _w_err:
+                            logger.debug(
+                                f"[Resolver] ensemble weight update skipped for "
+                                f"#{trade_id}: {_w_err}"
+                            )
+
                         icon = "✅" if hit_tp else "❌"
                         target = f"TP:{tp_f}" if hit_tp else f"SL:{sl_f}"
                         logger.info(f"{icon} [Resolver] Trade #{trade_id} {status} @ ${current_price:.2f} ({target})")
