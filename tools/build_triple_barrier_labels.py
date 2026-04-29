@@ -1,42 +1,33 @@
 """
-build_triple_barrier_labels.py — replace binary 0.5-ATR-in-5-bars target with
-triple-barrier labels (TP / SL / TIMEOUT) per López de Prado.
+build_triple_barrier_labels.py — CLI wrapper that calls the canonical
+`src.learning.labels.triple_barrier_labels` (+ `r_multiple_labels`) library
+function and serializes the result to a parquet warehouse.
 
-For each anchor bar t we simulate a hypothetical entry at close[t]:
+Use-case: bulk-generate labels for offline training pipelines that prefer
+to read from disk (e.g. `train_all.py --target triple_barrier`) rather
+than recompute on every run.
 
-  LONG:
-    TP_long = close[t] + tp_atr * ATR[t]
-    SL_long = close[t] - sl_atr * ATR[t]
-  SHORT (mirror):
-    TP_short = close[t] - tp_atr * ATR[t]
-    SL_short = close[t] + sl_atr * ATR[t]
+Encoding (canonical, matches `src/learning/labels/`):
+   1 = TP hit  (winner)
+  -1 = SL hit  (loser)
+   0 = Time barrier hit (timeout)
 
-We then walk forward up to `max_holding_bars` bars. The first barrier crossed
-determines the label:
-
-  - WIN     (label=1): TP touched first         -> R = tp_atr / sl_atr
-  - LOSS    (label=0): SL touched first         -> R = -1.0
-  - TIMEOUT (label=2): neither touched in N     -> R = (close[t+N] - close[t]) / (sl_atr * ATR[t])
-
-Two ambiguous-bar cases are resolved conservatively:
-  - both TP and SL hit on the same bar  -> LOSS  (worst-case fill assumption)
-
-Output per anchor bar t (one parquet row):
-
-    timestamp, close, atr,
-    long_label, long_r, long_exit_offset,
-    short_label, short_r, short_exit_offset
+Output columns (one row per anchor bar):
+    datetime, close, atr,
+    label_long, bars_to_exit_long, exit_price_long, r_long,
+    label_short, bars_to_exit_short, exit_price_short, r_short
 
 Output path:
-    data/historical/labels/triple_barrier_{TF}_tp{tp}_sl{sl}_max{N}.parquet
+    data/historical/labels/triple_barrier_{symbol}_{tf}_tp{N}_sl{N}_max{N}.parquet
 
-Numba JIT (when available) accelerates the inner walk-forward kernel ~60x;
-falls back to pure-numpy for portability.
+The library function is Numba-JIT accelerated when numba is available
+(~60x speedup on 100k+ rows). This CLI handles file I/O only — math
+lives in `src.learning.labels`.
 
 Usage:
     python tools/build_triple_barrier_labels.py
     python tools/build_triple_barrier_labels.py --tf 5min --tp-atr 2.0 --sl-atr 1.0 --max-holding 60
-    python tools/build_triple_barrier_labels.py --tf 15min --max-holding 30
+    python tools/build_triple_barrier_labels.py --tf 15min --max-holding 24
 """
 from __future__ import annotations
 
@@ -53,11 +44,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
-WIN, LOSS, TIMEOUT = 1, 0, 2
-
-
 def _wilder_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
-    """Wilder's ATR — same formula as src.analysis.compute uses for parity."""
+    """Wilder's ATR — same formula `src/analysis/compute.py` uses for parity."""
     n = len(close)
     tr = np.zeros(n, dtype=np.float64)
     tr[0] = high[0] - low[0]
@@ -75,127 +63,14 @@ def _wilder_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: in
     return atr
 
 
-try:
-    from numba import njit
-    _HAS_NUMBA = True
-except ImportError:
-    _HAS_NUMBA = False
-    def njit(*args, **kwargs):  # type: ignore[no-redef]
-        if len(args) == 1 and callable(args[0]):
-            return args[0]
-        return lambda f: f
-
-
-@njit(cache=True)
-def _walk_forward_kernel(
-    close: np.ndarray,
-    high: np.ndarray,
-    low: np.ndarray,
-    atr: np.ndarray,
-    tp_atr: float,
-    sl_atr: float,
-    max_holding: int,
-):
-    """Compute triple-barrier labels for both LONG and SHORT in one pass.
-
-    Returns 6 parallel arrays (length = n):
-        long_label, long_r, long_exit_offset,
-        short_label, short_r, short_exit_offset
-    """
-    n = len(close)
-    long_label = np.full(n, -1, dtype=np.int8)
-    short_label = np.full(n, -1, dtype=np.int8)
-    long_r = np.full(n, np.nan, dtype=np.float64)
-    short_r = np.full(n, np.nan, dtype=np.float64)
-    long_exit = np.full(n, -1, dtype=np.int32)
-    short_exit = np.full(n, -1, dtype=np.int32)
-
-    rr = tp_atr / sl_atr if sl_atr > 0 else 1.0
-
-    for t in range(n - max_holding):
-        a = atr[t]
-        if not np.isfinite(a) or a <= 0:
-            continue
-        c0 = close[t]
-
-        tp_long = c0 + tp_atr * a
-        sl_long = c0 - sl_atr * a
-        tp_short = c0 - tp_atr * a
-        sl_short = c0 + sl_atr * a
-
-        long_resolved = False
-        short_resolved = False
-
-        for k in range(1, max_holding + 1):
-            ti = t + k
-            h = high[ti]
-            l = low[ti]
-
-            # ── LONG side ──
-            if not long_resolved:
-                tp_hit = h >= tp_long
-                sl_hit = l <= sl_long
-                if tp_hit and sl_hit:
-                    # Same-bar ambiguity: resolve to LOSS (worst-case slippage)
-                    long_label[t] = LOSS
-                    long_r[t] = -1.0
-                    long_exit[t] = k
-                    long_resolved = True
-                elif tp_hit:
-                    long_label[t] = WIN
-                    long_r[t] = rr
-                    long_exit[t] = k
-                    long_resolved = True
-                elif sl_hit:
-                    long_label[t] = LOSS
-                    long_r[t] = -1.0
-                    long_exit[t] = k
-                    long_resolved = True
-
-            # ── SHORT side ──
-            if not short_resolved:
-                tp_hit_s = l <= tp_short
-                sl_hit_s = h >= sl_short
-                if tp_hit_s and sl_hit_s:
-                    short_label[t] = LOSS
-                    short_r[t] = -1.0
-                    short_exit[t] = k
-                    short_resolved = True
-                elif tp_hit_s:
-                    short_label[t] = WIN
-                    short_r[t] = rr
-                    short_exit[t] = k
-                    short_resolved = True
-                elif sl_hit_s:
-                    short_label[t] = LOSS
-                    short_r[t] = -1.0
-                    short_exit[t] = k
-                    short_resolved = True
-
-            if long_resolved and short_resolved:
-                break
-
-        # Timeouts
-        if not long_resolved:
-            long_label[t] = TIMEOUT
-            long_r[t] = (close[t + max_holding] - c0) / (sl_atr * a)
-            long_exit[t] = max_holding
-        if not short_resolved:
-            short_label[t] = TIMEOUT
-            short_r[t] = (c0 - close[t + max_holding]) / (sl_atr * a)
-            short_exit[t] = max_holding
-
-    return long_label, long_r, long_exit, short_label, short_r, short_exit
-
-
-def build_labels(
+def build_labels_df(
     df: pd.DataFrame,
     tp_atr: float = 2.0,
     sl_atr: float = 1.0,
     max_holding: int = 60,
     atr_period: int = 14,
 ) -> pd.DataFrame:
-    """Compute triple-barrier labels for the supplied OHLC dataframe.
+    """Compute triple-barrier + R-multiple labels for both directions.
 
     Args:
         df: must contain columns 'datetime', 'open', 'high', 'low', 'close'.
@@ -205,57 +80,76 @@ def build_labels(
         atr_period: Wilder period for ATR (default 14).
 
     Returns:
-        DataFrame indexed by anchor row (same length as df) with the 6 label
-        columns + close/atr passthrough. Anchors with insufficient lookahead or
-        zero ATR are kept with sentinel label=-1.
+        DataFrame with one row per anchor — encoding -1/0/1 (canonical).
     """
+    from src.learning.labels import triple_barrier_labels, r_multiple_labels
+
     required = {"datetime", "open", "high", "low", "close"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"missing OHLC columns: {missing}")
 
     df = df.sort_values("datetime").reset_index(drop=True)
+
+    # Compute ATR ourselves (the library expects an `atr` column).
     high = df["high"].to_numpy(dtype=np.float64)
     low = df["low"].to_numpy(dtype=np.float64)
     close = df["close"].to_numpy(dtype=np.float64)
     atr = _wilder_atr(high, low, close, atr_period)
 
-    long_lbl, long_r, long_exit, short_lbl, short_r, short_exit = _walk_forward_kernel(
-        close, high, low, atr, tp_atr, sl_atr, max_holding
+    enriched = df.assign(atr=atr)
+
+    tb_both = triple_barrier_labels(
+        enriched, direction="both",
+        tp_atr=tp_atr, sl_atr=sl_atr, max_horizon_bars=max_holding,
+    )
+    rm_both = r_multiple_labels(
+        enriched, direction="both",
+        sl_atr=sl_atr, max_horizon_bars=max_holding,
     )
 
+    # r_multiple_labels with direction='both' returns columns:
+    #   r_realized_long, r_mfe_long, r_mae_long, bars_to_sl_long, ...short
+    # We want r_realized for the per-direction "what R did this round-trip
+    # earn" column. mfe/mae available alongside for richer downstream
+    # consumption.
     out = pd.DataFrame({
         "datetime": df["datetime"].values,
         "close": close,
         "atr": atr,
-        "long_label": long_lbl,
-        "long_r": long_r,
-        "long_exit_offset": long_exit,
-        "short_label": short_lbl,
-        "short_r": short_r,
-        "short_exit_offset": short_exit,
+        "label_long": tb_both["label_long"].values,
+        "bars_to_exit_long": tb_both["bars_to_exit_long"].values,
+        "exit_price_long": tb_both["exit_price_long"].values,
+        "r_long": rm_both["r_realized_long"].values,
+        "r_mfe_long": rm_both["r_mfe_long"].values,
+        "r_mae_long": rm_both["r_mae_long"].values,
+        "label_short": tb_both["label_short"].values,
+        "bars_to_exit_short": tb_both["bars_to_exit_short"].values,
+        "exit_price_short": tb_both["exit_price_short"].values,
+        "r_short": rm_both["r_realized_short"].values,
+        "r_mfe_short": rm_both["r_mfe_short"].values,
+        "r_mae_short": rm_both["r_mae_short"].values,
     })
     return out
 
 
 def _print_summary(labels: pd.DataFrame, tp_atr: float, sl_atr: float, max_holding: int):
-    valid = labels[labels["long_label"] >= 0]
-    n = len(valid)
+    n = len(labels)
     if n == 0:
-        print("[summary] no valid anchor rows — check ATR / max_holding.")
+        print("[summary] no anchor rows.")
         return
-    print(f"\n[summary] valid anchors: {n:,} of {len(labels):,}")
-    print(f"  config: TP={tp_atr:.1f}*ATR, SL={sl_atr:.1f}*ATR, max_holding={max_holding} bars (RR={tp_atr/sl_atr:.2f})")
+    print(f"\n[summary] {n:,} anchor rows  "
+          f"(TP={tp_atr:.1f}*ATR, SL={sl_atr:.1f}*ATR, "
+          f"max_holding={max_holding} bars, RR={tp_atr/sl_atr:.2f})")
 
     for side in ("long", "short"):
-        lbl = valid[f"{side}_label"]
-        win = (lbl == WIN).mean()
-        loss = (lbl == LOSS).mean()
-        timeout = (lbl == TIMEOUT).mean()
-        avg_r = valid[f"{side}_r"].mean()
-        ev = win * (tp_atr / sl_atr) - loss * 1.0 + timeout * valid.loc[lbl == TIMEOUT, f"{side}_r"].mean() if timeout > 0 else win * (tp_atr / sl_atr) - loss * 1.0
-        print(f"  {side.upper():5s}: TP {win*100:5.1f}%  SL {loss*100:5.1f}%  TIMEOUT {timeout*100:5.1f}%  avg_R {avg_r:+.3f}")
-    print()
+        lbl = labels[f"label_{side}"]
+        win = (lbl == 1).mean()
+        loss = (lbl == -1).mean()
+        timeout = (lbl == 0).mean()
+        avg_r = labels[f"r_{side}"].mean()
+        print(f"  {side.upper():5s}: TP {win*100:5.1f}%  SL {loss*100:5.1f}%  "
+              f"TIMEOUT {timeout*100:5.1f}%  avg_R {avg_r:+.3f}")
 
 
 def main():
@@ -277,11 +171,8 @@ def main():
     df = pd.read_parquet(src_path)
     print(f"  rows: {len(df):,}  range: {df['datetime'].min()} -> {df['datetime'].max()}")
 
-    if not _HAS_NUMBA:
-        print("[warn] numba not available — using pure-numpy kernel (~60x slower)")
-
     t0 = time.perf_counter()
-    labels = build_labels(
+    labels = build_labels_df(
         df,
         tp_atr=args.tp_atr,
         sl_atr=args.sl_atr,

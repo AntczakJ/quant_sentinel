@@ -265,8 +265,13 @@ def split_data(df: pd.DataFrame, train_pct=0.70, val_pct=0.15):
 # 2. TRENING XGBOOST
 # =====================================================================
 
-def train_xgboost(train_df: pd.DataFrame, precomputed_features=None) -> dict:
-    """Trenuj XGBoost z walk-forward validation."""
+def train_xgboost(train_df: pd.DataFrame, precomputed_features=None,
+                  precomputed_target=None) -> dict:
+    """Trenuj XGBoost z walk-forward validation.
+
+    precomputed_target: optional binary 0/1 Series aligned to features
+    (e.g. triple-barrier TP-hit indicator). When None, ml.train_xgb
+    falls back to legacy compute_target."""
     print("\n" + "=" * 60)
     print("🌳 TRENING XGBOOST")
     print("=" * 60)
@@ -274,7 +279,8 @@ def train_xgboost(train_df: pd.DataFrame, precomputed_features=None) -> dict:
     from src.ml.ml_models import ml
 
     t0 = time.time()
-    acc = ml.train_xgb(train_df, precomputed_features=precomputed_features)
+    acc = ml.train_xgb(train_df, precomputed_features=precomputed_features,
+                       precomputed_target=precomputed_target)
     elapsed = time.time() - t0
 
     if acc is not None:
@@ -299,8 +305,12 @@ def train_xgboost(train_df: pd.DataFrame, precomputed_features=None) -> dict:
 # 3. TRENING LSTM
 # =====================================================================
 
-def train_lstm(train_df: pd.DataFrame, epochs: int = 50, precomputed_features=None) -> dict:
-    """Trenuj LSTM z persystentnm scalerem."""
+def train_lstm(train_df: pd.DataFrame, epochs: int = 50, precomputed_features=None,
+               precomputed_target=None) -> dict:
+    """Trenuj LSTM z persystentnm scalerem.
+
+    precomputed_target: optional binary 0/1 Series — same contract as
+    train_xgboost. None → legacy compute_target."""
     print("\n" + "=" * 60)
     print("🧠 TRENING LSTM")
     print("=" * 60)
@@ -308,7 +318,8 @@ def train_lstm(train_df: pd.DataFrame, epochs: int = 50, precomputed_features=No
     from src.ml.ml_models import ml
 
     t0 = time.time()
-    model = ml.train_lstm(train_df, precomputed_features=precomputed_features)
+    model = ml.train_lstm(train_df, precomputed_features=precomputed_features,
+                          precomputed_target=precomputed_target)
     elapsed = time.time() - t0
 
     if model is not None:
@@ -591,19 +602,31 @@ def main():
     parser.add_argument("--tf", type=str, default="1h",
                         help="Training TF: 5min/15min/30min/1h/4h/1day. Default: 1h")
     parser.add_argument("--seed", type=int, default=42, help="Global RNG seed (for reproducibility)")
+    parser.add_argument("--target", choices=["binary", "triple_barrier"], default="binary",
+                        help="Training target: 'binary' (legacy compute_target — flagged "
+                             "tautological by audit) or 'triple_barrier' (TP-hit binary "
+                             "from data/historical/labels/triple_barrier_*.parquet, "
+                             "directly aligned with how we trade). Default: binary.")
+    parser.add_argument("--target-direction", choices=["long", "short"], default="long",
+                        help="Direction to train against when --target triple_barrier. "
+                             "Default: long. (For per-direction split, train two models "
+                             "via two CLI invocations.)")
     args = parser.parse_args()
 
-    # Apply explicit seed override (above we set 42 at module load — reseed here
-    # if user passed --seed N). TF seeding happens lazy on first import.
-    if args.seed != 42:
-        os.environ["PYTHONHASHSEED"] = str(args.seed)
-        random.seed(args.seed)
-        np.random.seed(args.seed)
-        try:
-            import tensorflow as tf
-            tf.keras.utils.set_random_seed(args.seed)
-        except ImportError:
-            pass
+    # Apply seed to ALL libraries — including TensorFlow which needs an
+    # explicit `tf.random.set_seed` whenever TF_DETERMINISTIC_OPS=1 is
+    # active (otherwise random ops crash: "Random ops require a seed to
+    # be set when determinism is enabled"). Always run, not just when
+    # --seed override differs from 42 (that older gating left default
+    # runs without TF seeding).
+    os.environ["PYTHONHASHSEED"] = str(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    try:
+        import tensorflow as tf
+        tf.keras.utils.set_random_seed(args.seed)
+    except ImportError:
+        pass
 
     print("=" * 60)
     print("🚀 QUANT SENTINEL — MASTER TRAINING PIPELINE")
@@ -657,11 +680,52 @@ def main():
     }, indent=2))
     print(f"   📌 FEATURE_COLS pinned: {len(FEATURE_COLS)} cols → {feature_cols_path}")
 
+    # ---- 1c. Optional triple-barrier target (P1.3) ----
+    precomputed_target = None
+    if args.target == "triple_barrier":
+        # Search for matching parquet under data/historical/labels/.
+        # We accept any (tp, sl, max_holding) combo for the given (symbol, tf)
+        # — caller is responsible for picking the labels they want via filename.
+        labels_dir = _WAREHOUSE / "labels"
+        glob_pat = f"triple_barrier_{args.symbol}_{args.tf}_*.parquet"
+        candidates = sorted(labels_dir.glob(glob_pat))
+        if not candidates:
+            raise FileNotFoundError(
+                f"No triple-barrier parquet matching {glob_pat} under {labels_dir}. "
+                f"Run `python tools/build_triple_barrier_labels.py --tf {args.tf} "
+                f"--symbol {args.symbol}` first."
+            )
+        # Prefer the most-recently-modified file (typically the one user just rebuilt).
+        labels_path = max(candidates, key=lambda p: p.stat().st_mtime)
+        print(f"\n📋 Loading triple-barrier labels: {labels_path.name}")
+        labels_df = pd.read_parquet(labels_path)
+        # Align labels to feature index by datetime. precomputed feature index
+        # is positional (RangeIndex post-dropna); we need a join on datetime.
+        # Both sources agree on the 'datetime' column from the warehouse parquet.
+        label_col = f"label_{args.target_direction}"
+        if label_col not in labels_df.columns:
+            raise KeyError(f"{labels_path} missing column {label_col}")
+        merged = train_df.merge(
+            labels_df[["datetime", label_col]], on="datetime", how="left"
+        )
+        # Map -1/0/1 -> binary 0/1 (TP-hit vs not). LOSS and TIMEOUT both
+        # collapse to "did NOT hit TP" — the model learns "predict P(TP hit)"
+        # which directly aligns with how we trade.
+        precomputed_target = (merged[label_col] == 1).astype(int)
+        n_pos = int(precomputed_target.sum())
+        n_total = len(precomputed_target)
+        print(f"   target=triple_barrier ({args.target_direction}): "
+              f"{n_pos}/{n_total} positives ({n_pos/n_total*100:.1f}% TP rate)")
+    else:
+        print(f"\n📋 Target: binary (legacy compute_target — flagged tautological by audit)")
+
     # ---- 2. XGBoost ----
-    results['xgb'] = train_xgboost(train_df, precomputed_features=precomputed)
+    results['xgb'] = train_xgboost(train_df, precomputed_features=precomputed,
+                                   precomputed_target=precomputed_target)
 
     # ---- 3. LSTM ----
-    results['lstm'] = train_lstm(train_df, epochs=args.epochs, precomputed_features=precomputed)
+    results['lstm'] = train_lstm(train_df, epochs=args.epochs, precomputed_features=precomputed,
+                                 precomputed_target=precomputed_target)
 
     # ---- 3b. Attention (TFT-lite) ----
     try:

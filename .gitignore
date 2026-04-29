@@ -252,3 +252,4 @@ models/v2_lstm_alt/
 # Regenerate from Modal volume after weekly cron.
 models_modal/
 models/_smoke/
+models/feature_cols.json

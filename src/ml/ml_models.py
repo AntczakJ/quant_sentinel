@@ -46,17 +46,29 @@ class MLPredictor:
         """
         return compute_features(df, usdjpy_df=usdjpy_df)
 
-    def train_xgb(self, df, precomputed_features=None):
+    def train_xgb(self, df, precomputed_features=None, precomputed_target=None):
         """Trenowanie XGBoost z walk-forward validation.
         Accepts precomputed_features to avoid recomputing indicators.
 
-        Target: czy cena wzrośnie o >0.5 ATR w ciągu następnych 5 świec
-        (zamiast prostego next-candle direction, które jest szumem).
+        Target options (P1.3 / 2026-04-29 audit):
+        - precomputed_target=None (default): legacy binary `compute_target`
+          ("did price move >0.5 ATR in 5 bars"). Audit flagged this as
+          tautological; kept for backwards compatibility.
+        - precomputed_target=pd.Series: caller supplies binary target
+          (0/1) aligned to features index. Use this for triple-barrier
+          binarized target (TP-hit vs not), R-multiple-binarized
+          (positive R vs negative), or any custom labeling.
         """
         features = precomputed_features if precomputed_features is not None else self._features(df)
 
-        # --- ULEPSZONY TARGET: istotny ruch zamiast next-candle noise ---
-        features['direction'] = compute_target(features)
+        if precomputed_target is not None:
+            # Caller already produced a target — drop in directly.
+            # We assume index alignment; downstream dropna catches
+            # stragglers.
+            features['direction'] = precomputed_target.reindex(features.index)
+        else:
+            # --- LEGACY TARGET: istotny ruch zamiast next-candle noise ---
+            features['direction'] = compute_target(features)
 
         features.dropna(inplace=True)
         if len(features) < 50:
@@ -162,11 +174,14 @@ class MLPredictor:
             logger.warning(f"XGBoost predict error (feature mismatch?): {e}")
             return 0.5
 
-    def train_lstm(self, df, seq_len=60, precomputed_features=None):
+    def train_lstm(self, df, seq_len=60, precomputed_features=None, precomputed_target=None):
         """Trenowanie LSTM z walk-forward validation.
         Accepts precomputed_features to avoid recomputing indicators.
 
-        Target: istotny ruch cenowy (>0.5 ATR w 5 świecach) zamiast next-candle noise.
+        Target options — same contract as train_xgb (P1.3):
+          - precomputed_target=None: legacy `compute_target` binary
+          - precomputed_target=pd.Series: caller supplies binary target
+            aligned to features index (e.g. triple-barrier TP-hit indicator)
         """
         batch_size = get_tf_batch_size()  # 128 GPU / 32 CPU
         if len(df) < seq_len + 2:
@@ -175,8 +190,11 @@ class MLPredictor:
         features = precomputed_features if precomputed_features is not None else self._features(df)
         features = features.copy()
 
-        # --- ULEPSZONY TARGET: identyczny jak XGBoost (shared computation) ---
-        features['direction'] = compute_target(features)
+        if precomputed_target is not None:
+            features['direction'] = precomputed_target.reindex(features.index)
+        else:
+            # --- LEGACY TARGET: identyczny jak XGBoost (shared computation) ---
+            features['direction'] = compute_target(features)
 
         features.dropna(inplace=True)
         if len(features) < seq_len + 1:
