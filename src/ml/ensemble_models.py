@@ -572,17 +572,31 @@ def predict_xgb_direction(df: pd.DataFrame) -> Optional[float]:
                 logger.warning(f"XGB ONNX: unexpected output shape, skipping voter")
                 return None
             elif model_type == "treelite":
-                # tl2cgen.Predictor expects a tl2cgen.DMatrix. The native
-                # output is shape (n_rows, n_classes) — pick class-1 prob.
+                # tl2cgen.Predictor returns one of:
+                #   shape (1, 2)        — class probabilities [class0, class1]
+                #   shape (1, 1, 1)     — single class-1 prob in a 3D wrapper
+                #   shape (1, 1) or (1,) — single class-1 prob
+                # The 3D wrapper case (Bug #1, audit 2026-04-29 voter
+                # correlation) was the silent killer: pre-fix the reader
+                # returned None for any shape other than 2D-with-≥2-cols or
+                # 1D, so XGB was unavailable in live whenever Treelite was
+                # the chosen path. Now we squeeze first and inspect the
+                # squeezed shape.
                 import tl2cgen  # type: ignore
                 dm = tl2cgen.DMatrix(X.values.astype(np.float32))
                 out = model.predict(dm)
-                if out.ndim == 2 and out.shape[1] >= 2:
-                    return float(out[0, 1])
-                if out.ndim == 1:
-                    # Single-class output: interpret as class-1 prob directly.
-                    return float(out[0])
-                logger.warning(f"XGB Treelite: unexpected output shape {out.shape}")
+                squeezed = np.squeeze(out)
+                if squeezed.ndim == 0:
+                    # Scalar — sigmoid output for class-1 probability.
+                    return float(squeezed)
+                if squeezed.ndim == 1:
+                    if squeezed.shape[0] >= 2:
+                        return float(squeezed[1])
+                    return float(squeezed[0])
+                logger.warning(
+                    f"XGB Treelite: unexpected output shape {out.shape} "
+                    f"(squeezed {squeezed.shape}) — falling through to ONNX/sklearn"
+                )
                 return None
             else:
                 pred = model.predict_proba(X)

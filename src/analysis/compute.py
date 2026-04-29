@@ -890,12 +890,28 @@ def compute_features(df: pd.DataFrame, use_cache: bool = True,
             # 20-bar Z-score — how stretched is USD vs recent mean
             uj_mean = uj.rolling(20).mean()
             uj_std = uj.rolling(20).std()
-            df['usdjpy_zscore_20'] = ((uj - uj_mean) / (uj_std + 1e-10)).fillna(0).clip(-5, 5)
+            df['usdjpy_zscore_20'] = (
+                ((uj - uj_mean) / (uj_std + 1e-10))
+                .replace([np.inf, -np.inf], 0.0)
+                .fillna(0).clip(-5, 5)
+            )
             # 5-bar momentum — short-term USD direction
-            df['usdjpy_ret_5'] = uj.pct_change(5).fillna(0).clip(-0.1, 0.1)
+            df['usdjpy_ret_5'] = (
+                uj.pct_change(5)
+                .replace([np.inf, -np.inf], 0.0)
+                .fillna(0).clip(-0.1, 0.1)
+            )
             # 20-bar rolling correlation XAU vs USDJPY
             # Normal: negative (inverse). Near-zero/positive = broken regime.
-            df['xau_usdjpy_corr_20'] = df['close'].rolling(20).corr(uj).fillna(0)
+            # Bug #2 fix (audit 2026-04-29 voter correlation): on flat USDJPY
+            # ffill segments std(uj) → 0, corr → 0/0 = ±Inf. Without the
+            # explicit replace, the Inf flowed downstream and silently None'd
+            # the LSTM/Attention voters on those bars in production.
+            df['xau_usdjpy_corr_20'] = (
+                df['close'].rolling(20).corr(uj)
+                .replace([np.inf, -np.inf], 0.0)
+                .fillna(0)
+            )
         except Exception:
             # On any alignment failure, default to 0 rather than crash
             df['usdjpy_zscore_20'] = 0.0
