@@ -61,7 +61,8 @@ def is_market_open(dt_cet=None) -> bool:
       Weekend (pt 22:00 → nd 23:00): ZAMKNIĘTY
     """
     if dt_cet is None:
-        dt_cet = datetime.now(_CET_TZ)
+        from src.trading.sim_time import now_utc as _sim_now_utc
+        dt_cet = _sim_now_utc().astimezone(_CET_TZ)
     wd = dt_cet.weekday()   # Mon=0 … Sun=6
     h = dt_cet.hour
 
@@ -94,10 +95,11 @@ def get_active_session(utc_hour: int = None) -> dict:
       Close: Friday  22:00
     """
     # ── Get current UTC time ──
+    from src.trading.sim_time import now_utc as _sim_now_utc
     if utc_hour is not None:
-        utc_now = datetime.now(timezone.utc).replace(hour=utc_hour, minute=0, second=0)
+        utc_now = _sim_now_utc().replace(hour=utc_hour, minute=0, second=0)
     else:
-        utc_now = datetime.now(timezone.utc)
+        utc_now = _sim_now_utc()
 
     # Convert to each exchange's local time (DST-aware)
     cet_now    = utc_now.astimezone(_CET_TZ)

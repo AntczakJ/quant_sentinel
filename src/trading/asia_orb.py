@@ -88,7 +88,8 @@ def get_asia_range(df: pd.DataFrame, reference_utc: Optional[dt.datetime] = None
     if df is None or len(df) == 0:
         return None
     if reference_utc is None:
-        reference_utc = dt.datetime.now(dt.timezone.utc)
+        from src.trading.sim_time import now_utc as _sim_now_utc
+        reference_utc = _sim_now_utc()
     if reference_utc.tzinfo is None:
         reference_utc = reference_utc.replace(tzinfo=dt.timezone.utc)
 
@@ -149,7 +150,8 @@ def detect_orb_signal(
         }
     """
     if reference_utc is None:
-        reference_utc = dt.datetime.now(dt.timezone.utc)
+        from src.trading.sim_time import now_utc as _sim_now_utc
+        reference_utc = _sim_now_utc()
     if reference_utc.tzinfo is None:
         reference_utc = reference_utc.replace(tzinfo=dt.timezone.utc)
 
