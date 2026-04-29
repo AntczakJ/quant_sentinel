@@ -137,6 +137,15 @@ def train_xgb_per_direction(
 
     tscv = TimeSeriesSplit(n_splits=5)
 
+    # P2.3 (2026-04-29 audit): switched objective from `reg:squarederror`
+    # to `reg:pseudohubererror`. R-multiple distribution has fat tails
+    # (TIMEOUT outcomes can have R-multiples ±2 to ±5 ATR) — MSE squares
+    # those tails into dominating weight, so the model effectively trains
+    # to predict the outliers. Pseudo-Huber is quadratic near 0 and linear
+    # in the tails, downweighting outliers without ignoring them. CV
+    # metric also switched to MAE which matches Huber's tail-tolerant spirit.
+    from sklearn.metrics import mean_absolute_error as _mae
+
     def objective(trial):
         params = {
             "n_estimators": trial.suggest_int("n_estimators", 100, 500),
@@ -145,7 +154,8 @@ def train_xgb_per_direction(
             "subsample": trial.suggest_float("subsample", 0.6, 1.0),
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
             "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
-            "objective": "reg:squarederror",
+            "objective": "reg:pseudohubererror",
+            "huber_slope": trial.suggest_float("huber_slope", 0.5, 2.0),
             "tree_method": "hist",
             "random_state": 42,
         }
@@ -156,7 +166,7 @@ def train_xgb_per_direction(
             model = xgb.XGBRegressor(**params)
             model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
             pred = model.predict(X_val)
-            cv_scores.append(mean_squared_error(y_val, pred))
+            cv_scores.append(_mae(y_val, pred))
         return float(np.mean(cv_scores))
 
     if optuna:
@@ -164,19 +174,20 @@ def train_xgb_per_direction(
                                      sampler=optuna.samplers.TPESampler(seed=42))
         study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
         best_params = study.best_params
-        best_mse = study.best_value
-        logger.info(f"XGB {direction} best CV MSE: {best_mse:.4f}")
+        best_metric = study.best_value
+        logger.info(f"XGB {direction} best CV MAE (Huber objective): {best_metric:.4f}")
     else:
         best_params = {
             "n_estimators": 200, "max_depth": 5, "learning_rate": 0.1,
             "subsample": 0.8, "colsample_bytree": 0.8, "min_child_weight": 3,
+            "huber_slope": 1.0,
         }
-        best_mse = None
+        best_metric = None
 
     # Final training on full dataset with best params
     final_model = xgb.XGBRegressor(
         **best_params,
-        objective="reg:squarederror", tree_method="hist", random_state=42,
+        objective="reg:pseudohubererror", tree_method="hist", random_state=42,
     )
     final_model.fit(X, y, verbose=False)
 
@@ -191,7 +202,11 @@ def train_xgb_per_direction(
         "feature_cols": feature_cols,
         "n_samples": int(len(X)),
         "best_params": best_params,
-        "best_cv_mse": best_mse,
+        # 2026-04-29: switched objective MSE → pseudo-Huber (P2.3).
+        # Field renamed from best_cv_mse to best_cv_metric — consumers
+        # should not assume MSE scale anymore. New metric is MAE.
+        "best_cv_metric": best_metric,
+        "objective": "reg:pseudohubererror",
         "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
     }
     meta_path = out_dir / f"xau_{direction}_xgb_v2.meta.json"
