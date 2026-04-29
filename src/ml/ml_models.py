@@ -71,19 +71,34 @@ class MLPredictor:
         n_neg = len(y) - n_pos
         scale_pos_weight = n_neg / max(n_pos, 1)
 
-        # Walk-forward validation: 5 foldów
+        # Walk-forward validation: 5 foldów with purge + embargo (P2.2 / 2026-04-29 audit).
+        # `compute_target` uses a 5-bar lookahead so the last 5 rows of any
+        # train slice have labels that depend on close[t+1..t+5] which lies
+        # in the immediately-following test slice. Without a purge the model
+        # is trained on labels derived from test-data prices — small but
+        # systematic positive bias on every reported fold accuracy.
+        # Default n_purge = compute_target.lookahead (5); n_embargo adds
+        # one more bar as belt-and-braces. Configurable via env if needed.
+        n_purge = int(os.environ.get("WF_PURGE_BARS", 5))
+        n_embargo = int(os.environ.get("WF_EMBARGO_BARS", 1))
         n = len(X)
         fold_size = n // 6  # 1/6 na test, przesuwamy okno
         fold_accuracies = []
 
         for fold in range(5):
             train_end = fold_size * (fold + 1)
-            test_end = min(train_end + fold_size, n)
-            if train_end >= n or test_end <= train_end:
+            # Drop n_purge bars from end of train (those depend on test prices),
+            # then skip n_embargo bars before test starts.
+            train_end_purged = train_end - n_purge
+            test_start = train_end + n_embargo
+            test_end = min(test_start + fold_size, n)
+            if train_end_purged <= 0 or test_end <= test_start:
                 break
 
-            X_train, X_test = X.iloc[:train_end], X.iloc[train_end:test_end]
-            y_train, y_test = y.iloc[:train_end], y.iloc[train_end:test_end]
+            X_train = X.iloc[:train_end_purged]
+            X_test  = X.iloc[test_start:test_end]
+            y_train = y.iloc[:train_end_purged]
+            y_test  = y.iloc[test_start:test_end]
 
             if len(X_train) < 20 or len(X_test) < 5:
                 continue
@@ -184,17 +199,26 @@ class MLPredictor:
             return None
 
         # Walk-forward validation (5 foldów chronologicznych) — scaler per fold
+        # + purge/embargo (P2.2). Same lookahead-leak pattern as XGB:
+        # `compute_target` looks 5 bars ahead so the last 5 train labels depend
+        # on prices that fall in the next test slice. Drop n_purge bars from
+        # train end, then n_embargo before test start. Configurable via env
+        # WF_PURGE_BARS / WF_EMBARGO_BARS (defaults 5 / 1).
+        n_purge_bars = int(os.environ.get("WF_PURGE_BARS", 5))
+        n_embargo_bars = int(os.environ.get("WF_EMBARGO_BARS", 1))
         n = len(X_raw)
         fold_size = n // 6
         fold_accuracies = []
 
         for fold in range(5):
             train_end = fold_size * (fold + 1)
-            test_end = min(train_end + fold_size, n)
-            if train_end >= n or test_end <= train_end:
+            train_end_purged = train_end - n_purge_bars
+            test_start = train_end + n_embargo_bars
+            test_end = min(test_start + fold_size, n)
+            if train_end_purged <= 0 or test_end <= test_start:
                 break
-            X_tr_raw, X_te_raw = X_raw[:train_end], X_raw[train_end:test_end]
-            y_tr, y_te = y[:train_end], y[train_end:test_end]
+            X_tr_raw, X_te_raw = X_raw[:train_end_purged], X_raw[test_start:test_end]
+            y_tr, y_te = y[:train_end_purged], y[test_start:test_end]
             if len(X_tr_raw) < 20 or len(X_te_raw) < 5:
                 continue
 
