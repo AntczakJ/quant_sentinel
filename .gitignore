@@ -251,3 +251,4 @@ models/v2_lstm_alt/
 # Populated with .keras/.onnx/.pkl that are derived training output, not source.
 # Regenerate from Modal volume after weekly cron.
 models_modal/
+models/_smoke/
