@@ -47,26 +47,13 @@ class TestFeatureComputation:
         assert set(target.dropna().unique()).issubset({0, 1})
 
 
-class TestDecomposition:
-    def test_decompose_shape_preserved(self):
-        from src.ml.decompose_model import _decompose_features
-        data = np.random.randn(100, 10)
-        trend, seasonal, residual = _decompose_features(data)
-        assert trend.shape == data.shape
-        assert seasonal.shape == data.shape
-        assert residual.shape == data.shape
-
-    def test_decompose_sums_approximately(self):
-        from src.ml.decompose_model import _decompose_features
-        data = np.random.randn(100, 5)
-        trend, seasonal, residual = _decompose_features(data)
-        # trend + seasonal should approximate original
-        reconstructed = trend + seasonal
-        # Allow some error from edge effects
-        mid = data[20:-20]
-        rec_mid = reconstructed[20:-20]
-        error = np.abs(mid - rec_mid).mean()
-        assert error < 0.01, f"Reconstruction error too high: {error}"
+# TestDecomposition — dropped 2026-04-30 (P2.5).
+# Decompose voter was removed from production fusion (Batch C.1)
+# because np.convolve(mode='same') is a centered kernel that pulls 10
+# future bars into trend at bar t — confirmed leak in audit
+# docs/strategy/2026-04-29_audit_1_data_leaks.md P1.1. The
+# src/ml/decompose_model.py module has been deleted; these tests are
+# now stale.
 
 
 class TestCandlestickPatterns:
