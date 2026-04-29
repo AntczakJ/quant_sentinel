@@ -215,6 +215,14 @@ def get_macro_quotes() -> dict:
     """
     result = {"uup": None, "tlt": None, "vixy": None}
 
+    # Backtest bypass: provider only serves live quotes (no warehouse coverage
+    # for UUP/TLT/VIXY), so any historical sim would otherwise see today's
+    # macro regime. Returning the all-None default disables the dollar/yields/
+    # fear signals; usdjpy + volatility still flow from sim-bar data.
+    import os as _os_mq
+    if _os_mq.environ.get("QUANT_BACKTEST_MODE"):
+        return result
+
     # Map: Twelve Data symbol → result key
     symbols = {
         "UUP": "uup",    # Dollar strength ETF (up = strong dollar)

@@ -25,6 +25,11 @@ from src.trading.smc_engine import get_smc_analysis
 # (scalp-first: 5m/15m/30m jako primary, 1h/4h jako fallback premium setups)
 SCAN_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h"]
 
+# Simulated-time cell. Production leaves this None and time-of-day filters fall
+# back to wall-clock. The backtest harness rebinds it to a `[ts]` cell and
+# updates the slot per cycle so filters reflect the simulated bar's hour.
+_SIM_CURRENT_TS = None
+
 TF_LABELS = {
     "4h": "H4",
     "1h": "H1",
@@ -707,7 +712,14 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # --- 6g. HOURLY STATS CHECK ---
     try:
         from datetime import datetime
-        current_hour = datetime.now().hour
+        # Honour simulated time in backtest. Production leaves _SIM_CURRENT_TS
+        # at None, so this falls through to wall-clock UTC. In a backtest the
+        # harness rebinds the cell and updates [0] per cycle.
+        _sim_cell = _SIM_CURRENT_TS
+        if _sim_cell is not None and _sim_cell[0] is not None:
+            current_hour = _sim_cell[0].hour
+        else:
+            current_hour = datetime.now().hour
         bad_hours = db.get_bad_hours(min_trades=5, max_winrate=0.35)
         for bh in bad_hours:
             hour, bh_dir, bh_wr, bh_count = bh
