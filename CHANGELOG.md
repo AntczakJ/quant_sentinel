@@ -4,6 +4,152 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-29 (night) — P2.2 + P2.3 + smoke validator
+
+Three additional polish commits after Batches B + C + D.1.
+
+#### P2.2 — walk-forward purge + embargo
+
+`compute_target` looks 5 bars ahead so the last 5 train labels depend
+on prices that fall in the next test slice — every reported fold
+accuracy was biased upward by an unknown systematic amount. Both
+`train_xgb` and `train_lstm` walk-forward loops now drop `WF_PURGE_BARS`
+(env, default 5) bars from the END of each train slice, then skip
+`WF_EMBARGO_BARS` (default 1) bars before test starts. Configurable so
+when triple-barrier consumers ship (`WF_PURGE_BARS=60` to match
+`max_holding`) the same harness extends.
+
+#### P2.3 — v2 R-multiple objective MSE → pseudo-Huber
+
+R-multiple distribution has fat tails (TIMEOUT outcomes ±2..±5 ATR).
+MSE squared those tails into dominating training weight. Optuna search
+in `scripts/train_v2.py` now uses `reg:pseudohubererror` (with
+`huber_slope` in 0.5..2.0 search space), CV metric switched to MAE.
+Final model also uses pseudo-Huber. Meta JSON renamed `best_cv_mse` →
+`best_cv_metric`.
+
+#### `scripts/smoke_train_xgb.py` — pipeline validator
+
+End-to-end smoke run on a 6-month XAU 1h slice (~4500 bars, ~15-30s).
+Verifies warehouse read + USDJPY alignment + compute_features (post
+ffill fix) + feature_cols.json pinning + DISABLE_CALIBRATION + purge
+defaults. Backs up `models/xgb.pkl` and restores after. Smoke artifacts
+go to `models/_smoke/`.
+
+**First-run baseline:** walk-forward accuracy **0.578 over 5 folds**.
+This is THE honest number. Pre-fix Decompose 0.769 and DPformer
+0.78-0.80 were leak-inflated by `np.convolve(mode='same')` and
+scaler fit-on-full-set. Any future training that beats 0.58 after
+the fixes is real lift; anything claiming 0.7+ should be re-investigated.
+
+Use this BEFORE every full retrain to catch plumbing regressions in
+seconds instead of after a 4h training run.
+
+### 2026-04-29 (late evening) — Batches B + C + D.1 — close 6 P0/P1 audit blockers
+
+Following up on the four-agent audit verdict from earlier in the
+evening. Janek pushed back ("a czemu nie dzisiaj?") on my conservative
+"queued for tomorrow" framing — the queueing was unjustified scoping,
+not a real blocker. Pushed through B + C + D.1 in the same session;
+only Batch E (actual retraining, multi-hour compute) is held back so
+the cleaned pipeline can be verified end-to-end before burning hours.
+
+#### Batch B — training pipeline rewrite
+
+`train_all.py` now reads the 3-year TwelveData warehouse parquet
+instead of yfinance GC=F (Gold Futures, $65-75 spot-vs-futures gap).
+USDJPY macro proxy switched to warehouse parquet too.
+
+- New CLI: `--source warehouse|yfinance` (default warehouse),
+  `--tf 5min|15min|30min|1h|4h|1day` (default 1h), `--seed N`
+- Determinism block at module top: PYTHONHASHSEED, TF_DETERMINISTIC_OPS,
+  TF_CUDNN_DETERMINISTIC, random.seed, np.random.seed (mirrors
+  `scripts/train_v2.py:43-48`)
+- `models/feature_cols.json` written after every training run with
+  the FEATURE_COLS list + n_features + trained_at + source/tf/symbol.
+  Inference can now assert dim parity instead of trusting re-import.
+- `cal.fit_all()` post-training step DISABLED — would re-fit the
+  same broken `fit_from_history` pattern that produced the inverted
+  Platt parameters. Kill-switch from Batch A handles inference.
+- `_load_xgb` refuses to serve a stale `xgb_treelite.dll` (mtime
+  older than `xgb.pkl` by >1s). Logs warning, falls through to ONNX
+  or sklearn. Forces `tools/compile_xgb_treelite.py` rerun after
+  retraining.
+
+#### Batch C.1 — drop Decompose voter
+
+Future-leak confirmed: `np.convolve(mode='same')` is symmetric and
+pulls 10 future bars into trend at bar t. Voter was already
+weight-muted (0.05 floor) but the leak surfaced as 78-80% val_acc
+which mis-led training-time evaluation. Removed from default
+weights init AND models track-record loop in `ensemble_models.py`.
+Inference stub left as NEUTRAL (downstream consumers see stable
+shape). `decompose_model.py` source not deleted yet (dead code, full
+sweep is follow-up).
+
+#### Batch C.2 — scaler fit per-fold (LSTM / Attention / DeepTrans)
+
+Three voters had MinMaxScaler/StandardScaler fit on the FULL training
+set BEFORE walk-forward fold split — fold 1 saw fold N+1 statistics.
+Refactored to per-fold pattern:
+
+```python
+for fold_train, fold_val in tscv.split(X_full):
+    scaler = MinMaxScaler().fit(X_full[fold_train])
+    X_train = scaler.transform(X_full[fold_train])
+    X_val   = scaler.transform(X_full[fold_val])
+    # ...
+final_scaler = MinMaxScaler().fit(X_full)  # save for inference
+```
+
+Files: `src/ml/ml_models.py` (LSTM), `src/ml/attention_model.py`,
+`src/ml/transformer_model.py` (DeepTrans, has 80/20 split not WF —
+same class of bug, same shape of fix).
+
+Verification: `scripts/verify_scaler_per_fold.py` (new) monkey-patches
+`MinMaxScaler.fit` to log shapes, drives all three train fns. Asserts
+>1 fit() call and distinct sizes. PASS for all three (LSTM 6 fits,
+Attention 4 fits, DeepTrans 2 fits).
+
+#### Batch C.3 — features_v2 ffill leak fix
+
+Audit doc `docs/strategy/2026-04-29_audit_features_v2_ffill.md`
+revealed: TwelveData warehouse parquets label bars by START time, so
+a 5m anchor at 14:30 ffilled with the 1h bar labeled 14:00 reads a
+`close` that materializes at 15:00 (+30 min look-ahead). +3h55m on 4h,
++23h55m on daily projection. Three call sites fixed:
+
+- `features_v2.py::_align_to_index` (cross-asset)
+- `features_v2.py::add_multi_tf_features` (HTF projection)
+- `compute.py` USDJPY block
+
+All three now shift the source index FORWARD by one source-interval
+before reindexing — so the 5m anchor reads the bar that already
+CLOSED, not the one currently in progress. v2_xgb's "PF 2.24 OOS"
+finding from 2026-04-25 was contaminated by this leak; voter weight
+muted in DB from 0.10 → 0.0 pending walk-forward re-validation on
+shifted features.
+
+#### Batch D.1 — wire update_ensemble_weights to resolver
+
+`update_ensemble_weights` was defined in `ensemble_models.py:726` but
+never called anywhere. Voter weights frozen at hand-mutated values
+forever — self-learning effectively dead.
+
+Wired into `_auto_resolve_trades` (api/main.py) immediately after
+`update_factor_weights`. For each resolved trade:
+
+1. Query matching `ml_predictions` row by `trade_id`.
+2. Compute `long_was_winning` = (status WIN ∧ direction LONG) ∨
+   (status LOSS ∧ direction SHORT).
+3. For each voter raw P(LONG wins): correct iff `(P > 0.5) ==
+   long_was_winning`.
+4. Pass correct/incorrect lists to `update_ensemble_weights` with
+   learning_rate=0.02 (existing EMA-smoothed update fn).
+
+Wrapped in try/except + debug error so a malformed prediction row
+never crashes the resolver loop.
+
 ### 2026-04-29 (evening) — Pre-training audit (NO-GO) + Batch A hotfixes
 
 Four parallel read-only audit agents launched before authorizing any
