@@ -460,6 +460,21 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
     else:
         risk_percent_adj = risk_percent
 
+    # Flat-risk override (Lot Sizing Option A — design doc 2026-04-27).
+    # OFF by default (USE_FLAT_RISK unset/0). When enabled, replaces all of
+    # Kelly + daily/session/vol multipliers + loss-streak compounding with
+    # a single explicit percentage of equity. Decision gate to flip is
+    # 2026-05-04 (24-72h live obs of Phase B + B7 + MAX_LOT_CAP=0.01 baseline).
+    # See docs/strategy/2026-04-27_lot_sizing_rebuild_design.md.
+    if os.environ.get("USE_FLAT_RISK") == "1":
+        _flat_pct = float(os.environ.get("FLAT_RISK_PCT", "0.5"))
+        _legacy_pct = risk_percent_adj
+        risk_percent_adj = _flat_pct
+        logger.info(
+            f"[FLAT_RISK] override active: {_flat_pct:.2f}% "
+            f"(legacy path would have used {_legacy_pct:.2f}%)"
+        )
+
     risk_usd = balance_in_usd * (risk_percent_adj / 100)
     dist = abs(entry - sl)
     if dist <= 0:

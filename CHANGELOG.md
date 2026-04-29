@@ -4,6 +4,110 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-29 (late) — sim_time helper + triple-barrier labels + lot-sizing scaffold
+
+Big-batch session: closed the sim-time leak family on the deepest level,
+shipped Phase 2 master-plan core (triple-barrier label builder), and
+scaffolded Lot Sizing Option A behind an env flag for the 2026-05-04
+decision gate. rsi_extreme audit landed (verdict: WAIT — sample drift
+flipped the headline 57.4% claim to 32.4%; do not act).
+
+#### Added — `src/trading/sim_time.py` (single source of truth for "now")
+
+Centralizes the sim-vs-wall-clock decision in a single helper that the
+backtest harness, scanner filters, smc_engine session classifier, and
+Asia ORB voter all share. Production paths default-call wall-clock UTC;
+when `QUANT_BACKTEST_MODE=1` and `scanner._SIM_CURRENT_TS[0]` is bound
+by `run_production_backtest.py`, we return the simulated bar timestamp.
+
+#### Fixed — three deeper sim-time leaks (not in the original A+B1+B2+B3 family)
+
+The 2026-04-29 audit pattern (`grep -nE "datetime\.now|_persistent_cache"
+src/trading/`) surfaced four more wall-clock reads that contaminated
+backtest factor scoring. All routed through the new `sim_time.now_utc()`:
+
+- `src/trading/smc_engine.py::is_market_open` — was anchoring CET
+  weekend/hour gating to wall-clock when called without a `dt_cet` arg
+  (every call site in scanner does this).
+- `src/trading/smc_engine.py::get_active_session` — same pattern;
+  session classification (overlap/london/ny/asian/off_hours/weekend),
+  which feeds both the +15 Asia ORB factor and the session-based risk
+  multiplier in `finance.py:104` (overlap=1.0x, asian=0.6x, etc.),
+  was using TODAY's UTC hour for any 2024 setup.
+- `src/trading/asia_orb.py::get_asia_range` — Asia window anchoring
+  defaulted to wall-clock, so backtests built ranges from today's
+  Asian session and never produced ORB hits on historical bars.
+- `src/trading/asia_orb.py::detect_orb_signal` — same default.
+
+Net effect: with these fixes, a 2024 backtest now classifies session,
+killzone, and Asia ORB on the actual simulated hour. Production
+behavior is unchanged (env flag unset → wall-clock fallback).
+
+#### Added — `tools/build_triple_barrier_labels.py` (Phase 2 master plan core)
+
+Replaces the binary `compute_target` (0.5 ATR up-move within 5 bars,
+flagged tautological in `memory/label_baseline_2026-04-26.md`) with
+proper triple-barrier labels per López de Prado:
+
+- For each anchor bar, simulates LONG and SHORT entries, walks forward
+  up to `max_holding` bars, and records first-barrier-touched as one
+  of {WIN, LOSS, TIMEOUT} with R-multiple.
+- Numba-JIT inner loop processes XAU 5min full warehouse (232,129 rows)
+  in 2.9s; falls back to pure-numpy when Numba unavailable.
+- Output: `data/historical/labels/triple_barrier_{symbol}_{tf}_tp{N}_sl{N}_max{N}.parquet`.
+
+**First-pass distribution** (TP=2*ATR, SL=1*ATR, RR=2, on full warehouse):
+
+| TF    | Bars   | LONG TP | LONG avg_R | SHORT TP | SHORT avg_R |
+|-------|--------|---------|-----------|----------|-------------|
+| 5min  | 232k   | 33.4%   | +0.054    | 31.0%    | -0.022      |
+| 15min | 78k    | 30.9%   | +0.058    | 27.4%    | -0.063      |
+| 1h    | 19k    | 28.6%   | +0.093    | 24.0%    | -0.082      |
+
+Validates: random LONG entry on 2023-2026 XAU has positive expected R
+across all TFs (gold drift); random SHORT has negative R. Filter
+job is to push WR above the 30%-band baseline. **No model training
+yet** — labels exist, v2 XGB consumption is the next phase.
+
+#### Added — `USE_FLAT_RISK` env-flag scaffold in `src/trading/finance.py`
+
+Per `docs/strategy/2026-04-27_lot_sizing_rebuild_design.md` Option A:
+when `USE_FLAT_RISK=1`, replaces the entire Kelly + daily-DD + session
++ vol + loss-streak risk-percent compounding stack with a single explicit
+percentage (default 0.5%, configurable via `FLAT_RISK_PCT`). Logs both
+"would have used X%" and "now using Y%" for audit.
+
+**OFF by default — no behavior change today.** Decision gate remains
+2026-05-04 per design doc; this is reversible plumbing only.
+
+#### Added — `docs/strategy/2026-04-29_rsi_extreme_audit.md`
+
+Re-runs the 2026-04-27 finding "rsi_extreme SHORT 57.4% WR n=101
+(Bonferroni-clear)" against current data. **Verdict: stale.** Sample
+grew n=101 → n=232 (+128%); SHORT WR dropped to 32.4% (Wilson 26-40%).
+The single-window result reversed under more data — exactly the
+overfitting-check failure mode `feedback_overfitting_check.md` warns
+about. Bimodal sub-finding: RSI<5 SHORT 95.2% WR (n=42) vs RSI 5-15
+SHORT 0% WR (n=70) — but action deferred until macro_snapshots can
+backfill regime context (currently 29 rows from 2026-04-27 only).
+
+Side-finding: 4h SHORT rejections show constant `rsi=22.8` across
+28 rows — a logging artefact worth investigating separately.
+
+#### Tests
+
+- `tests/test_sim_time.py` (6 cases) — sim/wall fallback, env-flag
+  behavior, end-to-end through smc_engine.get_active_session and
+  asia_orb.get_asia_range with simulated 2024-08-15 anchor.
+- `tests/test_triple_barrier_labels.py` (6 cases) — barrier ordering,
+  TP-hit, SL-hit, timeout, sentinel for no-lookahead, real XAU 5min
+  distribution sanity.
+- `tests/test_finance_flat_risk.py` (4 cases) — env-flag presence,
+  default pct, custom pct.
+
+Total new: 16 cases. Full pytest: **428 passed / 1 skipped** (was
+412/1 before this batch; +16 = exactly the new tests).
+
 ### 2026-04-27 (late evening) — Factor audit + macro snapshots + walk-forward unblock
 
 WR-improvement push that intentionally avoids touching live trading
