@@ -4,6 +4,79 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-30 (~12:15) — Phase 8 finished + LSTM re-run with purge=12
+
+Phase 8 overnight retrain completed exit 0 after 12h 28min wall-clock
+(40,981s DQN alone — early-stopped at episode 177, patience=80
+triggered when avg reward stopped improving).
+
+#### Final Phase 8 results
+
+| Voter | Walk-forward acc | Holdout acc | Holdout Sharpe |
+|---|---|---|---|
+| XGB | 0.629 | 57.6% | -0.78 |
+| LSTM | 0.702 ⚠️ | 69.2% | -0.94 |
+| Attention | 0.575 | (n/a) | (n/a) |
+| DQN | early-stop ep 177, reward +14.37 | 0% (no trades) | 0 |
+| **Ensemble** | — | **50.1%** | **-0.49** |
+
+Ensemble holdout split: 287 LONG / 681 SHORT / 1758 CZEKAJ. Holdout
+period was the most-recent ~6 months = strong bull. Models trained
+on mixed regimes (2023-04 → 2026-04) over-predict SHORT in pure-bull
+holdout → negative Sharpe.
+
+Max DD on ensemble holdout: 9.6% — within the -10% threshold.
+
+LSTM 0.702 walk-forward = the purge=5 vs needed=12 contamination flagged
+mid-flight. Re-run with auto-purge=12 launched immediately after Phase 8
+completion (background task `b0z541aef`, ~22 min ETA).
+
+#### Treelite recompiled
+
+`tools/compile_xgb_treelite.py` after Phase 8: parity 5.96e-08, native
+sklearn 5.8ms vs Treelite 6.8ms median (Treelite slightly slower on
+this batch — but N=1 inference path is what matters live).
+
+#### Preflight: 12/12 PASS
+
+After fixing one bug in the preflight script (`_load_attention` doesn't
+exist — attention loads inside `predict_attention_direction`):
+
+  - calibration_killswitch: PASS (DISABLE_CALIBRATION=1 in .env)
+  - calibration_pkl_neutral: PASS (3 entries fitted=False)
+  - feature_cols_pin: PASS (36 cols match in-memory FEATURE_COLS)
+  - artifacts_present: PASS (all 6 model files)
+  - treelite_freshness: PASS (fresher than xgb.pkl)
+  - voter_loaders: PASS (xgb=treelite, lstm=onnx, dqn=loaded)
+  - inference_smoke: PASS (xgb=0.493, lstm=0.488)
+  - port_8000_free: PASS
+  - pause_flag: PASS
+  - db_clean: PASS (59 trades, 0 phantom OPEN)
+  - voter_weights: PASS (sum=1.000, attention=0.33, xgb=0.33,
+    smc/lstm/dqn/deeptrans=0.083 each, v2_xgb=0.0)
+  - env_safety_flags: PASS (DISABLE_TRAILING=1, MAX_LOT_CAP=0.01)
+
+#### Decision posture before API restart
+
+Sharpe negative across all voters on holdout is a real concern but
+plausible given:
+  - Holdout period is monomorphic (strong bull) vs training
+    multi-regime
+  - Triple-barrier 2.0 ATR TP / 1.0 ATR SL is wider than typical
+    holding period — TP seldom hit in 12-bar window
+  - Models correctly flag uncertainty as CZEKAJ in 60% of bars
+  - Live operational stack has multiple safeguards: kill-switch
+    calibration, MAX_LOT_CAP=0.01, DISABLE_TRAILING, B7 SHORT-block,
+    streak auto-pause, v2_xgb muted
+
+Worst-case blast radius if SHORT-bias persists live:
+  ~8 consecutive losses × 0.01 lot × ~$50 avg = ~$400 before
+  auto-pause kicks in (streak threshold = 8).
+
+Plan: complete LSTM re-run (purge=12) → re-verify preflight →
+voter correlation re-run → THEN propose API restart with all
+findings documented. User's call.
+
 ### 2026-04-30 (~01:00) — Inspection + preflight + audit polish (waiting for Phase 8)
 
 While Phase 8 (overnight retrain) cooks, autonomous push 3 — close
