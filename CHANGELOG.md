@@ -4,6 +4,61 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-04-30 (~13:10) — API restart + voter correlation BREAKTHROUGH
+
+#### API restart on Phase 8 + LSTM-rerun models
+
+- API uvicorn started 12:53:09 UTC, port 8000 active
+- Preflight 12/12 PASS (after one bug fix to import the right loader names)
+- All 9 BG tasks started (scanner 5min / prices 5s / resolver 5min /
+  monitor 1h / retention 24h / health 10min / params-drift 30min /
+  macro-snapshot 5min / replay 24h)
+- Startup cleanup deleted 14 phantom trades (entry $2350 vs live $4720
+  ref) — synthetic from pre-fix pytest pollution
+- **First live trade #217**: LONG @ $4638.04 on M5, Grade B (40/100,
+  7 SMC factors), RSI 72.6, Trend Bull + FVG, lot 0.01 (capped),
+  R:R 2.0, generated 12:54:13
+
+#### Voter correlation re-run on post-retrain models — BREAKTHROUGH
+
+The 2026-04-29 D.2 audit found "Camp B" — lstm and attention with
+**89.4% direction agreement** (effectively one voter wearing two hats),
+opposed to "Camp A" (xgb/v2_xgb/dqn 67-84% mutual). Cross-camp
+agreement only 10-19% = active signal cancellation. Effective voter
+count was ~4 of 5 loaded.
+
+After Phase 8 retrain on triple_barrier target with all leak fixes:
+
+| Pair | 2026-04-29 (pre-retrain) | 2026-04-30 (post-retrain) |
+|---|---|---|
+| **lstm ↔ attention** | **89.4%** (Camp B) | **52.9%** (random) |
+| xgb ↔ lstm | (not listed top) | 50.8% |
+| lstm ↔ dqn | <19% (cross-camp) | 75.2% (new cluster) |
+| v2_xgb ↔ dqn | 67-84% (Camp A) | 88.6% (preserved) |
+| attention ↔ everyone | 89% with lstm | <55% with all |
+
+**Result: ~5 effective voters out of 5 loaded.** No clusters at
+|r| ≥ 0.85. Mean off-diagonal agreement 59.3% (diverse but not random).
+
+Highest pairwise Pearson now: 0.305 (xgb-lstm), down from 0.40
+(lstm-attention). Attention is **truly orthogonal** to every other
+voter (Pearson < 0.1 across the row).
+
+**Implications:**
+- `LSTM_BULLISH_ONLY` hardcoded TRUE no longer needed (Janek can flip
+  to `0` via .env after monitoring period). The bearish-anti-signal
+  flag was for the pre-leak LSTM; the new LSTM with cleaned pipeline
+  + triple_barrier target is bidirectionally honest.
+- Phase 8 retrain met its **primary goal**: voter diversity restored.
+- Sharpe -0.49 ensemble holdout is NOT from voter cancellation
+  (resolved). It's regime mismatch — training data spans 2023-04 →
+  2026-04 (mixed regimes including 2024 ranging period), holdout is
+  most-recent ~6 months strong-bull. Live behavior on actual recent
+  market regime should be more aligned.
+
+The script bug (decompose_model import after Batch C.1 deletion) was
+fixed in `eecaef5`.
+
 ### 2026-04-30 (~12:15) — Phase 8 finished + LSTM re-run with purge=12
 
 Phase 8 overnight retrain completed exit 0 after 12h 28min wall-clock
