@@ -125,40 +125,35 @@ def _check_treelite_freshness() -> tuple[bool, str]:
 
 
 def _check_voter_loaders() -> tuple[bool, str]:
-    """Try loading each voter; report which paths succeed."""
-    os.environ["DISABLE_CALIBRATION"] = "1"  # safety in case it wasn't set
+    """Try loading each voter via the actual ensemble_models loader API.
+
+    Public loaders in src/ml/ensemble_models.py: _load_xgb, _load_lstm,
+    _load_dqn, _load_v2_xgb. Attention is loaded inside
+    `predict_attention_direction` (no separate loader fn — model loaded
+    on first call via its own caching path).
+    """
+    os.environ["DISABLE_CALIBRATION"] = "1"  # safety
     try:
-        from src.ml.ensemble_models import _load_xgb, _load_lstm, _load_attention
+        from src.ml.ensemble_models import _load_xgb, _load_lstm, _load_dqn
     except Exception as e:
         return (False, f"ensemble_models import failed: {e}")
     failures = []
     successes = []
+    for name, fn in (("xgb", _load_xgb), ("lstm", _load_lstm)):
+        try:
+            r = fn()
+            if r is None:
+                failures.append(name)
+            else:
+                kind = r[0] if isinstance(r, tuple) else "?"
+                successes.append(f"{name}({kind})")
+        except Exception as e:
+            failures.append(f"{name}({e!r})")
     try:
-        x = _load_xgb()
-        if x is None:
-            failures.append("xgb")
-        else:
-            kind = x[0] if isinstance(x, tuple) else "?"
-            successes.append(f"xgb({kind})")
+        r = _load_dqn()
+        successes.append("dqn(loaded)" if r is not None else "dqn(none)")
     except Exception as e:
-        failures.append(f"xgb({e!r})")
-    try:
-        l = _load_lstm()
-        if l is None:
-            failures.append("lstm")
-        else:
-            kind = l[0] if isinstance(l, tuple) else "?"
-            successes.append(f"lstm({kind})")
-    except Exception as e:
-        failures.append(f"lstm({e!r})")
-    try:
-        a = _load_attention()
-        if a is None:
-            failures.append("attention")
-        else:
-            successes.append("attention")
-    except Exception as e:
-        failures.append(f"attention({e!r})")
+        failures.append(f"dqn({e!r})")
     if failures:
         return (False, f"loaders failed: {failures}; succeeded: {successes}")
     return (True, f"loaders ok: {successes}")
