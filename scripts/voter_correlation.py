@@ -71,7 +71,9 @@ from src.ml.ensemble_models import (  # noqa: E402
     predict_dqn_action,
 )
 from src.ml.attention_model import predict_attention  # noqa: E402
-from src.ml.decompose_model import predict_decompose  # noqa: E402
+# decompose voter dropped 2026-04-30 (P2.5 — file deleted; centered
+# convolution leak per audit P1.1). Stubbed below for back-compat.
+predict_decompose = lambda *a, **kw: None  # noqa: E731
 from src.ml.transformer_model import predict_deeptrans  # noqa: E402
 from src.analysis import compute as _compute_mod  # for monkey-patch
 from src.analysis.compute import compute_features as _orig_compute_features, FEATURE_COLS  # noqa: E402
@@ -102,9 +104,8 @@ _compute_mod.compute_features = _clean_compute_features
 # scope (`from src.analysis.compute import compute_features`), so we also
 # rewrite their module references after import:
 import src.ml.attention_model as _am_mod  # noqa: E402
-import src.ml.decompose_model as _dm_mod  # noqa: E402
 import src.ml.transformer_model as _tm_mod  # noqa: E402
-for _m in (_am_mod, _dm_mod, _tm_mod):
+for _m in (_am_mod, _tm_mod):
     if hasattr(_m, "compute_features"):
         _m.compute_features = _clean_compute_features
 # ensemble_models calls compute_features inside _compute_ensemble_features
@@ -147,7 +148,7 @@ HOLDOUT_DAYS = 30
 WARMUP_BARS = 200       # enough for ATR/EMA/RSI/ADX warmup + LSTM seq_len 60
 LOOKBACK_BARS = 400     # bars of history fed to each predictor at every anchor
 STRIDE_BARS = 6         # every 30 min on 5m grid
-VOTERS = ["xgb", "lstm", "attention", "decompose", "deeptrans", "v2_xgb", "dqn"]
+VOTERS = ["xgb", "lstm", "attention", "deeptrans", "v2_xgb", "dqn"]  # decompose dropped 2026-04-30
 
 
 # ── Data prep ──────────────────────────────────────────────────────────
