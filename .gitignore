@@ -253,3 +253,9 @@ models/v2_lstm_alt/
 models_modal/
 models/_smoke/
 models/feature_cols.json
+
+# Per-direction or experimental model snapshots — not committed; regenerate
+# via train_all.py --target-direction <long|short>. The 2026-05-02 SHORT
+# triple_barrier model lives here for inspection only.
+models/short_*/
+models/long_*/
