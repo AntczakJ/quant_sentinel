@@ -843,9 +843,20 @@ def _persist_prediction(results: Dict):
         # Per-voter columns mirror the JSON blob for fast SQL filtering
         # (e.g. "give me rows where deeptrans disagreed with SMC"). Writing
         # None for absent voters keeps historical queries clean.
+        #
+        # 2026-05-02 fix: only return None when voter is genuinely
+        # unavailable. Muted voters (status="muted_low_weight" /
+        # "muted_bearish_lstm") DID produce a valid prediction — the mute
+        # only excludes them from the weighted sum, not from the audit
+        # trail. Previous behavior persisted None for muted voters which
+        # silently broke `_apply_voter_attribution` (api/main.py:961) for
+        # 5 of 7 voters because muting is the steady state at 0.05 DB
+        # floor. Effect: only lstm + xgb were ever auto-tuned; attention,
+        # smc, deeptrans, dqn, v2_xgb stuck at hand-set values.
+        _MISSING_STATUSES = {"unavailable", "disabled"}
         def _voter_value(name: str):
             v = results['predictions'].get(name, {})
-            if 'status' in v:  # voter marked 'unavailable'
+            if v.get('status') in _MISSING_STATUSES:
                 return None
             return v.get('value')
 
