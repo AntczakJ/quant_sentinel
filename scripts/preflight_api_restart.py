@@ -267,6 +267,74 @@ def _check_env_safety_flags() -> tuple[bool, str]:
     return (not bad, "; ".join(msgs))
 
 
+def _check_factor_weights_tuned() -> tuple[bool, str]:
+    """Verify the 2026-05-02 factor weight tuning hasn't been rolled back.
+
+    bos should be near 1.8 (was 1.598), fvg near 0.7 (was 1.281), etc.
+    These weights affect score_setup_quality grading and were applied
+    autonomously per Janek authorization.
+    """
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        expected = {
+            "weight_bos":           (1.7, 2.0),    # tuned to 1.800
+            "weight_ichimoku_bear": (1.05, 1.30),  # tuned to 1.150
+            "weight_fvg":           (0.50, 0.85),  # tuned to 0.700 (cut)
+            "weight_killzone":      (0.50, 0.85),  # tuned to 0.700
+            "weight_ichimoku_bull": (0.70, 1.00),  # tuned to 0.850
+            "weight_macro":         (0.65, 0.95),  # tuned to 0.800
+        }
+        bad = []
+        for key, (lo, hi) in expected.items():
+            val = db.get_param(key, None)
+            if val is None or not (lo <= float(val) <= hi):
+                bad.append(f"{key}={val} (expected {lo}-{hi})")
+        if bad:
+            return (False, "; ".join(bad))
+        return (True, "all 6 factor weights within expected tuned range")
+    except Exception as e:
+        return (False, f"check failed: {e}")
+
+
+def _check_voter_persist_fix() -> tuple[bool, str]:
+    """Verify the 2026-05-02 _voter_value muted-handling fix is in place.
+
+    Reads ensemble_models.py source for the _MISSING_STATUSES set —
+    catches accidental rollback of the fix that was breaking self-learner
+    attribution for muted voters.
+    """
+    try:
+        path = _REPO_ROOT / "src" / "ml" / "ensemble_models.py"
+        body = path.read_text(encoding="utf-8")
+        if "_MISSING_STATUSES" in body and '"unavailable"' in body and '"disabled"' in body:
+            return (True, "_voter_value uses _MISSING_STATUSES set (fix in place)")
+        return (False, "voter persist fix appears reverted — _MISSING_STATUSES missing")
+    except Exception as e:
+        return (False, f"check failed: {e}")
+
+
+def _check_ml_majority_keys() -> tuple[bool, str]:
+    """Smoke: get_ensemble_prediction returns ml_majority_disagrees +
+    decisive_ratio in model_agreement. Catches accidental revert of the
+    2026-05-02 observability additions.
+    """
+    try:
+        # Just check source has the keys — running a full ensemble call here
+        # would require live data and 30+ seconds.
+        path = _REPO_ROOT / "src" / "ml" / "ensemble_models.py"
+        body = path.read_text(encoding="utf-8")
+        missing = []
+        for key in ("ml_majority", "decisive_ratio", "ml_majority_disagrees"):
+            if key not in body:
+                missing.append(key)
+        if missing:
+            return (False, f"missing keys in ensemble_models.py: {missing}")
+        return (True, "ml_majority_disagrees + decisive_ratio + ml_majority all defined")
+    except Exception as e:
+        return (False, f"check failed: {e}")
+
+
 CHECKS = [
     ("calibration_killswitch", _check_calibration_killswitch),
     ("calibration_pkl_neutral", _check_calibration_pkl),
@@ -280,6 +348,10 @@ CHECKS = [
     ("db_clean", _check_db_state),
     ("voter_weights", _check_voter_weights_sum),
     ("env_safety_flags", _check_env_safety_flags),
+    # 2026-05-02 audit additions
+    ("factor_weights_tuned", _check_factor_weights_tuned),
+    ("voter_persist_fix", _check_voter_persist_fix),
+    ("ml_majority_keys", _check_ml_majority_keys),
 ]
 
 
