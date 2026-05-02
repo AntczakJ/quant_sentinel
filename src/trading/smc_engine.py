@@ -1552,12 +1552,14 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
        and analysis.get('macro_regime') == "zielony" \
        and analysis.get('ichimoku_above_cloud'):
         # 2026-04-26: softened −15 → −7 after asymmetry FLIP discovered.
-        # B1 was derived from pre-B1-B5 data (33 trades) where LONG was
-        # broken; with B1-B4 active, LONG is now ≥ neutral and SHORT bleeds.
-        # Heavy penalty was cutting working trades. See
-        # memory/asymmetry_flip_2026-04-26.md.
-        score -= 7
-        factors_detail['toxic_combo_macro_ichi_bull'] = -7
+        # 2026-05-02 RE-BUMPED 7 → 15: post-Phase-8 retrain (2026-04-30)
+        # the asymmetry flipped BACK — `[M5] Trend Bull + FVG` in macro=zielony
+        # is 0/29 wins per multi_dim_wr.py analysis (cohort 04-06 → 05-02).
+        # The 2026-04-26 softening was correct for that regime; current
+        # data shows LONG-zielony-ichi_bull is the bleed signature again.
+        # Reversible: drop back to 7 if backtest shows over-blocking.
+        score -= 15
+        factors_detail['toxic_combo_macro_ichi_bull'] = -15
 
     # B7 (2026-04-26 evening): inverse of B1 — SHORT in bullish macro regime
     # is fighting the tape. Loosened-B1B4 backtest showed SHORT n=12 / WR 25%

@@ -595,7 +595,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                            "fvg_direction", rsi=current_rsi, trend=current_trend, atr=current_atr)
             return None
 
-    # --- 3c. ML-MAJORITY GATE (env-flagged, 2026-05-02) ---
+    # --- 3c. ML-MAJORITY + DECISIVE_RATIO GATES (env-flagged, 2026-05-02) ---
     # When QUANT_ML_MAJORITY_GATE=1, block trade if 2+ ML voters
     # (xgb/lstm/attention/v2_xgb) agreed on the OPPOSITE direction of
     # what the ensemble produced. The 5/5 LONG-LOSS streak (#217-221)
@@ -604,11 +604,46 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # Default OFF: collect ml_majority_disagrees observability data
     # first, flip ON after empirical validation that the gate doesn't
     # over-block winning trades.
+    #
+    # QUANT_DECISIVE_GATE_MIN (e.g. "0.60") additionally blocks when
+    # decisive_ratio (consensus among voters that took a side) is below
+    # the threshold. Companion gate — catches "split decision" trades
+    # where directional voters disagree among themselves. Default unset
+    # = disabled.
     import os as _os_mlmaj
+    ed = pos.get('ensemble_data', {}) or {}
+    mag = ed.get('model_agreement', {}) or {}
+
+    # Decisive_ratio gate (precedes ml_majority since it's a more general
+    # split-decision check)
+    _decisive_min_str = _os_mlmaj.environ.get("QUANT_DECISIVE_GATE_MIN", "")
+    if _decisive_min_str:
+        try:
+            _decisive_min = float(_decisive_min_str)
+        except ValueError:
+            _decisive_min = 0.0
+        if _decisive_min > 0:
+            dr = mag.get('decisive_ratio', 1.0)
+            decisive_voters = (mag.get('long', 0) + mag.get('short', 0))
+            # Only enforce when at least 3 decisive voters; otherwise sample
+            # too small for the ratio to be meaningful.
+            if decisive_voters >= 3 and dr < _decisive_min:
+                logger.info(
+                    f"🔍 [MTF] {tf}: decisive_ratio={dr:.2f} < {_decisive_min:.2f} "
+                    f"(L={mag.get('long')} S={mag.get('short')} N={mag.get('neutral')}) "
+                    f"— pomijam (QUANT_DECISIVE_GATE_MIN)"
+                )
+                _log_rejection(
+                    db, tf, direction, current_price,
+                    f"decisive_ratio={dr:.2f}<{_decisive_min:.2f}",
+                    "decisive_ratio_gate",
+                    rsi=current_rsi, trend=current_trend,
+                    pattern=pos.get('pattern', ''), atr=current_atr,
+                )
+                return None
+
     if _os_mlmaj.environ.get("QUANT_ML_MAJORITY_GATE") == "1":
-        ed = pos.get('ensemble_data', {}) or {}
         if ed.get('ml_majority_disagrees'):
-            mag = ed.get('model_agreement', {})
             ml_maj_dir = mag.get('ml_majority', '?')
             ml_long = mag.get('ml_long', 0)
             ml_short = mag.get('ml_short', 0)
