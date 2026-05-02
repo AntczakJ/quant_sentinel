@@ -216,12 +216,15 @@ tonight is the safety net. Full rebuild = next session.
 ### Live trading defense stack (added 2026-04-22 → 24)
 - **Pause flag kill-switch**: create `data/SCANNER_PAUSED` file → BG scanner
   skips cycles without killing API. Delete to resume.
-- **Streak auto-pause**: 5 consecutive LOSS within 6h → auto-create pause
+- **Streak auto-pause**: 8 consecutive LOSS within 6h → auto-create pause
   flag + Telegram alert. Stale streaks (oldest > 6h) are ignored.
+  (Threshold raised 5→8 on 2026-04-26 after loosened-B1B4 backtest
+  showed max-consec-losses 16/30d as natural variance; api/main.py:552.)
 - **Toxic pattern filter**: queries `pattern_stats` for the real
   `[tf] Trend Bull|Bear + FVG` key. Blocks when `n≥20 AND WR<30%`.
-  Currently `[M5] Trend Bull + FVG` at 3W/12L=20% but only n=15 — not
-  yet triggering (needs 5 more trades to re-evaluate).
+  As of 2026-05-02 audit: `[M5] Trend Bull + FVG` at 3W/16L=15.8% with
+  n=19 — **one more LOSS triggers auto-block** (count=20). System is
+  one trade from a meaningful self-defense kicking in.
 - **B-grade scalp soften**: B (score 25-44) allowed on 5m/15m/30m only
   when `≥5 non-penalty factors AND score ≥35`. Otherwise blocked.
 - **SMT magnitude threshold**: USDJPY divergence only fires when

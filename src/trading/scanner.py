@@ -660,7 +660,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     if _premium_override_5m and (is_premium or is_discount):
         logger.info(f"[MTF] {tf}: {direction_str} w strefie "
                     f"{'premium' if is_premium else 'discount'} dozwolone "
-                    f"(confluence={confluence_count}>=3) — scalp override")
+                    f"(confluence={confluence_count}>=2) — scalp override")
 
     # --- 6e. LOSS PATTERN CHECK (nowe!) ---
     try:
