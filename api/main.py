@@ -99,10 +99,14 @@ except Exception as _logfire_err:  # pragma: no cover
 # Explicitly clear any backtest-mode env vars that might have leaked from
 # a shell session. Production API must NEVER apply relaxed filters.
 # Runs before any src.* imports.
+_LEAKED_BT_FLAGS: list = []
 for _bt_flag in ("QUANT_BACKTEST_MODE", "QUANT_BACKTEST_RELAX"):
     if os.environ.get(_bt_flag):
-        print(f"[PRODUCTION API] WARNING: {_bt_flag} was set, clearing for safety", flush=True)
+        _LEAKED_BT_FLAGS.append(_bt_flag)
+        print(f"[PRODUCTION API] CRITICAL: {_bt_flag} was set, clearing for safety", flush=True)
     os.environ.pop(_bt_flag, None)
+# Also clear the live SCANNER_PAUSED auto-flag if it has stale content (safety
+# noop — only logs, doesn't delete; operator deletes manually).
 
 # Process start time for uptime tracking
 _start_time = _time.monotonic()
@@ -959,7 +963,7 @@ def _apply_voter_attribution(db, trade_id, status, direction):
         from src.ml.ensemble_models import update_ensemble_weights
         pred_row = db._query_one(
             "SELECT lstm_pred, xgb_pred, smc_pred, "
-            "attention_pred, deeptrans_pred "
+            "attention_pred, deeptrans_pred, dqn_action "
             "FROM ml_predictions WHERE trade_id=? "
             "ORDER BY id DESC LIMIT 1",
             (trade_id,),
@@ -970,13 +974,35 @@ def _apply_voter_attribution(db, trade_id, status, direction):
             (status == "WIN" and direction == "LONG")
             or (status == "LOSS" and direction == "SHORT")
         )
-        voters = ("lstm", "xgb", "smc", "attention", "deeptrans")
+        # Probabilistic voters (value > 0.5 = LONG vote)
+        prob_voters = ("lstm", "xgb", "smc", "attention", "deeptrans")
         correct, incorrect = [], []
-        for name, pval in zip(voters, pred_row):
+        for name, pval in zip(prob_voters, pred_row[:5]):
             if pval is None:
                 continue
             voted_long = float(pval) > 0.5
             (correct if voted_long == long_was_winning else incorrect).append(name)
+        # DQN: integer action 0=HOLD, 1=BUY/LONG, 2=SELL/SHORT.
+        # Only attribute when DQN actually voted (skip HOLD).
+        # 2026-05-02 audit fix: DQN was previously frozen at init weight
+        # because it was excluded from the voters tuple — same root-cause
+        # as muted-voter persistence bug (commit 1a253cf).
+        dqn_action = pred_row[5] if len(pred_row) > 5 else None
+        if dqn_action is not None:
+            try:
+                action_int = int(dqn_action)
+            except (ValueError, TypeError):
+                action_int = 0
+            if action_int == 1:    # BUY → LONG vote
+                voted_long = True
+                voted = True
+            elif action_int == 2:  # SELL → SHORT vote
+                voted_long = False
+                voted = True
+            else:                  # HOLD → no vote, no attribution
+                voted = False
+            if voted:
+                (correct if voted_long == long_was_winning else incorrect).append("dqn")
         if correct or incorrect:
             update_ensemble_weights(
                 correct_models=correct,

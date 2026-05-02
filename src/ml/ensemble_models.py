@@ -1299,10 +1299,18 @@ def get_ensemble_prediction(
         logger.warning("Ensemble: total_weight=0 (no active voters) — forcing CZEKAJ")
 
     # ========== MODEL AGREEMENT FILTER ==========
-    # Sprawdź czy modele się zgadzają w kierunku
-    # Wymagamy >= 60% modeli w tym samym kierunku (ale nie blokujemy przy 2 modelach)
+    # `agreement_ratio` = max(long,short) / total_available_voters.
+    # Neutrals (0.45<=val<=0.55) count as "uncertain" against agreement,
+    # which makes the metric defensive in muddy regimes.
+    #
+    # `decisive_ratio` (added 2026-05-02 audit) = max(long,short) /
+    # (long+short). Reflects consensus AMONG voters that took a side,
+    # ignoring neutrals. Useful for diagnostics but NOT used for the
+    # block threshold at line 1398 (we keep penalizing uncertainty).
     agreement_ratio = 0.0
+    decisive_ratio = 0.0
     agreement_direction = "NEUTRAL"
+    decisive_voters = models_long + models_short
     if available_models > 0:
         long_ratio = models_long / available_models
         short_ratio = models_short / available_models
@@ -1311,13 +1319,17 @@ def get_ensemble_prediction(
             agreement_direction = "LONG"
         elif short_ratio > long_ratio:
             agreement_direction = "SHORT"
+    if decisive_voters > 0:
+        decisive_ratio = max(models_long, models_short) / decisive_voters
 
     results["model_agreement"] = {
         "ratio": round(agreement_ratio, 2),
+        "decisive_ratio": round(decisive_ratio, 2),
         "direction": agreement_direction,
         "long": models_long,
         "short": models_short,
         "neutral": models_neutral,
+        "available": available_models,
     }
 
     # ========== HIGH-CONFIDENCE MODEL COUNT ==========

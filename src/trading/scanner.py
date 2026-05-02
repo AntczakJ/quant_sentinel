@@ -416,6 +416,16 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         _os_bt.environ.get("QUANT_BACKTEST_RELAX") == "1"
         and _os_bt.environ.get("QUANT_BACKTEST_MODE") == "1"
     )
+    # Defense-in-depth: api/main.py:98 clears these env vars at startup, but
+    # if a worker re-acquired them somehow, this is the last line of defense.
+    # Log loudly (once-per-process) so the leak is visible.
+    if _relax and not getattr(_evaluate_tf_for_trade, "_relax_warned", False):
+        logger.error(
+            "[SAFETY] _relax=True in scanner but should be production. "
+            "QUANT_BACKTEST_RELAX/MODE leaked to worker — investigate env! "
+            "Production filters will use backtest thresholds until restart."
+        )
+        _evaluate_tf_for_trade._relax_warned = True  # type: ignore[attr-defined]
 
     # --- 3a. DIRECTIONAL ALIGNMENT CHECK (new) ---
     # BOS/CHoCH must agree with trade direction — don't trade against structure
@@ -525,15 +535,10 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                        trend=current_trend, pattern=pattern, atr=current_atr)
         return None
 
-    # --- 3b. FILTR KIERUNKU vs FVG ---
-    # Upewnij się że FVG potwierdza kierunek (nie shortuj z bullish FVG!)
-    if has_fvg:
-        if current_trend == "bull" and current_fvg_type == "bearish":
-            logger.info(f"🔍 [MTF] {tf}: FVG bearish vs trend bull — konfluencja słaba, pomijam")
-            return None
-        if current_trend == "bear" and current_fvg_type == "bullish":
-            logger.info(f"🔍 [MTF] {tf}: FVG bullish vs trend bear — konfluencja słaba, pomijam")
-            return None
+    # --- 3b. FVG-direction check moved below to AFTER direction_str is set
+    # (line 553+). Previous version used current_trend as proxy for trade
+    # direction, which would block legitimate ML-override setups where the
+    # proposed direction differs from EMA trend. 2026-05-02 audit fix.
 
     # --- 4. OBLICZENIE POZYCJI (SL/TP/kierunek) ---
     # Pass empty DataFrame to skip redundant ML candle fetch inside calculate_position —
@@ -556,6 +561,22 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     tp = pos['tp']
     lot = pos.get('lot', 0.01)
     logic = pos.get('logic', '')
+
+    # --- 3b. FVG-DIRECTION CHECK (moved from line 530, 2026-05-02) ---
+    # Block when FVG opposes the actual trade direction (not just trend).
+    # FVG bearish + LONG trade = setup contradicts itself; same for inverse.
+    # This now correctly handles ML-override cases where direction != trend.
+    if has_fvg:
+        if direction == "LONG" and current_fvg_type == "bearish":
+            logger.info(f"🔍 [MTF] {tf}: FVG bearish vs LONG direction — konfluencja słaba, pomijam")
+            _log_rejection(db, tf, "LONG", current_price, "fvg_bearish_vs_long",
+                           "fvg_direction", rsi=current_rsi, trend=current_trend, atr=current_atr)
+            return None
+        if direction == "SHORT" and current_fvg_type == "bullish":
+            logger.info(f"🔍 [MTF] {tf}: FVG bullish vs SHORT direction — konfluencja słaba, pomijam")
+            _log_rejection(db, tf, "SHORT", current_price, "fvg_bullish_vs_short",
+                           "fvg_direction", rsi=current_rsi, trend=current_trend, atr=current_atr)
+            return None
 
     # --- 5. ML ENSEMBLE VALIDATION (BLOKUJĄCE jeśli ML silnie się nie zgadza) ---
     ml_info = ""
