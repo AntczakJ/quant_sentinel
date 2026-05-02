@@ -654,9 +654,13 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         if _short_veto_T > 0:
             try:
                 from src.ml.short_shadow import predict_short_xgb
-                import pandas as _pd
-                # Use the cached candle batch from analysis (scanner already fetched)
-                _df_for_veto = analysis.get('df_full') or _pd.DataFrame()
+                from src.data.data_sources import get_provider as _get_p
+                # Fetch its own df — analysis dict doesn't carry full OHLCV.
+                # Same data provider scanner uses; rate-limiter respects budget.
+                _provider = _get_p()
+                _df_for_veto = _provider.get_candles('XAU/USD', tf, 200)
+                if _df_for_veto is None or _df_for_veto.empty:
+                    raise RuntimeError("no candles for veto")
                 _short_p = predict_short_xgb(_df_for_veto)
                 if _short_p is not None and _short_p > _short_veto_T:
                     logger.info(
