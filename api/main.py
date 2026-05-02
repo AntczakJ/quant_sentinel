@@ -963,7 +963,7 @@ def _apply_voter_attribution(db, trade_id, status, direction):
         from src.ml.ensemble_models import update_ensemble_weights
         pred_row = db._query_one(
             "SELECT lstm_pred, xgb_pred, smc_pred, "
-            "attention_pred, deeptrans_pred, dqn_action "
+            "attention_pred, deeptrans_pred, v2_xgb_pred, dqn_action "
             "FROM ml_predictions WHERE trade_id=? "
             "ORDER BY id DESC LIMIT 1",
             (trade_id,),
@@ -975,9 +975,9 @@ def _apply_voter_attribution(db, trade_id, status, direction):
             or (status == "LOSS" and direction == "SHORT")
         )
         # Probabilistic voters (value > 0.5 = LONG vote)
-        prob_voters = ("lstm", "xgb", "smc", "attention", "deeptrans")
+        prob_voters = ("lstm", "xgb", "smc", "attention", "deeptrans", "v2_xgb")
         correct, incorrect = [], []
-        for name, pval in zip(prob_voters, pred_row[:5]):
+        for name, pval in zip(prob_voters, pred_row[:6]):
             if pval is None:
                 continue
             voted_long = float(pval) > 0.5
@@ -987,7 +987,7 @@ def _apply_voter_attribution(db, trade_id, status, direction):
         # 2026-05-02 audit fix: DQN was previously frozen at init weight
         # because it was excluded from the voters tuple — same root-cause
         # as muted-voter persistence bug (commit 1a253cf).
-        dqn_action = pred_row[5] if len(pred_row) > 5 else None
+        dqn_action = pred_row[6] if len(pred_row) > 6 else None
         if dqn_action is not None:
             try:
                 action_int = int(dqn_action)

@@ -252,7 +252,8 @@ class NewsDB:
             id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             trade_id INTEGER, lstm_pred REAL, xgb_pred REAL, dqn_action INTEGER,
             ensemble_score REAL, ensemble_signal TEXT, confidence REAL, predictions_json TEXT,
-            smc_pred REAL, attention_pred REAL, dpformer_pred REAL, deeptrans_pred REAL)""")
+            smc_pred REAL, attention_pred REAL, dpformer_pred REAL, deeptrans_pred REAL,
+            v2_xgb_pred REAL)""")
         self._execute("""CREATE TABLE IF NOT EXISTS regime_stats (
             id INTEGER PRIMARY KEY AUTOINCREMENT, regime TEXT NOT NULL, session TEXT NOT NULL,
             direction TEXT NOT NULL, count INTEGER DEFAULT 0, wins INTEGER DEFAULT 0,
@@ -377,7 +378,7 @@ class NewsDB:
         # created before the ensemble grew past lstm/xgb/dqn. predictions_json
         # already stores the full payload; these columns are for cheap SQL
         # filtering / joins without JSON parsing.
-        for col in ("smc_pred", "attention_pred", "dpformer_pred", "deeptrans_pred"):
+        for col in ("smc_pred", "attention_pred", "dpformer_pred", "deeptrans_pred", "v2_xgb_pred"):
             try:
                 with _db_locked():
                     self.cursor.execute(f"ALTER TABLE ml_predictions ADD COLUMN {col} REAL")

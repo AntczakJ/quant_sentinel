@@ -864,8 +864,9 @@ def _persist_prediction(results: Dict):
             INSERT INTO ml_predictions
             (lstm_pred, xgb_pred, dqn_action, ensemble_score, ensemble_signal,
              confidence, predictions_json,
-             smc_pred, attention_pred, dpformer_pred, deeptrans_pred)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             smc_pred, attention_pred, dpformer_pred, deeptrans_pred,
+             v2_xgb_pred)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             results['predictions'].get('lstm', {}).get('value'),
             results['predictions'].get('xgb', {}).get('value'),
@@ -878,6 +879,7 @@ def _persist_prediction(results: Dict):
             _voter_value('attention'),
             _voter_value('dpformer'),
             _voter_value('deeptrans'),
+            _voter_value('v2_xgb'),
         ))
     except Exception as e:
         # Escalated from debug -> warning. Losing ensemble predictions means
