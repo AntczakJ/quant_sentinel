@@ -133,16 +133,36 @@ class ModelCalibrator:
         """
         Fit Platt scaling from historical predictions stored in ml_predictions table.
 
-        Matches predictions with trade outcomes to create (prediction, label) pairs.
+        Uses CORRECTED LABELS (2026-05-02 fix): the model's raw output is
+        P(LONG wins). For Platt to fit a sane positive `a`, the binary
+        label must equal 1 iff "LONG would have won at this bar".
+
+          - LONG WIN  → LONG won            → label = 1
+          - LONG LOSS → LONG lost           → label = 0
+          - SHORT WIN → SHORT won = LONG    → label = 0
+                        would have lost
+          - SHORT LOSS → SHORT lost = LONG  → label = 1
+                         would have won
+
+        Previous implementation used label=(status=='WIN') across mixed
+        directions, which broke the correlation: high raw with SHORT WIN
+        (= LONG would lose, label=1 in old impl) → spurious negative `a`.
+
+        Per-direction scalers were considered but rejected: at our cohort
+        size (~50 trades) we barely meet MIN_CALIBRATION_SAMPLES=50 with
+        all directions pooled; splitting halves data per direction.
         """
         try:
             from src.core.database import NewsDB
             db = NewsDB()
 
-            # Get recent predictions with their outcomes
+            # Get recent predictions joined with their TRADE direction
+            # (added 2026-05-02 — was previously missing).
             rows = db._query("""
                 SELECT mp.lstm_pred, mp.xgb_pred, mp.dqn_action,
-                       mp.ensemble_signal, t.status
+                       mp.smc_pred, mp.attention_pred, mp.deeptrans_pred,
+                       mp.v2_xgb_pred,
+                       mp.ensemble_signal, t.status, t.direction
                 FROM ml_predictions mp
                 JOIN trades t ON DATE(mp.timestamp) = DATE(t.timestamp)
                     AND ABS(julianday(mp.timestamp) - julianday(t.timestamp)) < 0.02
@@ -159,35 +179,85 @@ class ModelCalibrator:
             labels = []
 
             for row in rows:
-                lstm_pred, xgb_pred, dqn_action, _, status = row
-                label = 1 if status == 'WIN' else 0
+                (lstm_pred, xgb_pred, dqn_action, smc_pred,
+                 attn_pred, deeptrans_pred, v2_xgb_pred,
+                 _ensemble_signal, status, direction) = row
+                # CORRECTED LABEL: 1 iff LONG would have won
+                long_would_win = (
+                    (status == 'WIN' and direction == 'LONG')
+                    or (status == 'LOSS' and direction == 'SHORT')
+                )
+                label = 1 if long_would_win else 0
 
+                # Pick raw prediction by model name
+                raw = None
                 if model_name == "lstm" and lstm_pred is not None:
-                    predictions.append(float(lstm_pred))
-                    labels.append(label)
+                    raw = float(lstm_pred)
                 elif model_name == "xgb" and xgb_pred is not None:
-                    predictions.append(float(xgb_pred))
-                    labels.append(label)
+                    raw = float(xgb_pred)
+                elif model_name == "smc" and smc_pred is not None:
+                    raw = float(smc_pred)
+                elif model_name == "attention" and attn_pred is not None:
+                    raw = float(attn_pred)
+                elif model_name == "deeptrans" and deeptrans_pred is not None:
+                    raw = float(deeptrans_pred)
+                elif model_name == "v2_xgb" and v2_xgb_pred is not None:
+                    raw = float(v2_xgb_pred)
                 elif model_name == "dqn" and dqn_action is not None:
-                    # DQN: map action to signal (0=0.5, 1=0.8, 2=0.2)
-                    dqn_signal = {0: 0.5, 1: 0.8, 2: 0.2}.get(int(dqn_action), 0.5)
-                    predictions.append(dqn_signal)
+                    # DQN action 0=HOLD,1=BUY/LONG,2=SELL/SHORT.
+                    # Map to P(LONG wins): action=1→0.8 (high P LONG),
+                    # action=2→0.2 (low P LONG = high P SHORT), action=0→0.5
+                    raw = {0: 0.5, 1: 0.8, 2: 0.2}.get(int(dqn_action), 0.5)
+
+                if raw is not None:
+                    predictions.append(raw)
                     labels.append(label)
 
             if len(predictions) < MIN_CALIBRATION_SAMPLES:
+                logger.info(
+                    f"Calibration {model_name}: only {len(predictions)} samples "
+                    f"after filtering — need {MIN_CALIBRATION_SAMPLES}"
+                )
                 return
 
             preds_arr = np.array(predictions)
             labels_arr = np.array(labels)
 
+            # Sanity: refuse to fit if labels are degenerate (all-1 or all-0)
+            n_pos = int(np.sum(labels_arr == 1))
+            n_neg = int(np.sum(labels_arr == 0))
+            if n_pos == 0 or n_neg == 0:
+                logger.warning(
+                    f"Calibration {model_name}: degenerate labels "
+                    f"(pos={n_pos} neg={n_neg}) — skipping fit"
+                )
+                return
+
             scaler = PlattScaler()
             scaler.fit(preds_arr, labels_arr)
+
+            # 2026-05-02 safeguard: refuse to install a scaler with a<0.
+            # Negative `a` means the sigmoid is monotonically decreasing
+            # in the input — i.e., the calibrator would INVERT every
+            # raw prediction. Almost always a sign of data prep bug
+            # (label/direction mismatch). Better to leave model
+            # uncalibrated than ship an inverter.
+            if scaler.fitted and scaler.a < 0:
+                logger.warning(
+                    f"Calibration {model_name}: refused to install — "
+                    f"fitted A={scaler.a:.4f} < 0 would invert predictions. "
+                    f"Likely data issue (n_pos={n_pos}, n_neg={n_neg}). "
+                    f"Leaving uncalibrated."
+                )
+                return
+
             self._scalers[model_name] = scaler
             self._save()
 
             logger.info(
                 f"Calibration fitted for {model_name}: "
-                f"A={scaler.a:.4f}, B={scaler.b:.4f} (n={len(predictions)})"
+                f"A={scaler.a:.4f}, B={scaler.b:.4f} "
+                f"(n={len(predictions)} pos={n_pos} neg={n_neg})"
             )
 
         except (ImportError, AttributeError, TypeError, ValueError) as e:
@@ -226,8 +296,13 @@ class ModelCalibrator:
         return model_name in self._scalers and self._scalers[model_name].fitted
 
     def fit_all(self):
-        """Fit calibration for all models from historical data."""
-        for name in ["lstm", "xgb", "dqn"]:
+        """Fit calibration for all models from historical data.
+
+        2026-05-02: extended from {lstm, xgb, dqn} to all 7 voters now
+        that smc/attention/deeptrans/v2_xgb columns are populated by
+        the muted-voter persistence fix (commit 1a253cf).
+        """
+        for name in ["lstm", "xgb", "smc", "attention", "deeptrans", "v2_xgb", "dqn"]:
             self.fit_from_history(name)
 
     def get_status(self) -> dict:
