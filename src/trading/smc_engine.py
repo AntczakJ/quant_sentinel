@@ -794,6 +794,8 @@ def find_ob_confluence(df: pd.DataFrame, trend: str, threshold: float = 0.005) -
     groups = []
     for b in blocks:
         price = b['price']
+        if price == 0:
+            continue
         found = False
         for g in groups:
             if abs(g[0] - price) / price < threshold:
