@@ -611,6 +611,10 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
             'final_score': round(ensemble_result.get('final_score', 0), 3),
             'confidence': round(ensemble_result.get('confidence', 0), 2),
             'models_available': ensemble_result.get('models_available', 0),
+            # 2026-05-02: surface ml_majority_disagrees + model_agreement
+            # so scanner can gate on them without recomputing.
+            'ml_majority_disagrees': ensemble_result.get('ml_majority_disagrees', False),
+            'model_agreement': ensemble_result.get('model_agreement', {}),
             'predictions': {
                 k: {
                     'direction': v.get('direction'),

@@ -595,6 +595,37 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                            "fvg_direction", rsi=current_rsi, trend=current_trend, atr=current_atr)
             return None
 
+    # --- 3c. ML-MAJORITY GATE (env-flagged, 2026-05-02) ---
+    # When QUANT_ML_MAJORITY_GATE=1, block trade if 2+ ML voters
+    # (xgb/lstm/attention/v2_xgb) agreed on the OPPOSITE direction of
+    # what the ensemble produced. The 5/5 LONG-LOSS streak (#217-221)
+    # had this exact signature: xgb 0.28 SHORT, lstm 0.46 SHORT, attn
+    # 0.48 SHORT — but ensemble fired LONG due to SMC + weight gates.
+    # Default OFF: collect ml_majority_disagrees observability data
+    # first, flip ON after empirical validation that the gate doesn't
+    # over-block winning trades.
+    import os as _os_mlmaj
+    if _os_mlmaj.environ.get("QUANT_ML_MAJORITY_GATE") == "1":
+        ed = pos.get('ensemble_data', {}) or {}
+        if ed.get('ml_majority_disagrees'):
+            mag = ed.get('model_agreement', {})
+            ml_maj_dir = mag.get('ml_majority', '?')
+            ml_long = mag.get('ml_long', 0)
+            ml_short = mag.get('ml_short', 0)
+            logger.info(
+                f"🔍 [MTF] {tf}: ML majority disagrees with {direction} "
+                f"(ML votes: long={ml_long} short={ml_short}, ml_majority={ml_maj_dir}) "
+                f"— pomijam (QUANT_ML_MAJORITY_GATE=1)"
+            )
+            _log_rejection(
+                db, tf, direction, current_price,
+                f"ml_maj_disagrees_long{ml_long}_short{ml_short}",
+                "ml_majority_gate",
+                rsi=current_rsi, trend=current_trend,
+                pattern=pos.get('pattern', ''), atr=current_atr,
+            )
+            return None
+
     # --- 5. ML ENSEMBLE VALIDATION (BLOKUJĄCE jeśli ML silnie się nie zgadza) ---
     ml_info = ""
     ensemble_result = None  # zachowaj ensemble result do zapisu w bazie
