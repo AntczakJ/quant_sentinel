@@ -804,7 +804,9 @@ def find_ob_confluence(df: pd.DataFrame, trend: str, threshold: float = 0.005) -
                 break
         if not found:
             groups.append([price])
-    max_confluence = max(len(g) for g in groups)
+    # default=0 protects against ValueError when all blocks had price==0
+    # (rare but observed in some upstream feeds during outlier ticks).
+    max_confluence = max((len(g) for g in groups), default=0)
     return min(max_confluence, 3)
 
 def detect_supply_demand(df: pd.DataFrame) -> dict:
@@ -968,8 +970,15 @@ def get_smc_analysis(tf: str) -> dict | None:
 
         # 4. ATR i reżim makro
         atr = calculate_atr(df)
-        # Średnia ATR z całego dostępnego okresu (lub ostatnich 14 wartości)
-        atr_mean = df['tr'].rolling(window=14).mean().mean() if 'tr' in df.columns else atr
+        # Średnia ATR z ostatnich 14 wartości. 2026-05-02 audit: chained
+        # .mean().mean() returned silent NaN when df has <14 valid TR values,
+        # which then leaked into get_macro_regime and silently treated
+        # high-vol as neutral. Replaced with single .tail(14).mean() that's
+        # equivalent on stable data and explicitly NaN-safe.
+        if 'tr' in df.columns and df['tr'].notna().sum() >= 14:
+            atr_mean = df['tr'].tail(14).mean()
+        else:
+            atr_mean = atr
         macro = get_macro_regime(usdjpy_prices, current_usdjpy, atr, atr_mean)
 
         # 5. SWING POINTS
