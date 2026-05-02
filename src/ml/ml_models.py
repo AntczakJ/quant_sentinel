@@ -29,7 +29,14 @@ _TF_GPU = _GPU_INFO["tf_gpu"]
 _XGB_PARAMS = get_xgb_params()
 
 class MLPredictor:
-    def __init__(self, model_dir='models'):
+    def __init__(self, model_dir=None):
+        # 2026-05-02 audit safety: env var override for output dir to prevent
+        # training runs from overwriting production weights. Set
+        # QUANT_TRAIN_OUTPUT_DIR=models/short_2026-05-02 (or similar) before
+        # an experimental train_all.py run; default remains 'models' for
+        # production retraining workflows.
+        if model_dir is None:
+            model_dir = os.environ.get('QUANT_TRAIN_OUTPUT_DIR', 'models')
         self.model_dir = model_dir
         os.makedirs(model_dir, exist_ok=True)
         self.xgb = None

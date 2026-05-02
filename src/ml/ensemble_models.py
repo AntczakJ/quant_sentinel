@@ -828,6 +828,18 @@ def _persist_prediction(results: Dict):
         vol_pctile = results.get('volatility_percentile', 0.5)
         vol_regime = "low" if vol_pctile < 0.25 else ("high" if vol_pctile > 0.75 else "normal")
 
+        # Shadow log: SHORT-direction XGB prediction for future per-direction
+        # routing. Read-only path — no effect on live signal. See
+        # src/ml/short_shadow.py and memory/next_session_2026-05-02.
+        shadow_short = None
+        try:
+            from src.ml.short_shadow import predict_short_xgb
+            df_for_shadow = results.get('_df_for_shadow')  # set by caller if available
+            if df_for_shadow is not None:
+                shadow_short = predict_short_xgb(df_for_shadow)
+        except Exception as _se:
+            logger.debug(f"shadow_short predict skipped: {_se}")
+
         # Rozszerzony zapis — dodajemy agreement i regime
         predictions_json_ext = json.dumps({
             'predictions': {
@@ -838,6 +850,7 @@ def _persist_prediction(results: Dict):
             'model_agreement': agreement,
             'vol_regime': vol_regime,
             'regime_weights': {k: round(v, 4) for k, v in results.get('regime_weights', {}).items()},
+            'shadow_short_xgb': shadow_short,  # null if model not loaded
         })
 
         # Per-voter columns mirror the JSON blob for fast SQL filtering
@@ -1491,8 +1504,11 @@ def get_ensemble_prediction(
         f"Vol regime: {vol_pctile:.0%}"
     )
 
-    # Persist prediction for post-hoc analysis
+    # Pass df reference for shadow_short logging path; persistor pulls it
+    # by key and clears it after to avoid keeping a stale reference.
+    results['_df_for_shadow'] = df
     _persist_prediction(results)
+    results.pop('_df_for_shadow', None)
 
     return results
 

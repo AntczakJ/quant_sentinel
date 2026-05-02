@@ -58,12 +58,20 @@ def build_attention_model(seq_len: int, n_features: int):
     return model
 
 
-def train_attention_model(df, model_dir='models', seq_len=60, usdjpy_df=None):
+def train_attention_model(df, model_dir=None, seq_len=60, usdjpy_df=None):
     """Train TFT-lite model on OHLCV data.
 
     Uses same features and target as LSTM (from compute.py).
     Returns (model, accuracy) or (None, 0).
+
+    2026-05-02 audit: model_dir defaults to env QUANT_TRAIN_OUTPUT_DIR or
+    'models'. Set the env var before training to a non-production path
+    (e.g., models/short_2026-05-02/) to prevent accidental overwrite of
+    live weights. Inference path still hardcodes 'models' — the override
+    is training-only.
     """
+    if model_dir is None:
+        model_dir = os.environ.get('QUANT_TRAIN_OUTPUT_DIR', 'models')
     from src.analysis.compute import compute_features, compute_target, FEATURE_COLS, get_tf_batch_size
     # Accept usdjpy_df so training picks up macro features if provided by caller
     from tensorflow.keras.callbacks import EarlyStopping
