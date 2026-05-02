@@ -1337,6 +1337,36 @@ def get_ensemble_prediction(
     if decisive_voters > 0:
         decisive_ratio = max(models_long, models_short) / decisive_voters
 
+    # 2026-05-02: ML-only majority direction. Looks at the 4 actual ML voters
+    # (xgb, lstm, attention, v2_xgb) regardless of mute status — captures
+    # what the models THINK before regime/weight gates kick in. If 2+ ML
+    # voters disagreed with the final ensemble signal, the trade is being
+    # taken on SMC + DQN coalition strength, which the 5/5 LONG-LOSS streak
+    # showed to be a high-loss signature. Pure observability for now;
+    # future scanner gate could block when ml_majority_disagrees == True.
+    ml_voters = ("xgb", "lstm", "attention", "v2_xgb")
+    ml_long_count = 0
+    ml_short_count = 0
+    ml_neutral_count = 0
+    for mv in ml_voters:
+        pred = results["predictions"].get(mv, {})
+        # Skip truly-unavailable ML voters
+        if pred.get("status") in ("unavailable", "disabled"):
+            continue
+        val = pred.get("value", 0.5)
+        if val > 0.55:
+            ml_long_count += 1
+        elif val < 0.45:
+            ml_short_count += 1
+        else:
+            ml_neutral_count += 1
+    if ml_long_count > ml_short_count:
+        ml_majority = "LONG"
+    elif ml_short_count > ml_long_count:
+        ml_majority = "SHORT"
+    else:
+        ml_majority = "NEUTRAL"
+
     results["model_agreement"] = {
         "ratio": round(agreement_ratio, 2),
         "decisive_ratio": round(decisive_ratio, 2),
@@ -1345,6 +1375,11 @@ def get_ensemble_prediction(
         "short": models_short,
         "neutral": models_neutral,
         "available": available_models,
+        # ML-only observer
+        "ml_majority": ml_majority,
+        "ml_long": ml_long_count,
+        "ml_short": ml_short_count,
+        "ml_neutral": ml_neutral_count,
     }
 
     # ========== HIGH-CONFIDENCE MODEL COUNT ==========
@@ -1476,6 +1511,18 @@ def get_ensemble_prediction(
     results["models_available"] = available_models
     results["regime_weights"] = regime_weights
     results["volatility_percentile"] = round(vol_pctile, 3)
+
+    # 2026-05-02 observer: flag when ML-majority disagrees with final signal.
+    # In the 5/5 LONG-LOSS streak, ML voters individually voted SHORT (xgb
+    # 0.28, lstm 0.46, attn 0.48) but ensemble fired LONG due to SMC + weight
+    # gates. ml_majority_disagrees catches that signature in subsequent
+    # cycles. Pure metric — no behavior change yet.
+    final = results.get("ensemble_signal", "CZEKAJ")
+    ml_maj = results["model_agreement"].get("ml_majority", "NEUTRAL")
+    if final in ("LONG", "SHORT") and ml_maj in ("LONG", "SHORT") and ml_maj != final:
+        results["ml_majority_disagrees"] = True
+    else:
+        results["ml_majority_disagrees"] = False
 
     # Instrument ensemble outcome for /api/metrics (confidence distribution + signal rate)
     try:
