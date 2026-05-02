@@ -254,16 +254,50 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
             logic += f" [ML: {ensemble_result.get('confidence', 0):.0%}⚠️]"
 
             # BLOKADA: Jeśli ML ma wysoką pewność i mówi inaczej niż SMC — nie otwieraj trade'a
-            # Scalp mode: raise conflict threshold from 55% → 65% (ML needs very
-            # high conviction to veto a scalp; small SL limits downside anyway).
-            conflict_threshold = 0.65 if is_scalp else 0.55
+            # 2026-05-02 audit lowered scalp threshold 0.65 → 0.50. The 0.65
+            # gate was set when LSTM_BULLISH_ONLY masked LSTM bearish votes —
+            # post-Phase-8 retrain (2026-04-30) all 4 ML voters bidirectional,
+            # so a 0.50 conviction from the ensemble is now substantively
+            # different from "model uncertain". Earlier high gate let the
+            # 5/5 LONG-LOSS streak through despite ensemble weak-LONG votes.
+            #
+            # Toxic-imminent override: if scanner tagged the SMC pattern as
+            # near-toxic (n>=15 WR<35%), drop the conflict threshold to ZERO
+            # — any ML disagreement with conviction blocks. This lets the
+            # system self-defend BEFORE the full toxic n>=20 threshold engages.
+            toxic_imminent = analysis_data.get('_toxic_imminent', False)
+            if toxic_imminent:
+                conflict_threshold = 0.30
+            else:
+                conflict_threshold = 0.50 if is_scalp else 0.55
             if ensemble_result.get('confidence', 0) > conflict_threshold:
                 _bump_metric("trades_rejected")
+                tox_note = f" (TOXIC-IMM gate)" if toxic_imminent else ""
                 return {
                     "direction": "CZEKAJ",
-                    "reason": f"ML ({ml_signal}, {ensemble_result.get('confidence', 0):.0%}) konflikt z SMC ({direction}) — czekamy",
+                    "reason": f"ML ({ml_signal}, {ensemble_result.get('confidence', 0):.0%}) konflikt z SMC ({direction}){tox_note} — czekamy",
                     "ensemble_data": ensemble_result
                 }
+    # ML support REQUIRED when SMC pattern is toxic-imminent (out of conflict
+    # branch — fires whether ML agrees, disagrees, or is CZEKAJ as long as
+    # the pattern is at-risk). Logic: pattern WR<35% with n>=15 means the
+    # SMC signal alone is no longer reliable; demand ML actively support.
+    toxic_imminent_outer = analysis_data.get('_toxic_imminent', False)
+    if toxic_imminent_outer and ensemble_result:
+        if ml_signal == "CZEKAJ":
+            _bump_metric("trades_rejected")
+            return {
+                "direction": "CZEKAJ",
+                "reason": (
+                    f"toxic-imminent {analysis_data.get('_toxic_pattern_key','?')} "
+                    f"WR={analysis_data.get('_toxic_wr',0):.0%} "
+                    f"(n={analysis_data.get('_toxic_n','?')}) requires active ML support, "
+                    f"got CZEKAJ"
+                ),
+                "ensemble_data": ensemble_result
+            }
+        # ML active but disagrees → handled by conflict block above with the
+        # 0.30 threshold. ML active and agrees → proceed.
 
     # Filtrowanie makro
     if macro_regime == "czerwony" and direction == "LONG":

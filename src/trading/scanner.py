@@ -347,22 +347,39 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
             "SELECT count, wins, losses FROM pattern_stats WHERE pattern = ?",
             (tox_pattern_key,)
         )
-        if tox_row and tox_row[0] >= 20:
-            tox_wr = tox_row[1] / tox_row[0] if tox_row[0] else 0.5
-            if tox_wr < 0.30:
+        if tox_row:
+            tox_n = tox_row[0]
+            tox_wr = tox_row[1] / tox_n if tox_n else 0.5
+            # Hard block: full toxic threshold met (n>=20, WR<30%)
+            if tox_n >= 20 and tox_wr < 0.30:
                 logger.info(
                     f"[MTF] {tf}: toxic pattern '{tox_pattern_key}' "
-                    f"{tox_row[1]}W/{tox_row[2]}L WR={tox_wr:.0%}<30% (n={tox_row[0]}) — pomijam"
+                    f"{tox_row[1]}W/{tox_row[2]}L WR={tox_wr:.0%}<30% (n={tox_n}) — pomijam"
                 )
                 _log_rejection(
                     db, tf, "LONG" if current_trend == "bull" else "SHORT",
                     current_price,
-                    f"toxic_pattern:{tox_pattern_key}_WR{tox_wr:.0%}({tox_row[0]})",
+                    f"toxic_pattern:{tox_pattern_key}_WR{tox_wr:.0%}({tox_n})",
                     "toxic_pattern",
                     rsi=current_rsi, trend=current_trend,
                     pattern=tox_pattern_key, atr=current_atr
                 )
                 return None
+            # 2026-05-02 audit: toxic-IMMINENT filter — pattern is approaching
+            # the 20/30% threshold (n>=15 with WR<35%). Don't auto-block, but
+            # tag analysis so downstream finance.py applies stricter gates.
+            # Used by ML conflict block to insist on ML support before trading
+            # near-toxic patterns. Self-correcting once pattern recovers WR.
+            if tox_n >= 15 and tox_wr < 0.35:
+                logger.warning(
+                    f"[MTF] {tf}: toxic-IMMINENT '{tox_pattern_key}' "
+                    f"{tox_row[1]}W/{tox_row[2]}L WR={tox_wr:.0%} (n={tox_n}) "
+                    f"— stricter ML gate applied"
+                )
+                analysis['_toxic_imminent'] = True
+                analysis['_toxic_pattern_key'] = tox_pattern_key
+                analysis['_toxic_wr'] = tox_wr
+                analysis['_toxic_n'] = tox_n
     except (AttributeError, TypeError, Exception) as _e:
         logger.debug(f"Toxic pattern check failed: {_e}")
 
