@@ -4,6 +4,118 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-05-02 — full audit + 17 commits + factor weight tuning APPLIED
+
+After 49h continuous live run produced 5/5 LONG-LOSS = -$80.94, ran a
+comprehensive audit and shipped 17 commits ranging from safety fixes to
+forward-WR-improving analytics + tuning.
+
+#### Critical bug fixes
+
+- **`1a253cf`** — `_voter_value` persistence. For 24+ days, only lstm/xgb
+  were being self-learner-tuned because muted voters (steady state at
+  weight floor 0.05) had `status="muted_low_weight"` and `_voter_value`
+  returned None for any voter with status field. Now: only
+  `unavailable`/`disabled` → None; muted voters persist their value.
+  Self-learner now tunes all 6 prob voters + DQN.
+- **`f9d9712`** — DQN attribution wired (`dqn_action` 0/1/2 →
+  HOLD/LONG/SHORT). Was previously frozen at init weight.
+- **`0ee0a5d`** — `v2_xgb_pred` schema migration. v2_xgb was invisible
+  to self-learner before; now in the loop.
+- **`bebd89b`** — Phase 8 production weights restored after SHORT
+  training overwrote `models/{xgb,lstm,attention}.{pkl,keras,onnx}`.
+  SHORT models preserved at `models/short_2026-05-02/` (gitignored).
+
+#### Scanner safety + correctness
+
+- **`f9d9712`** — FVG-direction filter moved post-direction-set. Now
+  uses `direction_str` instead of `current_trend` proxy, fixing the
+  case where ML override produces direction != trend.
+- **`0d91f69`** — Toxic-imminent gate (n>=15 AND WR<35% → demand active
+  ML support, drop conflict threshold to 0.30). Self-defends BEFORE the
+  full toxic n>=20 hard block. Currently fires for `[M5] Trend Bull +
+  FVG` (n=22, WR 13.6%, count threshold-imminent).
+- **`0d91f69`** — Lower scalp ML conflict threshold 0.65 → 0.50. Old
+  was tuned when LSTM_BULLISH_ONLY masked LSTM bearish votes;
+  post-Phase-8 all 4 ML voters bidirectional.
+- **`f9d9712`** — `_relax` startup leak detection (logger.error
+  once-per-process if BACKTEST_RELAX leaks to live worker).
+- **`3c829f2`** + **`c6d763d`** — smc_engine defensive fixes:
+  `find_ob_confluence` div-by-zero guard + `max()` empty default,
+  `atr_mean` NaN-safe `tail(14).mean()`.
+
+#### Database hygiene
+
+- **`60381ec`** — `purge_old_rejected_setups(30d)` added to daily
+  retention task. Was unbounded growth (~500 rows/day for 23 days).
+- **`60381ec`** — `report_stale_params(60d)` read-only diagnostic.
+- **`60381ec`** — `from_yfinance` warns CRITICAL when `yf_symbol="GC=F"`
+  used with `symbol="XAU/USD"` ($65-75 spot/futures gap).
+
+#### Observability + analytics (forward-WR)
+
+- **`f9d9712`** — `model_agreement.decisive_ratio` and `available` keys
+  added (additive, no behavior change).
+- **`bd39b55`** — `ml_majority_disagrees` + ml_long/ml_short/ml_neutral
+  counts in agreement output. Catches the 5/5 LONG-LOSS signature
+  (ML voted SHORT but ensemble fired LONG due to SMC + weight gates).
+- **`813a8d2`** — `factor_edge_report.py` empirical factor → outcome
+  correlation. Cohort N=46 baseline 19.6% WR found:
+    bos +20.4pp lift, ichimoku_bear +11.7pp (BUMPS),
+    fvg -11.2pp, killzone -11.2pp, ichimoku_bull -8.5pp, macro -9.6pp (CUTS).
+- **`813a8d2`** — `apply_factor_weight_tuning.py` **APPLIED** to live DB:
+    weight_bos:           1.598 → 1.800
+    weight_ichimoku_bear: 0.926 → 1.150
+    weight_fvg:           1.281 → 0.700
+    weight_killzone:      1.137 → 0.700
+    weight_ichimoku_bull: 1.187 → 0.850
+    weight_macro:         1.108 → 0.800
+  Rollback: `python scripts/apply_factor_weight_tuning.py --rollback`
+- **`14f0c87`** — `hourly_edge_report.py`. Cohort N=46 shows 4-7 UTC
+  and 7-11 UTC consistently lose; 16-17 UTC NY best.
+- **`80d2f4b`** — `analyze_short_shadow.py`. Awaits ≥30 post-restart
+  trades for shadow data accumulation.
+- **`bd39b55`** — `pattern_rolling_wr.py`. All-time vs 30d WR per
+  pattern. Catches regime drift.
+
+#### Training infrastructure
+
+- **`9ef79fc`** — `QUANT_TRAIN_OUTPUT_DIR` env override in
+  `MLPredictor.__init__` + `train_attention_model`. Prevents future
+  SHORT-overwrites-LONG incidents (the 2026-05-02 cause).
+- **`9ef79fc`** — `src/ml/short_shadow.py` SHORT XGB shadow logger
+  wired into `_persist_prediction`. Lazy-loads
+  `models/short_2026-05-02/xgb.pkl` (acc 60.3%); writes
+  `shadow_short_xgb` to predictions_json each cycle. No live impact.
+- **v2_xgb retrain** (background, models saved to `models/v2/`):
+  - LONG XGB v2: best CV MAE (Huber) 1.46
+  - SHORT XGB v2: best CV MAE 1.08 (lower error → SHORT more
+    predictable in current regime)
+  62 features (cross-asset + multi-TF + macro). Production unchanged.
+
+#### Voter correlation re-validation
+
+- Post-restoration re-run confirms Camp B remains broken:
+  lstm↔attention direction agreement 52.9% (vs pre-Phase-8 89.4%).
+  5 effective voters out of 5 loaded, no clusters at |r|>=0.85.
+  Mean off-diagonal direction agreement 60.4%.
+
+#### Tests + docs
+
+- **`77fc171`** — 7 audit regression tests covering all FAZA changes.
+  Total 459 tests passing (445 pre-existing + 7 audit + 7 new today).
+- **`31d1614`** — CLAUDE.md streak threshold 5→8 docs sync,
+  scanner.py:663 premium override comment fix.
+- **memory/wr_improvements_2026-05-02.md** — full session retrospective.
+- **memory/session_2026-05-02_full_audit.md** — audit phase narrative.
+
+#### Pending Janek action
+
+After API restart (waiting on him):
+1. Treelite recompile: `python tools/compile_xgb_treelite.py`
+2. Walk-forward 2-yr: `python scripts/run_walk_forward.py --start
+   2024-04-01 --end 2026-04-01 --quick --out logs/wf_post_audit.json`
+
 ### 2026-04-30 (~13:10) — API restart + voter correlation BREAKTHROUGH
 
 #### API restart on Phase 8 + LSTM-rerun models
