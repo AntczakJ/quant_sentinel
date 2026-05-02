@@ -642,6 +642,39 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                 )
                 return None
 
+    # SHORT-XGB shadow veto (2026-05-02 backfill analysis showed T=0.55
+    # would have blocked 5/5 of the LOSS streak #217-#221, saving ~$80
+    # at cost of 2 false LONG-WIN blocks). Env-flagged opt-in.
+    _short_veto_str = _os_mlmaj.environ.get("QUANT_SHORT_XGB_VETO_T", "")
+    if _short_veto_str and direction == "LONG":
+        try:
+            _short_veto_T = float(_short_veto_str)
+        except ValueError:
+            _short_veto_T = 0.0
+        if _short_veto_T > 0:
+            try:
+                from src.ml.short_shadow import predict_short_xgb
+                import pandas as _pd
+                # Use the cached candle batch from analysis (scanner already fetched)
+                _df_for_veto = analysis.get('df_full') or _pd.DataFrame()
+                _short_p = predict_short_xgb(_df_for_veto)
+                if _short_p is not None and _short_p > _short_veto_T:
+                    logger.info(
+                        f"🔍 [MTF] {tf}: SHORT-XGB shadow veto LONG "
+                        f"(short_p={_short_p:.3f} > {_short_veto_T:.2f}) — pomijam "
+                        f"(QUANT_SHORT_XGB_VETO_T={_short_veto_T})"
+                    )
+                    _log_rejection(
+                        db, tf, direction, current_price,
+                        f"short_xgb_veto:p={_short_p:.3f}>T={_short_veto_T:.2f}",
+                        "short_xgb_veto",
+                        rsi=current_rsi, trend=current_trend,
+                        pattern=pos.get('pattern', ''), atr=current_atr,
+                    )
+                    return None
+            except Exception as _ve:
+                logger.debug(f"SHORT-XGB veto skipped: {_ve}")
+
     if _os_mlmaj.environ.get("QUANT_ML_MAJORITY_GATE") == "1":
         if ed.get('ml_majority_disagrees'):
             ml_maj_dir = mag.get('ml_majority', '?')
