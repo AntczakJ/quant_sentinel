@@ -1385,9 +1385,66 @@ class NewsDB:
             logger.debug(f"[RETENTION] purge_old_predictions skipped: {e}")
             return 0
 
+    def purge_old_rejected_setups(self, days: int = 30) -> int:
+        """
+        Delete rejected_setups older than N days.
+        Returns count of purged rows.
+
+        rejected_setups grows ~3-5k rows/week from BG scanner cycles. Without
+        this purge the table reaches 50k+ rows in 6 months, slowing audit
+        queries. 30d retention preserves enough for filter-tuning analysis
+        while bounding growth. Added 2026-05-02 audit (was missing).
+        """
+        cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)).isoformat()
+        try:
+            before_row = self._query_one("SELECT COUNT(*) FROM rejected_setups")
+            before = before_row[0] if before_row else 0
+
+            self._execute(
+                "DELETE FROM rejected_setups WHERE timestamp < ?",
+                (cutoff,)
+            )
+
+            after_row = self._query_one("SELECT COUNT(*) FROM rejected_setups")
+            after = after_row[0] if after_row else 0
+
+            purged = before - after
+            if purged > 0:
+                logger.info(f"[RETENTION] Purged {purged} rejected_setups older than {days} days")
+            return purged
+        except Exception as e:
+            logger.debug(f"[RETENTION] purge_old_rejected_setups skipped: {e}")
+            return 0
+
+    def report_stale_params(self, stale_days: int = 60) -> int:
+        """
+        Log dynamic_params keys not updated in N days. Read-only — does NOT
+        delete (deletion would risk removing keys that are read but not
+        written, like factor weights with manual default values).
+        Returns count of stale keys for the retention summary.
+        """
+        cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=stale_days)).isoformat()
+        try:
+            rows = self._query(
+                "SELECT param_name, last_updated FROM dynamic_params "
+                "WHERE last_updated < ? "
+                "ORDER BY last_updated ASC LIMIT 50",
+                (cutoff,)
+            )
+            if rows:
+                logger.info(
+                    f"[RETENTION] {len(rows)} dynamic_params keys stale (>{stale_days}d): "
+                    f"{', '.join(r[0] for r in rows[:5])}{'...' if len(rows) > 5 else ''}"
+                )
+            return len(rows) if rows else 0
+        except Exception as e:
+            logger.debug(f"[RETENTION] report_stale_params skipped: {e}")
+            return 0
+
     def run_retention_cleanup(self) -> dict:
         """
-        Run all data retention tasks: archive old trades, purge news, purge predictions.
+        Run all data retention tasks: archive old trades, purge news, purge
+        predictions, purge rejected_setups, report stale params.
         Returns summary dict with counts.
         """
         logger.info("[RETENTION] Starting daily data retention cleanup...")
@@ -1411,8 +1468,20 @@ class NewsDB:
             logger.warning(f"[RETENTION] purge_old_predictions failed: {e}")
             summary["predictions_purged"] = 0
 
+        try:
+            summary["rejected_setups_purged"] = self.purge_old_rejected_setups(days=30)
+        except Exception as e:
+            logger.warning(f"[RETENTION] purge_old_rejected_setups failed: {e}")
+            summary["rejected_setups_purged"] = 0
+
+        try:
+            summary["stale_params_count"] = self.report_stale_params(stale_days=60)
+        except Exception as e:
+            logger.warning(f"[RETENTION] report_stale_params failed: {e}")
+            summary["stale_params_count"] = 0
+
         total = sum(summary.values())
-        logger.info(f"[RETENTION] Cleanup complete: {summary} (total: {total} rows)")
+        logger.info(f"[RETENTION] Cleanup complete: {summary} (total: {total})")
         return summary
 
     # ══════════════════════════════════════════════════════════════════════

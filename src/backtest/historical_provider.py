@@ -162,12 +162,32 @@ class HistoricalProvider(DataProvider):
 
         Caches to data/_backtest_cache/{yf_symbol}_{tf}_{period}.parquet with
         a 6-hour TTL. Set use_cache=False to force refresh.
+
+        SYMBOL MISMATCH WARNING (2026-05-02 audit):
+        Default `yf_symbol="GC=F"` is the COMEX gold futures front-month
+        contract, which trades $65-75 ABOVE spot XAU/USD. If your scanner
+        was tuned on TwelveData spot XAU/USD prices, backtest results from
+        this provider will diverge — entry/SL/TP levels won't transfer.
+
+        For spot-equivalent backtests, use `yf_symbol="GOLD=X"` (forex
+        spot), or better, `HistoricalProvider.from_warehouse()` which reads
+        TwelveData parquet pre-built by `scripts/data_collection/`.
+        Logs a CRITICAL warning when GC=F is used with symbol="XAU/USD"
+        so the divergence is visible in CI / backtest output.
         """
         import contextlib
         import io
         import time as _time
         from pathlib import Path
         import yfinance as yf
+
+        if yf_symbol == "GC=F" and symbol == "XAU/USD":
+            logger.warning(
+                "[HistoricalProvider] yf_symbol=GC=F is COMEX futures, "
+                "trades $65-75 above spot XAU/USD. Backtest signals won't "
+                "transfer 1:1 to live forex. Prefer from_warehouse() or "
+                "yf_symbol='GOLD=X' for spot parity."
+            )
 
         cache_dir = Path("data/_backtest_cache")
         cache_dir.mkdir(parents=True, exist_ok=True)
