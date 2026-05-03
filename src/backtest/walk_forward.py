@@ -78,10 +78,21 @@ class WalkForwardResults:
         if not succ:
             return {"error": "no successful windows"}
 
-        wrs = [w.win_rate for w in succ]
-        pfs = [w.profit_factor for w in succ if w.profit_factor != float("inf")]
-        pnls = [w.cumulative_pnl for w in succ]
-        dds = [w.max_drawdown_pct for w in succ]
+        # 2026-05-03: defensive float() casts. Subprocess stdout sometimes
+        # returns string-typed PFs ('inf' / '0.00') if backtest crashed
+        # mid-run; statistics.mean choked on those. Fall back to 0 on
+        # un-coercible values rather than crash the whole summary.
+        def _safe_float(v):
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return 0.0
+
+        wrs = [_safe_float(w.win_rate) for w in succ]
+        pfs = [_safe_float(w.profit_factor) for w in succ
+               if _safe_float(w.profit_factor) != float("inf")]
+        pnls = [_safe_float(w.cumulative_pnl) for w in succ]
+        dds = [_safe_float(w.max_drawdown_pct) for w in succ]
 
         return {
             "n_windows": len(succ),
