@@ -2445,8 +2445,21 @@ async def system_health_summary():
         issues.append(f"{drift_by_sev['alert']} drift alerts")
     if heat_pct > 6.0:
         issues.append(f"heat {heat_pct:.1f}%")
-    if last_signal_age is None or (last_signal_age and last_signal_age > 48 * 3600):
-        issues.append("scanner silent")
+    # 2026-05-03: separate "scanner crashed" (no scan cycles) from "no
+    # trades firing" (scanner running but filters block everything).
+    # Previously both collapsed into "scanner silent" which misled
+    # operator into thinking scanner was dead when it was just selective.
+    # last_rejection_age tracks SCAN ACTIVITY (every cycle writes a
+    # rejection unless market unavailable). last_signal_age tracks
+    # actual TRADE FIRES.
+    SCAN_STALE_SEC = 15 * 60   # >15 min between scans = scanner crashed
+    NO_TRADE_SEC = 72 * 3600   # >72h with no trade fire = filters too tight
+    if last_rejection_age is None or (last_rejection_age and last_rejection_age > SCAN_STALE_SEC):
+        issues.append(f"scanner crashed ({(last_rejection_age or 0)/60:.0f}min since last scan)")
+    elif last_signal_age is None or (last_signal_age and last_signal_age > NO_TRADE_SEC):
+        # Scanner alive but no trades firing — informational, not error
+        h = (last_signal_age or 0) / 3600
+        issues.append(f"no trade fired in {h:.0f}h (filters tight or market quiet)")
 
     return {
         "overall": "issues" if issues else "healthy",
