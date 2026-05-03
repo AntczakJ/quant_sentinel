@@ -504,7 +504,21 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # At threshold=2 we got 0.5 trades/day; target is 2-3/day for
     # meaningful statistical sample. Directional alignment + RSI extreme
     # still strict — those protect against bad trades regardless.
+    #
+    # 2026-05-03: env-flagged HTF threshold override. filter_precision_report
+    # found confluence at 57.2% precision — blocks 2351 winning trades on
+    # cohort N=9430. HTF (1h, 4h) split: 1h LONG 57.5%, 4h SHORT 50.0%
+    # (literal coin flip — ZERO signal at threshold 3). Lowering to 2 should
+    # capture ~$25-50k EV per filter_precision_report.py.
+    # Set QUANT_CONF_HTF_MIN=2 in .env to enable. Default unchanged.
     _min_conf = 1 if _relax else 3
+    if not _relax:
+        _htf_override = _os_bt.environ.get("QUANT_CONF_HTF_MIN", "")
+        if _htf_override:
+            try:
+                _min_conf = int(_htf_override)
+            except ValueError:
+                pass
 
     structure = analysis.get('structure', 'Stable')
     is_stable = 'Stable' in str(structure)
