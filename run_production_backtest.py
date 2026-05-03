@@ -898,6 +898,16 @@ async def _run_backtest(args) -> dict:
             except (ValueError, TypeError):
                 _trade_lot = trade.get("lot", 0.01)
             try:
+                # 2026-05-03: align pattern naming with production scanner
+                # (api/main.py:771 uses `f"[{tf_label}] {logic}"`). Previously
+                # backtest fell back to scanner's internal `pattern` field
+                # `LONG_Stable_None` style which doesn't match production
+                # `[M5] Trend Bull + FVG`. Mismatch broke toxic_pattern +
+                # pattern_weight filters in backtest, making backtest results
+                # incomparable with live cohort. Fix: use production format.
+                _tf_label = trade.get("tf_label") or trade.get("tf", "")
+                _logic = trade.get("logic") or "backtest"
+                _pattern = f"[{_tf_label}] {_logic}" if _tf_label else _logic
                 db.log_trade(
                     direction=trade["direction"],
                     price=trade["entry"],
@@ -905,10 +915,10 @@ async def _run_backtest(args) -> dict:
                     tp=trade["tp"],
                     rsi=trade.get("rsi", 0),
                     trend=trade.get("trend", ""),
-                    structure=f"[backtest] {trade.get('tf_label', trade.get('tf',''))}",
-                    pattern=trade.get("pattern", "backtest"),
+                    structure=f"[backtest] {_tf_label}",
+                    pattern=_pattern,
                     lot=_trade_lot,
-                    factors={},
+                    factors=trade.get("factors", {}),
                     profit=None,
                 )
                 # CRITICAL: db.log_trade uses datetime.now() for timestamp.
