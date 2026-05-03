@@ -15,9 +15,11 @@ vs over-blocking (low precision = costing wins).
 
 USAGE
     .venv/Scripts/python.exe scripts/filter_precision_report.py
+    .venv/Scripts/python.exe scripts/filter_precision_report.py --db data/backtest.db
 """
 from __future__ import annotations
 
+import argparse
 import math
 import sqlite3
 import sys
@@ -25,7 +27,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-DB = REPO / "data" / "sentinel.db"
 
 
 def wilson_lower(wins: int, n: int) -> float:
@@ -40,11 +41,18 @@ def wilson_lower(wins: int, n: int) -> float:
 
 
 def main() -> int:
-    if not DB.exists():
-        print(f"ERR: DB miss {DB}")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--db", default="data/sentinel.db",
+                    help="SQLite DB path (default: data/sentinel.db; use "
+                         "data/backtest.db for backtest cohort)")
+    args = ap.parse_args()
+    db_path = REPO / args.db if not Path(args.db).is_absolute() else Path(args.db)
+    if not db_path.exists():
+        print(f"ERR: DB miss {db_path}")
         return 1
+    print(f"DB: {db_path}\n")
 
-    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         cur = con.cursor()
         # would_have_won encoding (per docs/strategy/2026-04-29_rsi_extreme_audit.md):
@@ -128,7 +136,8 @@ def main() -> int:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     report_dir = REPO / "reports"
     report_dir.mkdir(exist_ok=True)
-    path = report_dir / f"{today}_filter_precision.md"
+    db_tag = "backtest" if "backtest" in str(db_path) else "live"
+    path = report_dir / f"{today}_filter_precision_{db_tag}.md"
     with path.open("w", encoding="utf-8") as f:
         f.write(f"# Filter precision report — {today}\n\n")
         f.write("Per-filter analysis using would_have_won labels from rejected_setups.\n\n")

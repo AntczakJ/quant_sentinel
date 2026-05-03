@@ -32,8 +32,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-DB = REPO / "data" / "sentinel.db"
-COHORT_CUTOFF = "2026-04-06"  # per memory/data_cohort_cutoff.md
+# DB path overridable via --db flag (default sentinel.db; pass
+# data/backtest.db to analyze backtest cohort with same query).
+# --cutoff ISO date filters trades to >= this date (default 2026-04-06,
+# which is the post-scalp-first-rework live cohort start). Use
+# 2020-01-01 to include all backtest periods.
+import argparse as _argparse
+_ap = _argparse.ArgumentParser()
+_ap.add_argument("--db", default="data/sentinel.db")
+_ap.add_argument("--cutoff", default="2026-04-06")
+_args, _ = _ap.parse_known_args()
+DB = REPO / _args.db if not Path(_args.db).is_absolute() else Path(_args.db)
+COHORT_CUTOFF = _args.cutoff  # default 2026-04-06; override --cutoff
 
 
 def wilson_lower(wins: int, n: int, z: float = 1.96) -> float:
