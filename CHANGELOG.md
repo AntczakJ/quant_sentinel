@@ -4,6 +4,88 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-05-03 — SHORT-XGB veto, per-direction Platt, walk-forward fix
+
+Continuation of forward-WR work. Janek away again. 6 commits:
+
+#### Per-direction calibration fix (commit `79fe5de`)
+
+`src/ml/model_calibration.py` rewritten with CORRECTED LABELS:
+  label = 1 iff "LONG would have won at this bar"
+  - LONG WIN  → label=1 (LONG won)
+  - LONG LOSS → label=0
+  - SHORT WIN → label=0 (LONG would have lost)
+  - SHORT LOSS → label=1 (LONG would have won)
+
+Previously: label=(status=='WIN') across mixed directions → spurious
+negative correlation → fitted A<0 → calibrator INVERTED predictions.
+
+Added safeguards:
+  - Refuse to install scaler with `a < 0` (sigmoid inverter sentinel)
+  - Refuse fit on degenerate labels (all-1 or all-0)
+  - Extended fit_all from {lstm, xgb, dqn} to all 7 voters
+    (smc/attention/deeptrans/v2_xgb now have populated columns)
+
+DISABLE_CALIBRATION=1 still default. Janek can re-enable safely.
+
+#### SHORT-XGB shadow veto + backfill validation (commit `81ea3aa`)
+
+`scripts/backfill_short_shadow.py` historical retrospective on cohort
+2026-04-06 → 2026-05-02 (N=46): runs SHORT XGB at each trade timestamp
+on warehouse data, compares with actual outcomes.
+
+KEY FINDING: SHORT XGB at threshold T=0.55 would have BLOCKED ALL 5
+trades from the #217-#221 LOSS streak (each had short_p=0.563).
+Threshold sweep:
+  T=0.45: blocks 8 LONG losses + 2 LONG wins → +$99 saved
+  T=0.50: blocks 7 LONG losses + 2 LONG wins → +$65 saved
+  T=0.55: same as 0.50 (clean cut)
+  T=0.60: over-tight (-$52)
+
+Net positive across cohort. T=0.55 chosen as conservative sweet spot.
+
+`src/trading/scanner.py` — env-flagged QUANT_SHORT_XGB_VETO_T="0.55"
+blocks LONG when SHORT-XGB shadow says short_p > T. Asymmetric gate
+(LONG-only); does NOT affect SHORT trade firing. Companion to
+QUANT_ML_MAJORITY_GATE and QUANT_DECISIVE_GATE_MIN.
+
+`.env` — **APPLIED**: QUANT_SHORT_XGB_VETO_T=0.55 set live. Will take
+effect on next API restart. Asymmetric-low-risk gate per backfill data.
+
+#### Walk-forward 2-yr crash fix (commit `f704d7b`)
+
+`src/backtest/walk_forward.py` aggregate() now coerces metrics with
+_safe_float(). Subprocess sometimes returns string-typed PFs ('inf',
+'0.00') on window crash → statistics.mean choked → entire 2-yr WF
+crashed in print_summary AFTER all 52 windows ran successfully.
+
+#### Other commits
+
+- `4a20c49` SHORT-XGB veto fetches df via DataProvider (was reading
+  non-existent analysis['df_full'])
+- `81ea3aa` 7 regression tests for env gates + factor weights + B1
+- Pattern × hour cross-tab analytics (`scripts/pattern_hour_crosstab.py`):
+  hot spot `[M5] Trend Bull + FVG` h=14 UTC = 0/4 wins
+
+Tests: 459 + 11 = 470 passing.
+
+#### Live state changes
+
+- `.env` QUANT_SHORT_XGB_VETO_T=0.55 (NEW, gate enabled on restart)
+- DB factor weights unchanged from 2026-05-02 tuning
+
+#### Pending Janek action (when back tomorrow / today):
+
+1. API restart loads all 2026-05-02 + 2026-05-03 code changes:
+   ```
+   .venv/Scripts/python.exe -m uvicorn api.main:app --host 127.0.0.1 \
+     --port 8000 --log-level info > logs/api.log 2>&1 &
+   ```
+2. Treelite recompile:
+   `python tools/compile_xgb_treelite.py`
+3. Walk-forward results review: `cat logs/wf_post_audit.json` (running)
+4. SHORT-XGB veto activation auto-applies via .env
+
 ### 2026-05-02 — full audit + 17 commits + factor weight tuning APPLIED
 
 After 49h continuous live run produced 5/5 LONG-LOSS = -$80.94, ran a
