@@ -1027,15 +1027,16 @@ def get_ensemble_prediction(
             "confidence": 0.0, "status": "unavailable"
         }
 
-    # --- 2b. DPformer (Decomposition + LSTM + Attention Fusion) ---
-    # Skipped 2026-04-24: weight=0.0 + suspected data leak (val_acc 78-80%
-    # outlier vs LSTM 62%, XGB 57%, Attention 60%). Still surfaces a
-    # neutral entry for frontend/DB schema compatibility; predict call
-    # itself costs ~100ms on CPU which is dead weight when weight=0.
-    results["predictions"]["dpformer"] = {
-        "value": 0.5, "direction": "NEUTRAL",
-        "confidence": 0.0, "status": "disabled"
-    }
+    # --- 2b. DPformer — REMOVED 2026-05-03 (P2.5 final cleanup) ---
+    # decompose_model.py was deleted on 2026-04-29 (commit 9ecc116) due
+    # to centered-convolution future-leak (audit_1_data_leaks.md P1.1).
+    # The neutral stub here was kept "for frontend/DB schema compat" but:
+    #   - frontend/src/ doesn't reference dpformer (verified 2026-05-03)
+    #   - dpformer_pred column in ml_predictions stays (legacy NULL data)
+    #   - regime_weights doesn't include dpformer (line 671 default_weights
+    #     dict doesn't list it), so the fusion loop never iterates over it
+    # Stub removed. _voter_value would have returned None anyway given
+    # status="disabled" is in _MISSING_STATUSES.
 
     # --- Calibrator (Platt Scaling) ---
     try:
