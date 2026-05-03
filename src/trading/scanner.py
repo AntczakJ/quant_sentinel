@@ -659,6 +659,15 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # SHORT-XGB shadow veto (2026-05-02 backfill analysis showed T=0.55
     # would have blocked 5/5 of the LOSS streak #217-#221, saving ~$80
     # at cost of 2 false LONG-WIN blocks). Env-flagged opt-in.
+    #
+    # 2026-05-03 REGIME-AWARE update: 3-month backtest (Jan-Mar 2026,
+    # bull regime) showed veto fired 215× and blocked many LONG winners
+    # (estimated -$1000+ vs no-veto in bull regime). Veto is appropriate
+    # for current bear/squeeze regime but harmful in bull regimes.
+    # Add QUANT_SHORT_XGB_VETO_SKIP_REGIMES env (default 'zielony') to
+    # skip veto in macro_regime values matching the comma-separated list.
+    # macro_regime semantics: zielony=bullish_gold, czerwony=bearish_gold,
+    # neutralny=mixed.
     _short_veto_str = _os_mlmaj.environ.get("QUANT_SHORT_XGB_VETO_T", "")
     if _short_veto_str and direction == "LONG":
         try:
@@ -666,32 +675,45 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         except ValueError:
             _short_veto_T = 0.0
         if _short_veto_T > 0:
-            try:
-                from src.ml.short_shadow import predict_short_xgb
-                from src.data.data_sources import get_provider as _get_p
-                # Fetch its own df — analysis dict doesn't carry full OHLCV.
-                # Same data provider scanner uses; rate-limiter respects budget.
-                _provider = _get_p()
-                _df_for_veto = _provider.get_candles('XAU/USD', tf, 200)
-                if _df_for_veto is None or _df_for_veto.empty:
-                    raise RuntimeError("no candles for veto")
-                _short_p = predict_short_xgb(_df_for_veto)
-                if _short_p is not None and _short_p > _short_veto_T:
-                    logger.info(
-                        f"🔍 [MTF] {tf}: SHORT-XGB shadow veto LONG "
-                        f"(short_p={_short_p:.3f} > {_short_veto_T:.2f}) — pomijam "
-                        f"(QUANT_SHORT_XGB_VETO_T={_short_veto_T})"
-                    )
-                    _log_rejection(
-                        db, tf, direction, current_price,
-                        f"short_xgb_veto:p={_short_p:.3f}>T={_short_veto_T:.2f}",
-                        "short_xgb_veto",
-                        rsi=current_rsi, trend=current_trend,
-                        pattern=pos.get('pattern', ''), atr=current_atr,
-                    )
-                    return None
-            except Exception as _ve:
-                logger.debug(f"SHORT-XGB veto skipped: {_ve}")
+            # Regime-aware skip: don't veto LONG when macro regime is
+            # in the skip-list (default 'zielony' = bullish gold, where
+            # LONG should win and veto would block winners)
+            _skip_regimes = _os_mlmaj.environ.get(
+                "QUANT_SHORT_XGB_VETO_SKIP_REGIMES", "zielony"
+            ).split(",")
+            _skip_regimes = [r.strip() for r in _skip_regimes if r.strip()]
+            _current_macro = analysis.get("macro_regime", "neutralny")
+            if _current_macro in _skip_regimes:
+                # Veto skipped — log at debug to avoid spam
+                logger.debug(
+                    f"[MTF] {tf}: SHORT-XGB veto skipped "
+                    f"(macro_regime={_current_macro} in skip-list)"
+                )
+            else:
+                try:
+                    from src.ml.short_shadow import predict_short_xgb
+                    from src.data.data_sources import get_provider as _get_p
+                    _provider = _get_p()
+                    _df_for_veto = _provider.get_candles('XAU/USD', tf, 200)
+                    if _df_for_veto is None or _df_for_veto.empty:
+                        raise RuntimeError("no candles for veto")
+                    _short_p = predict_short_xgb(_df_for_veto)
+                    if _short_p is not None and _short_p > _short_veto_T:
+                        logger.info(
+                            f"🔍 [MTF] {tf}: SHORT-XGB shadow veto LONG "
+                            f"(short_p={_short_p:.3f} > {_short_veto_T:.2f}, "
+                            f"macro={_current_macro}) — pomijam"
+                        )
+                        _log_rejection(
+                            db, tf, direction, current_price,
+                            f"short_xgb_veto:p={_short_p:.3f}>T={_short_veto_T:.2f}",
+                            "short_xgb_veto",
+                            rsi=current_rsi, trend=current_trend,
+                            pattern=pos.get('pattern', ''), atr=current_atr,
+                        )
+                        return None
+                except Exception as _ve:
+                    logger.debug(f"SHORT-XGB veto skipped: {_ve}")
 
     if _os_mlmaj.environ.get("QUANT_ML_MAJORITY_GATE") == "1":
         if ed.get('ml_majority_disagrees'):
