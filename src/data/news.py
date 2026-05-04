@@ -26,8 +26,76 @@ KEYWORDS = ["gold", "xau", "fed", "inflation", "cpi", "powell", "dollar", "usd",
 # neutral/buy-signal headline. News sentiment should come from a calibrated
 # LLM or from event calendar + price confirmation, not keyword counting.
 # See docs/research/2026-04-24_xau_news_research.md for the replacement plan.
+#
+# 2026-05-04: LLM-based sentiment shipped. Uses OpenAI gpt-4o-mini via
+# existing src.integrations.ai_engine.client. Cached per-title to avoid
+# spam. Env QUANT_NEWS_LLM=1 enables, default OFF (fallback to neutral).
+# Cheap: ~$0.0001 per headline, 30 articles/cycle × 5min cycles = ~$0.40/day.
+_LLM_SENTIMENT_CACHE: dict[str, str] = {}
+_LLM_SENTIMENT_CACHE_MAX = 1000
+
+
+def _detect_sentiment_llm(title: str) -> str:
+    """LLM-based sentiment classification of news article title.
+
+    Returns: 'bullish' | 'bearish' | 'neutral'
+
+    Cached by title — same article doesn't re-query.
+    Falls back to 'neutral' on any error (network, missing key, parse fail).
+    """
+    if not title:
+        return "neutral"
+    title = title.strip()
+    if title in _LLM_SENTIMENT_CACHE:
+        return _LLM_SENTIMENT_CACHE[title]
+
+    # Cache size cap — drop oldest to avoid unbounded memory
+    if len(_LLM_SENTIMENT_CACHE) >= _LLM_SENTIMENT_CACHE_MAX:
+        # Drop ~25% oldest entries (simple FIFO via insertion-order dict)
+        for k in list(_LLM_SENTIMENT_CACHE.keys())[:_LLM_SENTIMENT_CACHE_MAX // 4]:
+            _LLM_SENTIMENT_CACHE.pop(k, None)
+
+    try:
+        from src.integrations.ai_engine import client
+        if client is None:
+            return "neutral"
+        # Cheap classification call
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system",
+                 "content": ("You classify XAU/USD (gold) news headline sentiment. "
+                             "Reply with EXACTLY ONE WORD: bullish, bearish, or neutral. "
+                             "Bullish = supports higher gold price (weak USD, dovish Fed, "
+                             "geopolitical risk, inflation up). Bearish = supports lower gold "
+                             "(strong USD, hawkish Fed, risk-on, deflation). Neutral = ambiguous "
+                             "or no clear directional implication.")},
+                {"role": "user", "content": title},
+            ],
+            max_tokens=4,
+            temperature=0,
+        )
+        raw = (resp.choices[0].message.content or "").strip().lower()
+        # Normalize to expected vocab
+        if raw.startswith("bull"):
+            result = "bullish"
+        elif raw.startswith("bear"):
+            result = "bearish"
+        else:
+            result = "neutral"
+    except Exception as e:
+        logger.debug(f"_detect_sentiment_llm failed for '{title[:60]}': {e}")
+        result = "neutral"
+    _LLM_SENTIMENT_CACHE[title] = result
+    return result
+
+
 def _detect_sentiment(title: str) -> str:
-    """Deprecated stub. Returns neutral — rely on economic calendar + LLM instead."""
+    """Sentiment classifier dispatcher. When QUANT_NEWS_LLM=1, calls
+    LLM scorer; else returns 'neutral' stub (legacy behavior)."""
+    import os as _os
+    if _os.environ.get("QUANT_NEWS_LLM") == "1":
+        return _detect_sentiment_llm(title)
     return "neutral"
 
 
