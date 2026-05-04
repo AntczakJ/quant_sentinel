@@ -1,4 +1,5 @@
 import { motion, type Variants } from 'framer-motion'
+import { useReducedMotion } from '@/lib/useReducedMotion'
 
 type Props = {
   text: string
@@ -23,6 +24,9 @@ const item: Variants = {
 }
 
 export function TextReveal({ text, className = '', delay = 0, splitBy = 'word' }: Props) {
+  const reduced = useReducedMotion()
+  if (reduced) return <span className={className}>{text}</span>
+
   const tokens = splitBy === 'word' ? text.split(' ') : text.split('')
   const stagger = splitBy === 'word' ? 0.06 : 0.018
 

@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
+import { useReducedMotion } from '@/lib/useReducedMotion'
 
 type Props = {
   count?: number
@@ -19,6 +20,7 @@ const PALETTES = {
  * particle gets randomized seed + duration so the field never looks looped.
  */
 export function ParticleField({ count = 18, className = '', variant = 'mixed' }: Props) {
+  const reduced = useReducedMotion()
   const colors = PALETTES[variant]
   const particles = useMemo(
     () =>
@@ -34,6 +36,31 @@ export function ParticleField({ count = 18, className = '', variant = 'mixed' }:
       })),
     [count, colors],
   )
+
+  // Reduced-motion: render static dots at half opacity, no animation loops
+  if (reduced) {
+    return (
+      <div
+        aria-hidden
+        className={`pointer-events-none absolute inset-0 overflow-hidden ${className}`}
+      >
+        {particles.slice(0, Math.min(8, particles.length)).map((p) => (
+          <span
+            key={p.id}
+            className="absolute rounded-full"
+            style={{
+              left: `${p.x}%`,
+              top: `${p.y}%`,
+              width: p.size,
+              height: p.size,
+              background: p.color,
+              opacity: 0.35,
+            }}
+          />
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div

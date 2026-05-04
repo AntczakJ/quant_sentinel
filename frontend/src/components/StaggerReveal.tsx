@@ -1,5 +1,6 @@
 import { motion, type Variants } from 'framer-motion'
 import { Children, type ReactNode } from 'react'
+import { useReducedMotion } from '@/lib/useReducedMotion'
 
 const container: Variants = {
   hidden: { opacity: 0 },
@@ -27,6 +28,9 @@ type Props = {
 }
 
 export function StaggerReveal({ children, className = '', once = true, amount = 0.15 }: Props) {
+  const reduced = useReducedMotion()
+  if (reduced) return <div className={className}>{children}</div>
+
   return (
     <motion.div
       variants={container}

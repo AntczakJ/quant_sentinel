@@ -347,24 +347,18 @@ def calculate_position(analysis_data: dict, balance: float, user_currency: str,
                 "setup_quality": setup_quality
             }
 
-        # Dynamic R:R per grade — these are TARGET-PROFIT calls (where TP
-        # sits relative to SL), based on the assumption that A+ setups can
-        # withstand a longer hold to reach a 3R move. Validated by backtest.
-        #
-        # Per-grade RISK multiplier removed 2026-04-26 after lot-sizing audit:
-        # 30-day backtest found A+ grade `risk_percent × 1.5` was inversely
-        # correlated with outcome — winners avg 0.026 lot, losers 0.084.
-        # The system bet bigger on losing setups. Equal-lot run (PF 1.80,
-        # +7.18%) confirmed strategy edge; variable lot ate it. Now: flat
-        # `risk_percent` regardless of grade (Kelly + vol + session still
-        # apply). Pair this with MAX_LOT_CAP=0.01 in .env until live data
-        # validates uniform sizing. See memory/session_2026-04-26_summary.md.
-        if grade == "A+":
-            tp_to_sl_ratio = max(tp_to_sl_ratio, 3.0)
-        elif grade == "A":
-            tp_to_sl_ratio = max(tp_to_sl_ratio, 2.5)
-        elif grade == "B":
-            tp_to_sl_ratio = max(tp_to_sl_ratio, 2.0)
+        # Dynamic R:R per grade — TARGET-PROFIT calls (where TP sits relative
+        # to SL). 2026-05-05: source of truth is `score_setup_quality` (sets
+        # target_rr per grade); finance.py respects it instead of overriding.
+        # The previous `max(tp_to_sl_ratio, X)` floor silently bumped RR back
+        # to baseline whenever dynamic_params.tp_to_sl_ratio was higher than
+        # smc_engine's choice — undid the 2026-05-05 A-demote (commit fa98fb0)
+        # and any future tighter RR call. Now we accept smc_engine's per-grade
+        # target_rr verbatim. dynamic_params.tp_to_sl_ratio remains the
+        # baseline only when no setup_quality is available (fallback below).
+        new_target_rr = setup_quality.get('target_rr')
+        if new_target_rr and new_target_rr > 0:
+            tp_to_sl_ratio = new_target_rr
 
         logger.info(f"📊 Adjusted: R:R={tp_to_sl_ratio}, Risk={risk_percent:.2f}%")
     except Exception as e:

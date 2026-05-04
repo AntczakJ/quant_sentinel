@@ -1195,7 +1195,13 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         # block — system can still enter SHORT at B grade with score in 25-44.
         # This adds a hard floor: SHORT in bull regime needs score >= 50
         # (~A-grade scalp / mid-A HTF). Reversible via env when macro flips.
-        if (direction_str == "SHORT" and
+        #
+        # Uses post-flip `direction` (not pre-flip `direction_str`) — the
+        # actual trade direction can flip in calculate_position based on
+        # grab/dbr/rbd. Audit 2026-05-05 caught direction_str usage in
+        # several gates as a latent bug class. SHORT-floor honors the final
+        # trade direction, not the trend-derived guess.
+        if (direction == "SHORT" and
                 analysis.get('macro_regime') == 'zielony' and
                 os.environ.get('STRICT_SHORT_IN_BULL', '1') != '0'):
             sh_score = setup_quality.get('score', 0)
@@ -1204,7 +1210,7 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                 logger.info(
                     f"[MTF] {tf}: SHORT score={sh_score:.1f} < {sh_floor} (macro=bull) — block"
                 )
-                _log_rejection(db, tf, direction_str, current_price,
+                _log_rejection(db, tf, direction, current_price,
                                f"short_in_bull_score<{sh_floor}({sh_score:.1f})",
                                "short_strict_floor",
                                confluence_count=confluence_count, rsi=current_rsi,
@@ -1272,8 +1278,12 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
             f"Risk mult: {setup_quality['risk_mult']} | R:R: {setup_quality['target_rr']}"
         )
     except Exception as e:
-        logger.debug(f"Setup quality scoring skipped: {e}")
-        setup_quality = {'grade': 'A', 'score': 50, 'risk_mult': 1.0, 'target_rr': 2.5, 'factors_detail': {}}
+        # 2026-05-05: fallback now matches the post-A-demote policy. The old
+        # default (risk_mult=1.0, target_rr=2.5) silently re-introduced the
+        # configuration that today's commit (fa98fb0) removed any time
+        # score_setup_quality threw — exactly the broken state.
+        logger.warning(f"Setup quality scoring failed, using B-grade fallback: {e}")
+        setup_quality = {'grade': 'B', 'score': 40, 'risk_mult': 0.5, 'target_rr': 2.0, 'factors_detail': {}}
 
     # --- 8. SETUP WAŻNY — zwróć parametry trade'a ---
     grade_icon = {"A+": "⭐", "A": "✅", "B": "⚠️"}.get(setup_quality['grade'], "❓")

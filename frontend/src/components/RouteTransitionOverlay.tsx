@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useReducedMotion } from '@/lib/useReducedMotion'
 
 /**
  * RouteTransitionOverlay — fires a slim gradient sweep across the viewport
@@ -14,15 +15,19 @@ import { motion, AnimatePresence } from 'framer-motion'
  */
 export function RouteTransitionOverlay() {
   const loc = useLocation()
+  const reduced = useReducedMotion()
   const [bursting, setBursting] = useState(false)
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
+    if (reduced) return
     setBursting(true)
     setTick((n) => n + 1)
     const t = setTimeout(() => setBursting(false), 520)
     return () => clearTimeout(t)
-  }, [loc.pathname])
+  }, [loc.pathname, reduced])
+
+  if (reduced) return null
 
   return (
     <AnimatePresence>

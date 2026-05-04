@@ -1,5 +1,6 @@
-import { useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { motion, useMotionValue, useSpring, useTransform } from 'framer-motion'
+import { useReducedMotion } from '@/lib/useReducedMotion'
 
 type Props = {
   children: ReactNode
@@ -10,6 +11,17 @@ type Props = {
 
 export function TiltCard({ children, className = '', intensity = 8, glare = true }: Props) {
   const ref = useRef<HTMLDivElement | null>(null)
+  const reduced = useReducedMotion()
+  const [finePointer, setFinePointer] = useState(true)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(pointer: fine)')
+    setFinePointer(mq.matches)
+    const handler = (e: MediaQueryListEvent) => setFinePointer(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
   const mx = useMotionValue(0.5)
   const my = useMotionValue(0.5)
 
@@ -28,6 +40,11 @@ export function TiltCard({ children, className = '', intensity = 8, glare = true
   function handleLeave() {
     mx.set(0.5)
     my.set(0.5)
+  }
+
+  // Touch / reduced-motion: render children plainly, no 3D transform stack
+  if (reduced || !finePointer) {
+    return <div className={className}>{children}</div>
   }
 
   return (

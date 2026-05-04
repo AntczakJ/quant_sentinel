@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useReducedMotion } from '@/lib/useReducedMotion'
 
 type Particle = {
   id: number
@@ -18,10 +19,11 @@ type Props = {
 const COLORS = ['#d4af37', '#22c55e', '#3b82f6', '#f4d676', '#a8861f']
 
 export function ConfettiBurst({ trigger, count = 24, origin = { x: '50%', y: '50%' } }: Props) {
+  const reduced = useReducedMotion()
   const [parts, setParts] = useState<Particle[]>([])
 
   useEffect(() => {
-    if (trigger <= 0) return
+    if (trigger <= 0 || reduced) return
     const next: Particle[] = Array.from({ length: count }).map((_, i) => ({
       id: trigger * 1000 + i,
       x: (Math.random() - 0.5) * 360,
@@ -32,7 +34,9 @@ export function ConfettiBurst({ trigger, count = 24, origin = { x: '50%', y: '50
     setParts(next)
     const t = setTimeout(() => setParts([]), 1600)
     return () => clearTimeout(t)
-  }, [trigger, count])
+  }, [trigger, count, reduced])
+
+  if (reduced) return null
 
   return (
     <div
