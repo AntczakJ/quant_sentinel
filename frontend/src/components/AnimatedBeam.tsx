@@ -21,6 +21,10 @@ interface Props {
   endYOffset?: number
   /** Visual emphasis 0..1 — scales beam opacity + width. */
   intensity?: number
+  /** Anchor on the source element. Default 'center'. */
+  fromAnchor?: 'center' | 'left' | 'right' | 'top' | 'bottom'
+  /** Anchor on the target element. Default 'center'. */
+  toAnchor?: 'center' | 'left' | 'right' | 'top' | 'bottom'
 }
 
 /**
@@ -46,6 +50,8 @@ export function AnimatedBeam({
   endXOffset = 0,
   endYOffset = 0,
   intensity = 1,
+  fromAnchor = 'center',
+  toAnchor = 'center',
 }: Props) {
   const id = useId()
   const reduced = useReducedMotion()
@@ -63,10 +69,25 @@ export function AnimatedBeam({
       const h = cRect.height
       setSvgDim({ width: w, height: h })
 
-      const fx = fRect.left - cRect.left + fRect.width / 2 + startXOffset
-      const fy = fRect.top - cRect.top + fRect.height / 2 + startYOffset
-      const tx = tRect.left - cRect.left + tRect.width / 2 + endXOffset
-      const ty = tRect.top - cRect.top + tRect.height / 2 + endYOffset
+      // Anchor helper — picks the requested edge or center on a rect
+      const anchor = (rect: DOMRect, where: typeof fromAnchor) => {
+        const cx = rect.left + rect.width / 2
+        const cy = rect.top + rect.height / 2
+        switch (where) {
+          case 'left':   return { x: rect.left,            y: cy }
+          case 'right':  return { x: rect.right,           y: cy }
+          case 'top':    return { x: cx,                   y: rect.top }
+          case 'bottom': return { x: cx,                   y: rect.bottom }
+          default:       return { x: cx,                   y: cy }
+        }
+      }
+      const fAnch = anchor(fRect, fromAnchor)
+      const tAnch = anchor(tRect, toAnchor)
+
+      const fx = fAnch.x - cRect.left + startXOffset
+      const fy = fAnch.y - cRect.top  + startYOffset
+      const tx = tAnch.x - cRect.left + endXOffset
+      const ty = tAnch.y - cRect.top  + endYOffset
 
       // Quadratic Bezier with adjustable curvature
       const cx = (fx + tx) / 2

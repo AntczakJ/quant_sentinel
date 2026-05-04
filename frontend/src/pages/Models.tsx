@@ -160,6 +160,8 @@ export default function Models() {
           containerRef={containerRef}
           fromRef={lstmRef}
           toRef={ensembleRef}
+          fromAnchor="right"
+          toAnchor="left"
           curvature={-30}
           duration={3.6}
           delay={0.3}
@@ -171,6 +173,8 @@ export default function Models() {
           containerRef={containerRef}
           fromRef={xgbRef}
           toRef={ensembleRef}
+          fromAnchor="right"
+          toAnchor="left"
           curvature={0}
           duration={3.2}
           delay={0.5}
@@ -182,6 +186,8 @@ export default function Models() {
           containerRef={containerRef}
           fromRef={rlRef}
           toRef={ensembleRef}
+          fromAnchor="right"
+          toAnchor="left"
           curvature={30}
           duration={3.8}
           delay={0.7}
@@ -193,6 +199,8 @@ export default function Models() {
           containerRef={containerRef}
           fromRef={ensembleRef}
           toRef={signalRef}
+          fromAnchor="right"
+          toAnchor="left"
           curvature={0}
           duration={2.4}
           delay={0.9}

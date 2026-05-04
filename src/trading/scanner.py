@@ -14,6 +14,7 @@ Naprawiono:
 """
 
 import hashlib
+import os
 import requests
 import time as _time
 
@@ -1184,6 +1185,28 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                 _log_rejection(db, tf, direction_str, current_price,
                                f"regime_v2_score<{_regime_routing.min_score_floor}({score_val:.1f})",
                                "regime_routing",
+                               confluence_count=confluence_count, rsi=current_rsi,
+                               trend=current_trend, pattern=pattern, atr=current_atr)
+                return None
+
+        # 2026-05-05: SHORT-against-bull-regime tighter score floor.
+        # 1yr backtest: SHORT n=26, WR 34.6%, total -$68. SHORT bleeds when
+        # macro_regime == 'zielony' (bull). B7 penalty exists but doesn't
+        # block — system can still enter SHORT at B grade with score in 25-44.
+        # This adds a hard floor: SHORT in bull regime needs score >= 50
+        # (~A-grade scalp / mid-A HTF). Reversible via env when macro flips.
+        if (direction_str == "SHORT" and
+                analysis.get('macro_regime') == 'zielony' and
+                os.environ.get('STRICT_SHORT_IN_BULL', '1') != '0'):
+            sh_score = setup_quality.get('score', 0)
+            sh_floor = 50.0
+            if sh_score < sh_floor:
+                logger.info(
+                    f"[MTF] {tf}: SHORT score={sh_score:.1f} < {sh_floor} (macro=bull) — block"
+                )
+                _log_rejection(db, tf, direction_str, current_price,
+                               f"short_in_bull_score<{sh_floor}({sh_score:.1f})",
+                               "short_strict_floor",
                                confluence_count=confluence_count, rsi=current_rsi,
                                trend=current_trend, pattern=pattern, atr=current_atr)
                 return None

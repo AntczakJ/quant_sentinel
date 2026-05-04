@@ -20,7 +20,10 @@ export default function Settings() {
 
   return (
     <div className="relative flex flex-col gap-8 overflow-visible">
-      <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none rounded-xl3">
+      {/* Full-viewport aurora — escape the max-w container by using fixed
+          positioning instead of absolute. Sits below content (z-[-10])
+          and above the global mesh background. */}
+      <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
         <AuroraBackground intensity={0.55} />
       </div>
 
