@@ -851,6 +851,10 @@ def _persist_prediction(results: Dict):
             'vol_regime': vol_regime,
             'regime_weights': {k: round(v, 4) for k, v in results.get('regime_weights', {}).items()},
             'shadow_short_xgb': shadow_short,  # null if model not loaded
+            # 2026-05-04: ml_majority_disagrees was missing from JSON
+            # despite being computed in get_ensemble_prediction. Verified
+            # via row #10996 showing None instead of False.
+            'ml_majority_disagrees': bool(results.get('ml_majority_disagrees', False)),
         })
 
         # Per-voter columns mirror the JSON blob for fast SQL filtering
