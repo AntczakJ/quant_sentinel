@@ -58,12 +58,15 @@ BACKUP_DIR = REPO / "data" / "backups" / "factor_weights"
 
 # Proposed nudges — derived from factor_edge_report (cohort 04-06 → 05-02)
 PROPOSALS = {
-    "weight_bos":           ("bump", 1.800),  # WR 40%, +20pp lift
+    "weight_bos":           ("bump", 1.800),  # WR 40%, +20pp lift (live)
     "weight_ichimoku_bear": ("bump", 1.150),  # WR 31%, +12pp, SHORT-only
     "weight_fvg":           ("cut",  0.700),  # WR 8%, -11pp
     "weight_killzone":      ("cut",  0.700),  # WR 8%, -11pp
     "weight_ichimoku_bull": ("cut",  0.850),  # WR 11%, LONG-only trap
     "weight_macro":         ("cut",  0.800),  # WR 10%, LONG-only trap
+    # 2026-05-04: combined N=104 cohort (live + 3m backtest) found:
+    "weight_pin_bar_bull":  ("bump", 1.350),  # +13.5pp lift n=10 combined
+    "weight_pin_bar_bear":  ("bump", 1.350),  # symmetric — pin_bar pattern
 }
 
 
