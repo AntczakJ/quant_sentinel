@@ -1416,6 +1416,50 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     score = 0.0
     factors_detail = {}
 
+    # 2026-05-04: WIRE factor weights from dynamic_params into scoring.
+    # Previously `weight_<factor>` keys were written by self-learner +
+    # apply_factor_weight_tuning.py but NEVER READ by score_setup_quality
+    # — scoring used hardcoded points. The 8 factor weight nudges were
+    # cosmetic. Now: each factor's hardcoded base * weight from DB.
+    # Default 1.0 → if DB weight missing or untouched, no change in
+    # behavior. Tuned weights (bos 1.8, fvg 0.7, etc.) now actively
+    # affect setup scoring. Plus regime-aware adjustment: certain
+    # factors (macro, ichimoku_bull, killzone) get a boost-back in bull
+    # regime where they're not LONG-traps (per combined cohort N=104).
+    try:
+        from src.core.database import NewsDB as _W_DB
+        _w_db = _W_DB()
+        # Cache weight reads per call
+        _w_cache: dict[str, float] = {}
+        _macro_for_w = analysis.get('macro_regime', 'neutralny')
+        # Regime adjustment: in bull (zielony), partially neutralize
+        # bear-regime cuts on regime-sensitive factors (per backtest
+        # combined N=104 — these factors flip sign across regimes).
+        _regime_adj = {
+            "macro":         {"zielony": 1.25, "czerwony": 1.0, "neutralny": 1.0},
+            "ichimoku_bull": {"zielony": 1.20, "czerwony": 1.0, "neutralny": 1.05},
+            "ichimoku_bear": {"zielony": 1.0,  "czerwony": 1.0, "neutralny": 1.0},
+            "killzone":      {"zielony": 1.40, "czerwony": 1.0, "neutralny": 1.0},
+            "fvg":           {"zielony": 1.20, "czerwony": 1.0, "neutralny": 1.05},
+        }
+
+        def _w(factor: str, default: float = 1.0) -> float:
+            if factor in _w_cache:
+                return _w_cache[factor]
+            try:
+                v = float(_w_db.get_param(f"weight_{factor}", default))
+            except (TypeError, ValueError):
+                v = default
+            adj = _regime_adj.get(factor, {}).get(_macro_for_w, 1.0)
+            final = v * adj
+            _w_cache[factor] = final
+            return final
+    except Exception as _w_err:
+        # Hard fallback — if DB unavailable, use 1.0 multipliers (legacy
+        # behavior, identical to pre-2026-05-04).
+        def _w(factor: str, default: float = 1.0) -> float:
+            return 1.0
+
     # --- CZYNNIKI STRUKTURALNE (najważniejsze) ---
 
     # Liquidity Grab + MSS — premium setup (max 25 pkt)
@@ -1437,28 +1481,32 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         score += 20
         factors_detail['dbr_rbd'] = 20
 
-    # BOS — Break of Structure (max 18 pkt)
+    # BOS — Break of Structure (max 18 pkt × weight_bos)
     # Upweighted from 12 → 18 on 2026-04-25 based on factor attribution:
     # bos was best EV factor (n=11, WR 46%, +$457 cumulative).
+    # 2026-05-04: now multiplied by weight_bos from DB (default 1.0).
     if (direction == "LONG" and analysis.get('bos_bullish')) or \
        (direction == "SHORT" and analysis.get('bos_bearish')):
-        score += 18
-        factors_detail['bos'] = 18
+        _bos_pts = round(18 * _w("bos"), 1)
+        score += _bos_pts
+        factors_detail['bos'] = _bos_pts
 
-    # CHoCH — Change of Character (max 15 pkt)
+    # CHoCH — Change of Character (max 15 pkt × weight_choch)
     if (direction == "LONG" and analysis.get('choch_bullish')) or \
        (direction == "SHORT" and analysis.get('choch_bearish')):
-        score += 15
-        factors_detail['choch'] = 15
+        _choch_pts = round(15 * _w("choch"), 1)
+        score += _choch_pts
+        factors_detail['choch'] = _choch_pts
 
     # --- CZYNNIKI POTWIERDZAJĄCE ---
 
-    # FVG w kierunku (max 10 pkt)
+    # FVG w kierunku (max 10 pkt × weight_fvg)
     fvg_type = analysis.get('fvg_type')
     if (direction == "LONG" and fvg_type == "bullish") or \
        (direction == "SHORT" and fvg_type == "bearish"):
-        score += 10
-        factors_detail['fvg'] = 10
+        _fvg_pts = round(10 * _w("fvg"), 1)
+        score += _fvg_pts
+        factors_detail['fvg'] = _fvg_pts
 
     # Order Block (max 8 pkt)
     ob_price = analysis.get('ob_price')
@@ -1529,18 +1577,26 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         score += 6
         factors_detail['engulfing'] = 6
 
-    # Pin bar (max 5 pkt)
+    # Pin bar (max 5 pkt × weight_pin_bar_bull/bear)
     pb = analysis.get('pin_bar', False)
-    if (direction == "LONG" and pb == 'bullish') or \
-       (direction == "SHORT" and pb == 'bearish'):
-        score += 5
-        factors_detail['pin_bar'] = 5
+    if direction == "LONG" and pb == 'bullish':
+        _pb_pts = round(5 * _w("pin_bar_bull"), 1)
+        score += _pb_pts
+        factors_detail['pin_bar'] = _pb_pts
+    elif direction == "SHORT" and pb == 'bearish':
+        _pb_pts = round(5 * _w("pin_bar_bear"), 1)
+        score += _pb_pts
+        factors_detail['pin_bar'] = _pb_pts
 
-    # Ichimoku cloud (max 6 pkt)
-    if (direction == "LONG" and analysis.get('ichimoku_above_cloud')) or \
-       (direction == "SHORT" and analysis.get('ichimoku_below_cloud')):
-        score += 6
-        factors_detail['ichimoku'] = 6
+    # Ichimoku cloud (max 6 pkt × weight_ichimoku_bull/bear, regime-aware)
+    if direction == "LONG" and analysis.get('ichimoku_above_cloud'):
+        _ich_pts = round(6 * _w("ichimoku_bull"), 1)
+        score += _ich_pts
+        factors_detail['ichimoku'] = _ich_pts
+    elif direction == "SHORT" and analysis.get('ichimoku_below_cloud'):
+        _ich_pts = round(6 * _w("ichimoku_bear"), 1)
+        score += _ich_pts
+        factors_detail['ichimoku'] = _ich_pts
 
     # Toxic combo guard (2026-04-25): macro + ichimoku_bull together on LONG
     # produced n=13, WR 15%, -$394 in factor attribution. Likely cause:
@@ -1571,7 +1627,7 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         score -= 20
         factors_detail['short_in_bull_regime'] = -20
 
-    # Makro regime alignment (max 12 pkt — scales with signal count)
+    # Makro regime alignment (max 12 pkt × weight_macro, regime-aware)
     macro = analysis.get('macro_regime', 'neutralny')
     macro_bullish = analysis.get('macro_bullish_count', 0)
     macro_bearish = analysis.get('macro_bearish_count', 0)
@@ -1579,7 +1635,8 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
        (direction == "SHORT" and macro == "czerwony"):
         # Scale bonus by how many macro signals agree (2=base, 3-5=stronger)
         aligned_count = macro_bullish if direction == "LONG" else macro_bearish
-        macro_pts = min(4 + aligned_count * 2, 12)  # 4+2n, max 12
+        macro_pts_raw = min(4 + aligned_count * 2, 12)  # 4+2n, max 12
+        macro_pts = round(macro_pts_raw * _w("macro"), 1)
         score += macro_pts
         factors_detail['macro'] = macro_pts
         factors_detail['macro_signals_aligned'] = aligned_count
@@ -1589,15 +1646,16 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     if analysis.get('is_killzone'):
         # Killzone (London open / NY overlap) — direction-aware
         # 2026-04-25 attribution: LONG n=6 WR 0% (-$88) vs SHORT n=4 WR 25%
-        # (+$35). First B2 attempt was global -3 which destroyed SHORT
-        # killzone edge (PF dropped 0.83 → 0.70 in validation backtest).
-        # Now: penalize LONG, mildly reward SHORT (smaller +5 vs old +8).
+        # (+$35). 2026-05-04: bonus for SHORT now scaled by weight_killzone
+        # (regime-aware: full in bear, boosted 1.4× in bull where killzone
+        # showed +5pp lift instead of -11pp). LONG penalty unchanged.
         if direction == "LONG":
             score -= 3
             factors_detail['killzone_long_penalty'] = -3
         else:
-            score += 5
-            factors_detail['killzone_short'] = 5
+            _kz_pts = round(5 * _w("killzone"), 1)
+            score += _kz_pts
+            factors_detail['killzone_short'] = _kz_pts
     elif session_name == 'overlap':
         # London+NY overlap — good liquidity even outside killzone
         score += 4
