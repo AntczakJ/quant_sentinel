@@ -226,6 +226,21 @@ export const api = {
   scannerInsight: () => get<ScannerInsight>('/scanner/insight'),
   macroContext: () => get<MacroContext>('/macro/context'),
 
+  /** All feature flags + dynamic_params in one place (2026-05-04). */
+  flags: () =>
+    get<{
+      env_flags: Record<string, string>
+      dynamic_params: Record<string, number | string | null>
+      session_2026_05_04_flags: {
+        regime_v2_active: boolean
+        toxic_pair_filter_active: boolean
+        llm_news_active: boolean
+        calibration_disabled: boolean
+        trailing_disabled: boolean
+        max_lot_cap: number
+      }
+    }>('/flags'),
+
   async models(): Promise<ModelStat[]> {
     const raw = await get<{ rl_stats?: ModelStat; lstm_stats?: ModelStat; xgb_stats?: ModelStat }>(
       '/models/stats',

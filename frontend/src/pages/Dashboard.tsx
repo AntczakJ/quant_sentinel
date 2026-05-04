@@ -11,6 +11,7 @@ import { Stat } from '@/components/Stat'
 import { FlashOnChange } from '@/components/FlashOnChange'
 import { ExpandableCard } from '@/components/ExpandableCard'
 import { Sparkline } from '@/components/Sparkline'
+import { RiskHaltBanner } from '@/components/RiskHaltBanner'
 
 export default function Dashboard() {
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.portfolio, refetchInterval: 15_000 })
@@ -41,6 +42,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex flex-col gap-10">
+      <RiskHaltBanner />
       <Hero ticker={ticker} portfolio={portfolio} macro={macro} />
 
       {/* ─── Bento KPI grid ───────────────────────────────────────────── */}

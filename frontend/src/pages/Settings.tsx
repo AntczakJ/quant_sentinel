@@ -3,6 +3,7 @@ import NumberFlow from '@number-flow/react'
 import { api } from '@/api/client'
 import { Card } from '@/components/Card'
 import { AuroraBackground } from '@/components/AuroraBackground'
+import { FeatureFlagsPanel } from '@/components/FeatureFlagsPanel'
 import { useEffect, useMemo, useState } from 'react'
 import { isSoundEnabled, setSoundEnabled } from '@/lib/sound'
 
@@ -101,6 +102,12 @@ export default function Settings() {
               />
             </button>
           </div>
+        </Card>
+
+        {/* ─── Feature flags + dynamic params (2026-05-04) ─ */}
+        <Card variant="raised" className="p-6 lg:col-span-2">
+          <h3 className="text-h3 mb-5">Feature flags &amp; runtime params</h3>
+          <FeatureFlagsPanel />
         </Card>
 
         {/* ─── Recommendations — heuristic next-step suggestions ─ */}
