@@ -245,6 +245,34 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     current_rsi = analysis['rsi']
     current_trend = analysis['trend']
 
+    # --- 0a. PHASE V2 REGIME ROUTING (env-gated, default OFF) ---
+    # 2026-05-04: when QUANT_REGIME_V2=1, the regime classifier (V1) is
+    # consumed for: (a) block_entry on squeeze, (b) min_score override per
+    # regime+TF, (c) direction filter from macro_regime. See module
+    # src/analysis/regime_routing.py + memory/regime_v2_integration_runbook.md
+    # Default OFF — no behavior change without explicit opt-in.
+    _regime_routing = None
+    if os.environ.get("QUANT_REGIME_V2") == "1":
+        try:
+            from src.analysis.regime import classify_regime
+            from src.analysis.regime_routing import get_routing
+            # Use the analysis frame from smc_engine (already computed for this TF)
+            df_for_regime = analysis.get('_df') or analysis.get('df')
+            market_regime = "ranging"
+            if df_for_regime is not None and len(df_for_regime) >= 50:
+                market_regime = classify_regime(df_for_regime)
+            macro_regime = analysis.get('macro_regime') or 'neutralny'
+            _regime_routing = get_routing(market_regime, tf, macro_regime)
+            if _regime_routing.block_entry:
+                logger.info(f"[MTF] {tf}: V2 regime={market_regime}/{macro_regime} -> block")
+                _log_rejection(db, tf, "?", current_price,
+                               f"regime_v2_block({market_regime}/{macro_regime})",
+                               "regime_routing")
+                return None
+        except Exception as _re:
+            logger.debug(f"regime_routing skipped: {_re}")
+            _regime_routing = None
+
     # --- 0. PRICE SANITY CHECK ---
     if current_price <= 0:
         logger.debug(f"🔍 [MTF] {tf}: cena <= 0 — pomijam")
@@ -394,6 +422,17 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # the real pattern-based blocking.
     direction_str = "LONG" if current_trend == "bull" else "SHORT"
     pattern = f"{direction_str}_{current_structure}_{current_fvg_type}"
+
+    # --- 0b. PHASE V2 — direction filter from regime_routing ---
+    # If V2 active and regime restricts allowed_directions, reject early.
+    if _regime_routing is not None and _regime_routing.allowed_directions:
+        if direction_str not in _regime_routing.allowed_directions:
+            logger.info(f"[MTF] {tf}: V2 direction={direction_str} not in "
+                        f"{_regime_routing.allowed_directions} -> block")
+            _log_rejection(db, tf, direction_str, current_price,
+                           f"regime_v2_dir({direction_str}!in{_regime_routing.allowed_directions})",
+                           "regime_routing")
+            return None
 
     # --- 3. SPRAWDZENIE SETUPU SMC: wymagamy silnej konfluencji ---
     has_grab_mss = analysis.get('liquidity_grab') and analysis.get('mss')
@@ -1004,6 +1043,20 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         from src.trading.smc_engine import score_setup_quality
         setup_quality = score_setup_quality(analysis, direction)
         grade = setup_quality['grade']
+
+        # --- 7a. PHASE V2 — min_score floor override ---
+        # When V2 active, override the C-only block with regime-specific floor.
+        if _regime_routing is not None and _regime_routing.min_score_floor is not None:
+            score_val = setup_quality.get('score', 0)
+            if score_val < _regime_routing.min_score_floor:
+                logger.info(f"[MTF] {tf}: V2 score={score_val:.1f} < floor "
+                            f"{_regime_routing.min_score_floor} -> block")
+                _log_rejection(db, tf, direction_str, current_price,
+                               f"regime_v2_score<{_regime_routing.min_score_floor}({score_val:.1f})",
+                               "regime_routing",
+                               confluence_count=confluence_count, rsi=current_rsi,
+                               trend=current_trend, pattern=pattern, atr=current_atr)
+                return None
 
         if grade == "C":
             # Surface factors_detail so we can see WHAT is missing. Previously
