@@ -1210,6 +1210,11 @@ def _apply_voter_attribution(db, trade_id, status, direction):
         correct iff (pred > 0.5) == long_was_winning
     """
     try:
+        # 2026-05-04 night: voter attribution skipped on TIMEOUT/BREAKEVEN.
+        # Same rationale as factor weights: max_horizon hits are inconclusive
+        # and shouldn't penalize voters whose direction may yet have been right.
+        if status not in ("WIN", "LOSS", "PROFIT"):
+            return
         from src.ml.ensemble_models import update_ensemble_weights
         pred_row = db._query_one(
             "SELECT lstm_pred, xgb_pred, smc_pred, "
@@ -1221,7 +1226,7 @@ def _apply_voter_attribution(db, trade_id, status, direction):
         if not pred_row:
             return  # no prediction matched — early prod trades, missing data
         long_was_winning = (
-            (status == "WIN" and direction == "LONG")
+            (status in ("WIN", "PROFIT") and direction == "LONG")
             or (status == "LOSS" and direction == "SHORT")
         )
         # Probabilistic voters (value > 0.5 = LONG vote)
