@@ -10,6 +10,7 @@ import { HealthDeepPopover } from './HealthDeepPopover'
 import { ScrollProgress } from './ScrollProgress'
 import { CursorFollower } from './CursorFollower'
 import { RouteTransitionOverlay } from './RouteTransitionOverlay'
+import { LiveDot } from './LiveDot'
 import { isSoundEnabled, setSoundEnabled, playClick } from '@/lib/sound'
 
 // Lazy-load WebGL shader to avoid blocking initial paint on slower routes
@@ -98,6 +99,15 @@ export function Shell({ children }: { children: ReactNode }) {
 
           {/* Health pill + Cmd+K hint + sound toggle */}
           <div className="flex items-center gap-3">
+            {apiOk && (
+              <span
+                className="hidden md:inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-bull/30 bg-bull/[0.06]"
+                title="Scanner active — backend reachable"
+              >
+                <LiveDot color="bull" />
+                <span className="text-micro uppercase tracking-wider text-bull">Scanner</span>
+              </span>
+            )}
             <button
               type="button"
               onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
