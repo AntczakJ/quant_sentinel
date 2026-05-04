@@ -34,6 +34,12 @@ DAILY_LOSS_HARD_LIMIT_PCT = 5.0    # 5% daily loss → halt trading
 CONSEC_LOSS_COOLDOWN = 3           # 3 consecutive losses → 30min cooldown
 CONSEC_LOSS_COOLDOWN_MINS = 30     # Cooldown duration in minutes
 
+# 2026-05-04: absolute peak-to-trough drawdown auto-pause.
+# Daily limit only catches losses within a single UTC day. PEAK_DD catches
+# slow-bleed where each day loses 1% but cumulative DD hits ruin. Per
+# 8-agent audit, agent flagged constants existed but no peak-DD check.
+PEAK_DD_HARD_LIMIT_PCT = 10.0      # 10% from all-time peak → halt
+
 # Portfolio heat — max total risk across all open positions
 MAX_PORTFOLIO_HEAT_PCT = 6.0       # 6% max aggregate risk
 
@@ -207,6 +213,23 @@ class RiskManager:
         except (ImportError, AttributeError, TypeError) as e:
             logger.debug(f"Circuit breaker check failed: {e}")
 
+        # 3b. Peak-to-trough drawdown check (2026-05-04 — capital protection)
+        # Daily check only catches losses within UTC day. PEAK_DD catches
+        # slow bleed where each day loses 1% but cumulative DD = ruin.
+        try:
+            peak_dd_pct = self._get_peak_dd_pct(balance)
+            if peak_dd_pct >= PEAK_DD_HARD_LIMIT_PCT:
+                self.halt(
+                    f"Peak DD limit hit: {peak_dd_pct:.1f}% from all-time peak "
+                    f"(limit: {PEAK_DD_HARD_LIMIT_PCT}%)"
+                )
+                return False, (
+                    f"Peak DD {peak_dd_pct:.1f}% exceeds hard limit "
+                    f"{PEAK_DD_HARD_LIMIT_PCT}%"
+                )
+        except (ImportError, AttributeError, TypeError) as e:
+            logger.debug(f"Peak DD check failed: {e}")
+
         # 4. Consecutive loss cooldown trigger
         # Only activate cooldown if the most recent LOSS is recent (< 2h ago).
         # Without the recency check, a restart after yesterday's losses would
@@ -308,6 +331,45 @@ class RiskManager:
         if daily_pnl >= 0:
             return 0.0
         return abs(daily_pnl) / balance * 100
+
+    def _get_peak_dd_pct(self, current_balance: float) -> float:
+        """Compute peak-to-trough DD% from full trade history.
+
+        2026-05-04: capital-protection circuit breaker beyond daily limits.
+        Builds equity curve from cumulative profit, finds running peak,
+        returns current drawdown from peak as positive percentage.
+        """
+        from src.core.database import NewsDB
+        if current_balance <= 0:
+            return 0.0
+        db = NewsDB()
+        rows = db._query(
+            "SELECT COALESCE(profit, 0) FROM trades "
+            "WHERE status IN ('WIN', 'LOSS', 'TIMEOUT', 'BREAKEVEN') "
+            "ORDER BY id ASC"
+        )
+        if not rows:
+            return 0.0
+        # Reconstruct equity curve from initial portfolio_balance
+        try:
+            initial = float(db.get_param("portfolio_initial_balance", current_balance))
+        except (TypeError, ValueError):
+            initial = current_balance
+        equity = initial
+        peak = initial
+        for r in rows:
+            try:
+                pnl = float(r[0]) if r and r[0] is not None else 0.0
+            except (TypeError, ValueError):
+                pnl = 0.0
+            equity += pnl
+            if equity > peak:
+                peak = equity
+        if peak <= 0:
+            return 0.0
+        # Current DD from peak
+        dd = (peak - equity) / peak * 100
+        return max(0.0, dd)
 
     def _get_consecutive_losses(self) -> int:
         """Count consecutive losses from most recent trades."""
