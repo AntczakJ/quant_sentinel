@@ -20,6 +20,8 @@ import { Marquee } from '@/components/Marquee'
 import { StaggerReveal } from '@/components/StaggerReveal'
 import { ConfettiBurst } from '@/components/ConfettiBurst'
 import { GridBackground } from '@/components/GridBackground'
+import { ParticleField } from '@/components/ParticleField'
+import { AnimatedDivider } from '@/components/AnimatedDivider'
 import { useEffect, useRef, useState } from 'react'
 import { isSoundEnabled, playWin, playLoss } from '@/lib/sound'
 
@@ -212,6 +214,8 @@ export default function Dashboard() {
         </div>
       </section>
 
+      <AnimatedDivider />
+
       {/* ─── Recent signals + Scanner ─────────────────────────────────── */}
       <section className="reveal-on-scroll grid grid-cols-12 gap-4">
         <ExpandableCard
@@ -267,6 +271,7 @@ function Hero({
     >
       <BlobField variant="mixed" />
       <GridBackground spacing={48} opacity={0.05} />
+      <ParticleField count={22} variant="gold" />
       <ConfettiBurst trigger={winBurst} count={36} origin={{ x: '50%', y: '40%' }} />
       <div className="relative z-10 flex flex-col gap-8">
         <div className="flex flex-wrap items-center gap-2">
