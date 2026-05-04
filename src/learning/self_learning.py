@@ -311,28 +311,47 @@ def run_learning_cycle():
             # 2026-05-04: also require WALK-FORWARD validation pass.
             # Holdout-profitable alone is necessary but not sufficient;
             # if recent fold WR collapsed (regime shift), don't tune to it.
-            wf_pass = True
+            #
+            # Fail-CLOSED: any subprocess error (timeout, missing script,
+            # crash) flips wf_pass to False so Bayesian REJECTS rather than
+            # silently bypassing validation. Audit (2026-05-04 night) flagged
+            # original behavior as silently permissive on validator failure.
+            wf_pass = False
             try:
                 import subprocess as _sub
                 from pathlib import Path as _P
                 _root = _P(__file__).resolve().parents[2]
                 _wfv = _root / "scripts" / "walk_forward_validator.py"
-                if _wfv.exists():
+                if not _wfv.exists():
+                    logger.warning(
+                        "Bayesian REJECTED: walk_forward_validator.py missing. "
+                        "Cannot validate against regime shift — keeping current params."
+                    )
+                else:
                     res = _sub.run(
                         [sys.executable, str(_wfv), "--db", "live"],
                         capture_output=True, text=True, timeout=60,
                         cwd=str(_root),
                     )
-                    # Exit code 1 = walk-forward alarm
-                    wf_pass = (res.returncode == 0)
-                    if not wf_pass:
+                    # Exit code 0 = pass; 1 = walk-forward alarm; other = error
+                    if res.returncode == 0:
+                        wf_pass = True
+                    elif res.returncode == 1:
                         logger.warning(
                             "Bayesian REJECTED: walk-forward validator alarm. "
                             "Recent fold deviates from older folds — likely regime shift. "
                             "Keeping current params."
                         )
+                    else:
+                        stderr_tail = (res.stderr or "")[-500:]
+                        logger.warning(
+                            f"Bayesian REJECTED: walk-forward validator crashed "
+                            f"(rc={res.returncode}). stderr: {stderr_tail}"
+                        )
+            except _sub.TimeoutExpired:
+                logger.warning("Bayesian REJECTED: walk-forward validator timed out (>60s)")
             except Exception as _wfe:
-                logger.debug(f"walk-forward validation skipped: {_wfe}")
+                logger.warning(f"Bayesian REJECTED: walk-forward subprocess error: {_wfe}")
 
             if holdout_profitable and wf_pass:
                 db = NewsDB()
