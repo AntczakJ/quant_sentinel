@@ -84,6 +84,22 @@ def main():
     hm = run_script("hourly_heatmap.py", ["--db", "both", "--min-n", "3"])
     out(hm)
 
+    section("5a. FACTOR PAIRS (synergistic edge)")
+    pairs = run_script("factor_pairs.py", ["--db", "both", "--min-n", "5"])
+    out(pairs)
+
+    section("5b. FACTOR DOLLAR ATTRIBUTION")
+    attr = run_script("factor_attribution.py", ["--db", "both", "--min-n", "5"])
+    out(attr)
+
+    section("5c. SL/TP PLACEMENT vs OUTCOME")
+    slp = run_script("sl_tp_analyzer.py", ["--db", "both"])
+    out(slp)
+
+    section("5d. RULES-BASED RISK EXPLAINER (last 20 trades)")
+    expl = run_script("trade_explainer.py", ["--n", "20", "--db", "live"])
+    out(expl)
+
     if not args.no_llm and os.getenv("OPENAI_API_KEY"):
         section("6. LLM TRADE JOURNAL — top 20 themes")
         lj = run_script("llm_journal.py", ["--n", "20"])
