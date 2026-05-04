@@ -61,10 +61,16 @@ def extract_factors(analysis: dict, direction: str) -> dict:
        (direction == "SHORT" and analysis.get('choch_bearish')):
         factors['choch'] = 1
 
-    # Order blocks
+    # Order blocks — direction-filtered (2026-05-04 fix, mirrors
+    # self_learning.py:428). Only count OBs whose type matches the
+    # setup direction. Was the most likely root cause of ob_count -17.7pp
+    # WR delta in factor_predictive analysis.
     ob_list = analysis.get('order_blocks', [])
     if ob_list:
-        factors['ob_count'] = min(len(ob_list), 3)
+        expected_type = 'bullish' if direction == 'LONG' else 'bearish'
+        ob_dir_aligned = [b for b in ob_list if b.get('type') == expected_type]
+        if ob_dir_aligned:
+            factors['ob_count'] = min(len(ob_dir_aligned), 3)
 
     ob_main = analysis.get('ob_price')
     if ob_main and analysis.get('price'):
@@ -131,6 +137,40 @@ def extract_factors(analysis: dict, direction: str) -> dict:
     # Killzone / session
     if analysis.get('is_killzone'):
         factors['killzone'] = 1
+
+    # 2026-05-04: OTE (Optimal Trade Entry) zone factor — Stage 1 logging.
+    # ICT-style 50-79% retracement of dealing range. Highest expected WR
+    # impact per 10-agent research (+5-8pp combined with FVG).
+    # Stage 2 will enable scoring bonus after N=50+ trades validate edge.
+    if direction == 'LONG' and analysis.get('in_ote_long'):
+        factors['ote_zone'] = 1
+    elif direction == 'SHORT' and analysis.get('in_ote_short'):
+        factors['ote_zone'] = 1
+    if analysis.get('in_ote_sweet'):
+        factors['ote_sweet'] = 1  # 70.5% retracement (premium ICT level)
+
+    # 2026-05-04: VWAP Stage 1 — log alignment factor (no scoring change).
+    # Stage 2 will enable scoring bonus after N=50 trades validate edge.
+    vwap_above = analysis.get('vwap_above')
+    if vwap_above is not None:
+        if (direction == 'LONG' and vwap_above) or \
+           (direction == 'SHORT' and not vwap_above):
+            factors['vwap_align'] = 1
+
+    # 2026-05-04: Day-of-week as factor (logging + future weight).
+    # Mon/Fri have known different WR. Log so factor_predictive can
+    # quantify per-day WR delta on N=200+ cohort.
+    try:
+        from src.trading.sim_time import now_utc
+        ts = now_utc()
+        dow = ts.weekday()  # 0=Mon, 4=Fri
+        if dow == 0:
+            factors['dow_mon'] = 1
+        elif dow == 4:
+            factors['dow_fri'] = 1
+        # Tue/Wed/Thu = no factor logged (baseline)
+    except Exception:
+        pass
 
     return factors
 

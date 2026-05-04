@@ -996,12 +996,30 @@ def get_smc_analysis(tf: str) -> dict | None:
         # 9. FAIR VALUE GAP (z filtrem ATR)
         fvg = detect_fvg(df, atr=atr)
 
-        # 10. EQUILIBRIUM
+        # 10. EQUILIBRIUM + OTE (Optimal Trade Entry)
+        # 2026-05-04: ICT 70.5% retracement zone added per 10-agent research.
+        # OTE LONG: 50-79% retracement of (swing_high → swing_low) range
+        #   → buy zone: swing_low + 0.21 * range  (79% retracement = 21% from low)
+        #              up to swing_low + 0.50 * range (equilibrium)
+        # OTE SHORT: mirror — sell zone between equilibrium and 79% from low
+        # Sweet spot: 70.5% (algorithmic mean of 61.8% and 79%)
         swing_high = swings["swing_high"]
         swing_low = swings["swing_low"]
         eq_level = round((swing_high + swing_low) / 2, 2)
         is_discount = price < eq_level
         is_premium = price > eq_level
+        # OTE zone calculation
+        dealing_range = swing_high - swing_low
+        ote_long_low = swing_low + 0.21 * dealing_range   # 79% retracement
+        ote_long_high = swing_low + 0.50 * dealing_range  # equilibrium
+        ote_short_low = swing_low + 0.50 * dealing_range
+        ote_short_high = swing_low + 0.79 * dealing_range
+        ote_sweet_spot = swing_low + 0.295 * dealing_range  # 70.5% retracement (LONG)
+        in_ote_long = ote_long_low <= price <= ote_long_high
+        in_ote_short = ote_short_low <= price <= ote_short_high
+        # Sweet spot proximity (within 5% of 70.5% retracement)
+        sweet_spot_distance = abs(price - ote_sweet_spot) / max(dealing_range, 0.01)
+        in_ote_sweet = sweet_spot_distance <= 0.05
 
         # 11. DBR/RBD
         dbr_rbd = detect_dbr_rbd(df)
@@ -1190,6 +1208,10 @@ def get_smc_analysis(tf: str) -> dict | None:
             "eq_level": eq_level,
             "is_discount": is_discount,
             "is_premium": is_premium,
+            "in_ote_long": in_ote_long,
+            "in_ote_short": in_ote_short,
+            "in_ote_sweet": in_ote_sweet,
+            "ote_sweet_spot": round(ote_sweet_spot, 2),
             "dbr_rbd_type": dbr_rbd["type"],
             "dbr_rbd_base_low": dbr_rbd.get("base_low"),
             "dbr_rbd_base_high": dbr_rbd.get("base_high"),
