@@ -74,6 +74,28 @@ os.makedirs(os.path.dirname(DATABASE_URL) or ".", exist_ok=True)
 _conn = sqlite3.connect(DATABASE_URL, check_same_thread=False)
 _cursor = _conn.cursor()
 _using_sqlite = True
+
+# 2026-05-04: PRAGMA optimization per DB performance audit.
+# - journal_mode=WAL (already default but explicit) — enables concurrent reads/single writer
+# - synchronous=NORMAL — ~40% faster writes vs FULL, WAL keeps durability across crashes
+# - cache_size=-65536 — 64MB SQLite cache for repeated queries
+# - mmap_size=268435456 — 256MB memory-mapped I/O for read-heavy analytics
+# - temp_store=MEMORY — temp tables (json_each, etc.) in RAM
+# - wal_autocheckpoint=1000 — ~4MB WAL before auto-checkpoint
+try:
+    for _pragma in [
+        "PRAGMA journal_mode=WAL",
+        "PRAGMA synchronous=NORMAL",
+        "PRAGMA cache_size=-65536",
+        "PRAGMA mmap_size=268435456",
+        "PRAGMA temp_store=MEMORY",
+        "PRAGMA wal_autocheckpoint=1000",
+    ]:
+        _cursor.execute(_pragma)
+    _conn.commit()
+except Exception as _pe:
+    logger.warning(f"PRAGMA tuning failed (non-fatal): {_pe}")
+
 logger.info(f"Primary database: {DATABASE_URL}")
 
 # ── Secondary: Turso cloud (optional) ──
@@ -468,6 +490,12 @@ class NewsDB:
             # for recent fetch + JOIN to trades for regime accuracy analysis.
             self._execute("CREATE INDEX IF NOT EXISTS idx_ml_pred_timestamp ON ml_predictions(timestamp DESC)")
             self._execute("CREATE INDEX IF NOT EXISTS idx_ml_pred_trade_id ON ml_predictions(trade_id)")
+            # 2026-05-04: missing rejected_setups timestamp index identified
+            # by DB perf audit. WHERE timestamp > '2026-04-01' was full-scan
+            # on 14k rows (13.49ms → ~0.5ms with index, 26x speedup).
+            self._execute("CREATE INDEX IF NOT EXISTS idx_rejected_timestamp ON rejected_setups(timestamp)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_rejected_filter ON rejected_setups(filter_name)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_ml_pred_timestamp_trade ON ml_predictions(timestamp, trade_id)")
             # rejected_setups: queried by filter_name for filter accuracy
             self._execute("CREATE INDEX IF NOT EXISTS idx_rejected_filter ON rejected_setups(filter_name)")
         except Exception as e:
