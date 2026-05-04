@@ -8,7 +8,7 @@ import re
 import random
 import sys
 
-from src.core.database import NewsDB
+from src.core.database import NewsDB, _db_locked
 from src.core.logger import logger
 from src.trading.smc_engine import get_smc_analysis
 from src.trading.finance import calculate_position
@@ -356,280 +356,6 @@ def run_learning_cycle():
             logger.info(f"Bayesian optimization skipped: {len(_bayes_trades)} trades < 20 minimum")
 
 
-async def auto_analyze_and_learn(context):
-    """
-    Automatycznie wykonuje analizę Quant PRO i zapisuje sygnał do bazy.
-    Wywoływane cyklicznie przez job_queue.
-    """
-    from src.core.logger import logger as job_logger  # Importuj logger lokalnie dla job_queue
-
-    try:
-        # Pobierz analizy dla trzech interwałów (asynchronicznie)
-        s, s_higher, s_lower = await asyncio.gather(
-            asyncio.to_thread(get_smc_analysis, USER_PREFS['tf']),
-            asyncio.to_thread(get_smc_analysis, "1h"),
-            asyncio.to_thread(get_smc_analysis, "5m")
-        )
-        if not s or not s_higher or not s_lower:
-            job_logger.warning("⚠️ [AUTO-LEARN] Brak danych – pomijam.")
-            return
-
-        # Kontekst makro
-        macro_context = f"Reżim: {s['macro_regime'].upper()} | USD/JPY Z-score: {s['usdjpy_zscore']} | ATR: {s['atr']}"
-
-        # Kontekst dla AI (rozszerzony o nowe detekcje)
-        learning_context = f"""
-        STRUKTURA RYNKU (SMC):
-        - Cena: {s['price']}$ | Trend Główny: {s['trend']} | Trend H1: {s_higher['trend']} | Trend M5: {s_lower['trend']}
-        - Liquidity Grab: {s['liquidity_grab']} ({s['liquidity_grab_dir']})
-        - MSS: {s['mss']}
-        - FVG: {s['fvg']}
-        - Order Block: {s['ob_price']}$
-        - DBR/RBD: {s['dbr_rbd_type']}
-        - BOS: Bull={s.get('bos_bullish')}, Bear={s.get('bos_bearish')}
-        - CHoCH: Bull={s.get('choch_bullish')}, Bear={s.get('choch_bearish')}
-        CANDLESTICK PATTERNS:
-        - Engulfing: {s.get('engulfing', False)}
-        - Pin Bar: {s.get('pin_bar', False)}
-        - Inside Bar: {s.get('inside_bar', False)}
-        ICHIMOKU & VOLUME:
-        - Above Cloud: {s.get('ichimoku_above_cloud', False)}
-        - Below Cloud: {s.get('ichimoku_below_cloud', False)}
-        - POC: {s.get('poc_price')}$ | Near POC: {s.get('near_poc', False)}
-        RSI DIVERGENCE:
-        - Bullish Div: {s.get('rsi_div_bull', False)} | Bearish Div: {s.get('rsi_div_bear', False)}
-        SESSION / KILLZONE:
-        - Session: {s.get('session', 'unknown')} | Killzone: {s.get('is_killzone', False)} | Volatility: {s.get('volatility_expected', 'unknown')}
-        POTWIERDZENIE M5: Grab: {s_lower['liquidity_grab']}, MSS: {s_lower['mss']}
-        MAKRO: {macro_context}
-        """
-
-        # Ocena AI przez agenta z pamięcią (system_self_learning = stały wątek systemu)
-        learning_prompt = """
-        OCEŃ SETUP (0-10) według zasad: +4 za Grab+MSS, +2 za makro zgodne, +2 za FVG, +2 za DBR/RBD, +1 za RSI w strefie 40-50 (bull) lub 50-60 (bear), -2 za przeciwny H1, -3 za SMT, -3 za przeciwny makro, -2 za PREMIUM przy LONG. Wydaj: [WYNIK: X/10] [POWÓD] [RADA].
-        """
-        ai_verdict = await asyncio.to_thread(
-            ask_agent_with_memory,
-            f"Oceń ten setup tradingowy XAU/USD (auto-learning):\n{learning_context}\n{learning_prompt}",
-            "system_self_learning",  # stały wątek dla systemu samouczenia — agent buduje kontekst rynkowy
-        )
-
-        # Wyciągnij ocenę
-        score = 0
-        match = re.search(r"WYNIK:\s*(\d+(?:\.\d+)?)/10", ai_verdict)
-        if match:
-            score = float(match.group(1))
-
-        # Oblicz pozycję
-        db = NewsDB()
-        user_id = 1  # domyślny użytkownik (możesz pobrać z bazy jeśli masz wielu)
-        balance = db.get_balance(user_id)
-        currency = USER_PREFS.get("currency", "USD")
-        p = calculate_position(s, balance, currency, TD_API_KEY)
-
-        if p.get("direction") == "CZEKAJ":
-            job_logger.info(f"⏸️ [AUTO-LEARN] Sygnał odrzucony: {p.get('reason')}")
-            return
-
-        # Opcjonalnie: pomiń sygnały z niską oceną AI
-        MIN_SCORE = 5.0
-        if score < MIN_SCORE:
-            job_logger.info(f"⏸️ [AUTO-LEARN] Pomijam sygnał – niska ocena AI ({score}/10)")
-            return
-
-        # --- Oblicz czynniki w oparciu o rzeczywisty kierunek transakcji ---
-        direction = p['direction']
-        factors = {}
-
-        # BOS
-        if (direction == "LONG" and s.get('bos_bullish')) or (direction == "SHORT" and s.get('bos_bearish')):
-            factors['bos'] = 1
-
-        # CHoCH
-        if (direction == "LONG" and s.get('choch_bullish')) or (direction == "SHORT" and s.get('choch_bearish')):
-            factors['choch'] = 1
-
-        # Liczba OB (z listy order_blocks) — direction-filtered
-        # 2026-05-04 fix: find_order_blocks(df, trend) returns OBs matching
-        # the EMA trend, NOT the SETUP direction. When SHORT fires in a
-        # bull-EMA regime (contrarian reversal), the bullish OBs were being
-        # counted as factors for SHORT — opposite direction. This was the
-        # most-likely root cause of ob_count factor's -17.7pp WR delta.
-        # Per 10-agent deep audit 2026-05-04 evening.
-        ob_list = s.get('order_blocks', [])
-        if ob_list:
-            expected_type = 'bullish' if direction == 'LONG' else 'bearish'
-            ob_dir_aligned = [b for b in ob_list if b.get('type') == expected_type]
-            ob_count = min(len(ob_dir_aligned), 3)
-            if ob_count > 0:
-                factors['ob_count'] = ob_count   # maks. 3 punkty
-
-
-        # Order block główny
-        ob_main = s.get('ob_price')
-        if ob_main:
-            if direction == "LONG" and ob_main < s['price']:
-                factors['ob_main'] = 1
-            elif direction == "SHORT" and ob_main > s['price']:
-                factors['ob_main'] = 1
-
-        # Order block M5
-        ob_m5 = s_lower.get('ob_price')
-        if ob_m5:
-            if direction == "LONG" and ob_m5 < s['price']:
-                factors['ob_m5'] = 1
-            elif direction == "SHORT" and ob_m5 > s['price']:
-                factors['ob_m5'] = 1
-
-        # Order block H1
-        ob_h1 = s_higher.get('ob_price')
-        if ob_h1:
-            if direction == "LONG" and ob_h1 < s['price']:
-                factors['ob_h1'] = 1
-            elif direction == "SHORT" and ob_h1 > s['price']:
-                factors['ob_h1'] = 1
-
-        # FVG w kierunku
-        fvg_type = s.get('fvg_type')
-        if (direction == "LONG" and fvg_type == "bullish") or (direction == "SHORT" and fvg_type == "bearish"):
-            factors['fvg'] = 1
-
-        # Liquidity Grab + MSS
-        if s.get('liquidity_grab') and s.get('mss'):
-            if (direction == "LONG" and s.get('liquidity_grab_dir') == "bullish") or (direction == "SHORT" and s.get('liquidity_grab_dir') == "bearish"):
-                factors['grab_mss'] = 1
-
-        # DBR/RBD
-        dbr_type = s.get('dbr_rbd_type')
-        if (direction == "LONG" and dbr_type == "DBR") or (direction == "SHORT" and dbr_type == "RBD"):
-            factors['dbr_rbd'] = 1
-
-        # Makro zgodne
-        macro = s.get('macro_regime')
-        if (direction == "LONG" and macro == "zielony") or (direction == "SHORT" and macro == "czerwony"):
-            factors['macro'] = 1
-
-        # RSI optymalny
-        rsi = s.get('rsi')
-        if direction == "LONG" and 40 <= rsi <= 50:
-            factors['rsi_opt'] = 1
-        elif direction == "SHORT" and 50 <= rsi <= 60:
-            factors['rsi_opt'] = 1
-
-        # M5 konfluencja (trend zgodny)
-        if s_lower.get('trend') == s.get('trend'):
-            factors['m5_confluence'] = 1
-
-        # ========== NOWE CZYNNIKI ==========
-        # Engulfing pattern
-        eng = s.get('engulfing', False)
-        if (direction == "LONG" and eng == 'bullish') or (direction == "SHORT" and eng == 'bearish'):
-            factors['engulfing'] = 1
-
-        # Pin bar
-        pb = s.get('pin_bar', False)
-        if (direction == "LONG" and pb == 'bullish') or (direction == "SHORT" and pb == 'bearish'):
-            factors['pin_bar'] = 1
-
-        # Inside bar (konsolidacja przed wybiciem)
-        if s.get('inside_bar', False):
-            factors['inside_bar'] = 1
-
-        # Ichimoku cloud
-        if direction == "LONG" and s.get('ichimoku_above_cloud', False):
-            factors['ichimoku_bull'] = 1
-        elif direction == "SHORT" and s.get('ichimoku_below_cloud', False):
-            factors['ichimoku_bear'] = 1
-
-        # POC (Point of Control)
-        if s.get('near_poc', False):
-            factors['near_poc'] = 1
-
-        # RSI Divergence
-        if direction == "LONG" and s.get('rsi_div_bull', False):
-            factors['rsi_divergence'] = 1
-        elif direction == "SHORT" and s.get('rsi_div_bear', False):
-            factors['rsi_divergence'] = 1
-
-        # Supply/Demand confluence
-        demand_zones = s.get('demand', [])
-        supply_zones = s.get('supply', [])
-        if direction == "LONG" and demand_zones:
-            for zone in demand_zones:
-                if abs(s['price'] - zone) < s.get('atr', 2.0):
-                    factors['supply_demand'] = 1
-                    break
-        elif direction == "SHORT" and supply_zones:
-            for zone in supply_zones:
-                if abs(s['price'] - zone) < s.get('atr', 2.0):
-                    factors['supply_demand'] = 1
-                    break
-
-        # ML ensemble direction (do prawidłowej atrybucji w resolverze)
-        ensemble_data = p.get('ensemble_data')
-        if ensemble_data:
-            ml_dir = ensemble_data.get('signal')
-            if ml_dir == 'LONG':
-                factors['ml_ensemble_long'] = 1
-            elif ml_dir == 'SHORT':
-                factors['ml_ensemble_short'] = 1
-
-        # Session / Killzone
-        session = s.get('session', 'unknown')
-        if s.get('is_killzone', False):
-            factors['killzone'] = 1
-        if session in ('london', 'new_york'):
-            factors['high_vol_session'] = 1
-        elif session == 'asian':
-            factors['asian_session'] = 1
-        # ====================================
-
-        # Zapis do bazy (z czynnikami)
-        pattern = f"{direction}_{s.get('structure', 'unknown')}_{s.get('fvg_type', 'None')}"
-        db.log_trade(
-            direction=direction,
-            price=p['entry'],
-            sl=p['sl'],
-            tp=p['tp'],
-            rsi=s['rsi'],
-            trend=s['trend'],
-            structure=pattern,
-            pattern=pattern,
-            factors=factors
-        )
-        job_logger.info(f"📡 [AUTO-LEARN] Zapisano sygnał {direction} do bazy (ocena AI: {score}/10, czynniki: {list(factors.keys())})")
-
-        # Zapisz statystyki reżimu makro (dla uczenia się per-session/regime)
-        try:
-            import datetime
-            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            current_session = db.get_session(ts)
-            macro = s.get('macro_regime', 'neutralny')
-            # Reżim jest zapisywany; outcome zostanie zaktualizowany przez resolve_trades_task
-            db.set_param(f"last_trade_regime", hash(macro) % 1000)  # identyfikator
-            db.set_param(f"last_trade_session_name", hash(current_session) % 100)
-        except Exception as e:
-            job_logger.debug(f"Regime tracking: {e}")
-
-        # Opcjonalnie: wysyłaj powiadomienie na czat (np. tylko gdy score > 8)
-        if score > 8:
-            from src.trading.scanner import send_telegram_alert
-            msg = (
-                f"🤖 *AUTOMATYCZNY SYGNAŁ* (ocena {score}/10)\n"
-                f"🚀 {direction} @ {p['entry']}$\n"
-                f"🛑 SL: {p['sl']}$ | ✅ TP: {p['tp']}$\n"
-                f"📊 Lot: {p['lot']} | {p['logic']}\n"
-                f"🧠 Czynniki: {', '.join(factors.keys())}"
-            )
-            send_telegram_alert(msg)
-
-    except Exception as e:
-        try:
-            job_logger.error(f"❌ [AUTO-LEARN] Błąd: {e}")
-        except (AttributeError, TypeError, NameError):
-            import sys
-            sys.stderr.write(f"[AUTO-LEARN] Error: {e}\n")
-
 
 def classify_loss(trade_id: int) -> str:
     """
@@ -742,12 +468,18 @@ def update_factor_weights(trade_id, outcome):
     Each factor tracks (alpha, beta) = (wins, losses) when present in a trade.
     Weight = sample from Beta(alpha, beta) — naturally balances explore/exploit.
 
-    Benefits over ε-greedy:
-      - No arbitrary epsilon parameter
-      - Under-tested factors explored more (wide Beta distribution)
-      - Well-tested factors converge to true value (narrow Beta)
-      - No oscillation from fixed learning rate
+    2026-05-04 night: 3 hardenings vs the original Thompson loop.
+      1. TIMEOUT/BREAKEVEN trades skipped — they're inconclusive
+         (max_horizon hit before SL/TP). Learning from them muddies signal.
+      2. Confidence-weighted update — α/β increment by ensemble_confidence
+         (clamped to [0.4, 1.5]) instead of always 1.0. High-conf wins
+         amplify factor reward; low-conf wins barely move it.
+      3. Atomic read+write — full per-factor get+set inside _db_locked()
+         so two concurrent resolves can't corrupt α/β counts.
     """
+    if outcome not in ("WIN", "LOSS", "PROFIT"):
+        return
+
     db = NewsDB()
     factors = db.get_trade_factors(trade_id)
     if not factors:
@@ -755,40 +487,41 @@ def update_factor_weights(trade_id, outcome):
 
     is_win = outcome in ("WIN", "PROFIT")
 
+    conf_row = db._query_one(
+        "SELECT confidence FROM ml_predictions WHERE trade_id = ? "
+        "ORDER BY timestamp DESC LIMIT 1",
+        (trade_id,),
+    )
+    raw_conf = float(conf_row[0]) if conf_row and conf_row[0] is not None else 1.0
+    update_strength = max(0.4, min(1.5, raw_conf))
+
+    NEUTRAL_SAMPLE = 0.2
+
     for factor, present in factors.items():
         if not present:
             continue
 
-        # Load Beta distribution parameters (alpha=wins+1, beta=losses+1)
         alpha_key = f"factor_alpha_{factor}"
         beta_key = f"factor_beta_{factor}"
-        alpha = float(db.get_param(alpha_key, 1.0))  # Prior: Beta(1,1) = uniform
-        beta_val = float(db.get_param(beta_key, 1.0))
-
-        # Update posterior
-        if is_win:
-            alpha += 1.0
-        else:
-            beta_val += 1.0
-
-        db.set_param(alpha_key, alpha)
-        db.set_param(beta_key, beta_val)
-
-        # 2026-05-04: ANTI-OVERFIT SAFEGUARD.
-        # Sample size = (alpha-1) + (beta-1) trades observed. Below N=20,
-        # Beta posterior is too uncertain — sampling from wide distribution
-        # can produce extreme weights on noise. Linear blend toward
-        # NEUTRAL_SAMPLE=0.2 (which maps to weight=1.0 via 0.5+0.2*2.5).
-        # At N=0, sample=0.2 → weight=1.0 (no edge claim). At N=20+, full
-        # Thompson sample (data-driven weight).
-        NEUTRAL_SAMPLE = 0.2  # → weight 1.0
-        n_observed = (alpha - 1) + (beta - 1)
-        sampled_weight = random.betavariate(max(alpha, 0.1), max(beta_val, 0.1))
-        if n_observed < 20:
-            blend = n_observed / 20.0
-            sampled_weight = blend * sampled_weight + (1 - blend) * NEUTRAL_SAMPLE
-
-        # Map [0,1] Beta sample to weight range [0.5, 3.0]
-        weight = 0.5 + sampled_weight * 2.5
         weight_name = f"weight_{factor}"
-        db.set_param(weight_name, round(weight, 3))
+
+        with _db_locked():
+            alpha = float(db.get_param(alpha_key, 1.0))
+            beta_val = float(db.get_param(beta_key, 1.0))
+
+            if is_win:
+                alpha += update_strength
+            else:
+                beta_val += update_strength
+
+            db.set_param(alpha_key, alpha)
+            db.set_param(beta_key, beta_val)
+
+            n_observed = (alpha - 1) + (beta_val - 1)
+            sampled_weight = random.betavariate(max(alpha, 0.1), max(beta_val, 0.1))
+            if n_observed < 20:
+                blend = n_observed / 20.0
+                sampled_weight = blend * sampled_weight + (1 - blend) * NEUTRAL_SAMPLE
+
+            weight = 0.5 + sampled_weight * 2.5
+            db.set_param(weight_name, round(weight, 3))

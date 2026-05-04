@@ -296,6 +296,7 @@ async def lifespan(app: FastAPI):
     # silent rename gets caught early. Always-on, very cheap.
     drift_task = asyncio.create_task(_dynamic_params_drift_watchdog())
     health_check_task = asyncio.create_task(_periodic_health_check())
+    drift_detect_task = asyncio.create_task(_daily_drift_check())
     db_backup_task = asyncio.create_task(_daily_db_backup())
     wal_checkpoint_task = asyncio.create_task(_hourly_wal_checkpoint())
 
@@ -342,7 +343,8 @@ async def lifespan(app: FastAPI):
     # list — they kept running 30s past shutdown, possibly emitting Telegram.
     tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task,
              retention_task, macro_snapshot_task, replay_task, drift_task,
-             health_check_task, shadow_task, db_backup_task, wal_checkpoint_task]
+             health_check_task, drift_detect_task, shadow_task, db_backup_task,
+             wal_checkpoint_task]
     try:
         if health_task is not None:
             tasks.append(health_task)
@@ -669,6 +671,56 @@ async def _periodic_health_check():
             logger.debug(f"[health_check] periodic run error: {e}")
         # 24h until next run
         await asyncio.sleep(86400)
+
+
+async def _daily_drift_check():
+    """
+    Daily concept-drift detector — runs `detect_drift()` and logs verdict.
+
+    2026-05-04: shipped after walk-forward Fold 4 + drift detector both
+    independently identified regime shift (-14pp WR delta, PSI RSI 0.685,
+    PSI score 0.716, Page-Hinkley alert). Without periodic auto-check,
+    operator has to manually hit /api/drift/status. This wires it into
+    background scheduling so drift is observable without action.
+
+    Sentry capture on `verdict='drifted'` triggers Telegram bridge
+    (level=fatal). On `verdict='warn'`, logs INFO only — too noisy for
+    Telegram.
+
+    Cadence: 6h (4× daily). Drift develops over weeks not minutes,
+    but more frequent runs let us catch it within a 6h trade cohort
+    rather than waiting 24h.
+    """
+    await asyncio.sleep(120)  # 2-min startup delay; let resolver settle
+    while True:
+        try:
+            from src.learning.drift_detector import detect_drift
+            result = await asyncio.to_thread(detect_drift)
+            verdict = result.get("verdict", "unknown")
+            if verdict == "drifted":
+                msg = (
+                    f"[drift_check] DRIFTED — "
+                    f"wr_delta={result.get('wr_delta_pp')}pp "
+                    f"PH={result.get('page_hinkley_alert')} "
+                    f"PSI_rsi={result.get('psi_rsi')} "
+                    f"PSI_score={result.get('psi_score')} "
+                    f"({result.get('drifted_signals', 0)}/4 signals)"
+                )
+                logger.warning(msg)
+                try:
+                    import sentry_sdk
+                    sentry_sdk.capture_message(msg, level="fatal")
+                except Exception:
+                    pass
+            elif verdict == "warn":
+                logger.info(f"[drift_check] WARN — 1/4 signals")
+            elif verdict == "stable":
+                logger.info(f"[drift_check] stable")
+            else:
+                logger.debug(f"[drift_check] {verdict}: {result}")
+        except Exception as e:
+            logger.debug(f"[drift_check] error: {e}")
+        await asyncio.sleep(6 * 3600)
 
 
 async def _dynamic_params_drift_watchdog():
