@@ -13,6 +13,9 @@ import { api } from '@/api/client'
 import { Card } from '@/components/Card'
 import { MagneticButton } from '@/components/MagneticButton'
 import { Skeleton } from '@/components/Skeleton'
+import { GradientText } from '@/components/GradientText'
+import { TextReveal } from '@/components/TextReveal'
+import { LiveDot } from '@/components/LiveDot'
 
 const TFS = [
   { label: '5m', value: '5m' },
@@ -117,7 +120,12 @@ export default function ChartPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-display-sm font-display tracking-tight text-display-gradient">XAU/USD</h1>
+        <h1 className="text-display-sm font-display tracking-tight flex items-center gap-3">
+          <GradientText>
+            <TextReveal text="XAU/USD" splitBy="char" />
+          </GradientText>
+          <LiveDot color="gold" />
+        </h1>
         <div className="flex gap-2">
           {TFS.map((t) => (
             <MagneticButton
