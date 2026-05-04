@@ -1451,6 +1451,23 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
             except (TypeError, ValueError):
                 v = default
             adj = _regime_adj.get(factor, {}).get(_macro_for_w, 1.0)
+            # 2026-05-04: when self-learning has Bayesian-updated this factor
+            # with sufficient data (n_trades >= 5) AND set weight < 1.0
+            # (real penalty), DO NOT let regime_adj boost it back above 1.0.
+            # Self-learning sees actual outcomes; regime_adj is a research
+            # rule. Real data wins. Per factor_edge_2026-05-04: macro/fvg
+            # show NEG predictive power (-13.9pp / -7.9pp) but regime_adj
+            # was cancelling the self-learning penalty.
+            try:
+                alpha = float(_w_db.get_param(f"factor_alpha_{factor}", 1.0))
+                beta = float(_w_db.get_param(f"factor_beta_{factor}", 1.0))
+                n_trades = (alpha - 1) + (beta - 1)
+            except (TypeError, ValueError):
+                n_trades = 0
+            if v < 1.0 and n_trades >= 5 and adj > 1.0:
+                # Cap final at the self-learned weight — never boost a
+                # data-validated penalty back into reward territory.
+                adj = 1.0
             final = v * adj
             _w_cache[factor] = final
             return final
