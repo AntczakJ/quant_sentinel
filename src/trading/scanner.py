@@ -159,6 +159,26 @@ def extract_factors(analysis: dict, direction: str) -> dict:
     except Exception:
         pass
 
+    # 2026-05-04: D1 (daily) trend alignment — Stage 1 logging.
+    # 10-agent research: only H1/H4 HTF currently checked. D1 alignment
+    # captures multi-day swing context. +3-4pp WR estimated when added
+    # as gate. Log first, validate via factor_predictive on N=50+.
+    try:
+        from src.trading.smc_engine import get_smc_analysis as _gsa
+        d1_analysis = _gsa("1day")
+        if d1_analysis:
+            d1_trend = (d1_analysis.get("trend") or "").lower()
+            if direction == "LONG" and "bull" in d1_trend:
+                factors['d1_aligned'] = 1
+            elif direction == "SHORT" and "bear" in d1_trend:
+                factors['d1_aligned'] = 1
+            elif "bull" in d1_trend or "bear" in d1_trend:
+                # D1 has explicit trend OPPOSITE direction — counter-bias
+                factors['d1_counter'] = 1
+            # Neutral D1 = no factor logged
+    except Exception:
+        pass
+
     # 2026-05-04: IFVG (Inverse FVG retest) — Stage 1 logging.
     # ICT premium pattern: broken FVG retested from opposite side.
     # +4-7pp WR estimate per 10-agent research.
