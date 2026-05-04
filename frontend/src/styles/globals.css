@@ -193,6 +193,97 @@
   inherits: false;
 }
 
+@property --gb-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* ─── 2026-05-04 night — modernist wow extras ──────────────────────── */
+
+/* Gradient-border card — animated rotating conic border around content */
+.gradient-border {
+  position: relative;
+  background: theme('colors.ink.100');
+  border-radius: 18px;
+  isolation: isolate;
+}
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--gb-angle),
+    rgba(212,175,55,0.6) 0deg,
+    rgba(59,130,246,0.5) 90deg,
+    rgba(34,197,94,0.4) 180deg,
+    rgba(212,175,55,0.6) 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: borderRotate 6s linear infinite;
+}
+
+/* Animated gradient text — flowing gold/info/bull color shift */
+.gradient-text-flow {
+  background: linear-gradient(
+    90deg,
+    #d4af37 0%,
+    #f4d676 25%,
+    #3b82f6 50%,
+    #22c55e 75%,
+    #d4af37 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradientShift 8s ease-in-out infinite;
+}
+
+/* Live indicator — green dot with concentric pulse rings */
+.live-dot {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: theme('colors.bull');
+  animation: livePulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.live-dot::before,
+.live-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid theme('colors.bull');
+  animation: rippleOut 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.live-dot::after {
+  animation-delay: 1.2s;
+}
+
+/* Floating glow orbs — drift slowly across a relative-positioned parent */
+.glow-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(40px);
+  pointer-events: none;
+  animation: floatSlow 9s ease-in-out infinite, blob 16s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Marquee row — wrap inside .marquee-row > .marquee-track > 2× content */
+.marquee-mask {
+  mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 8%, #000 92%, transparent 100%);
+}
+
 /* ─── View Transitions API — SPA cross-route morph ────────────────── */
 
 @supports (view-transition-name: a) {

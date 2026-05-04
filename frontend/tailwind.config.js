@@ -78,6 +78,19 @@ export default {
         'beam-pulse':    'beamPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'pulse-glow':    'pulseGlow 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'scroll-reveal': 'scrollReveal linear both',
+        // 2026-05-04 night — modernist wow expansion
+        'gradient-shift': 'gradientShift 8s ease-in-out infinite',
+        'blob':          'blob 16s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'float-slow':    'floatSlow 9s ease-in-out infinite',
+        'orbit':         'orbit 18s linear infinite',
+        'orbit-reverse': 'orbit 24s linear infinite reverse',
+        'ripple':        'rippleOut 2.4s cubic-bezier(0, 0, 0.2, 1) infinite',
+        'border-rotate': 'borderRotate 6s linear infinite',
+        'live-pulse':    'livePulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'marquee':       'marquee 40s linear infinite',
+        'marquee-slow':  'marquee 70s linear infinite',
+        'breathe':       'breathe 5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'tilt-glow':     'tiltGlow 3s ease-in-out infinite',
       },
       keyframes: {
         fadeUp: {
@@ -115,6 +128,47 @@ export default {
         scrollReveal: {
           from: { opacity: '0', transform: 'translateY(24px) scale(0.98)' },
           to:   { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
+        gradientShift: {
+          '0%, 100%': { backgroundPosition: '0% 50%' },
+          '50%':      { backgroundPosition: '100% 50%' },
+        },
+        blob: {
+          '0%, 100%': { borderRadius: '60% 40% 30% 70% / 60% 30% 70% 40%' },
+          '33%':      { borderRadius: '30% 60% 70% 40% / 50% 60% 30% 60%' },
+          '66%':      { borderRadius: '50% 60% 30% 60% / 30% 60% 70% 40%' },
+        },
+        floatSlow: {
+          '0%, 100%': { transform: 'translate3d(0, 0, 0)' },
+          '50%':      { transform: 'translate3d(0, -10px, 0)' },
+        },
+        orbit: {
+          from: { transform: 'rotate(0deg) translateX(180px) rotate(0deg)' },
+          to:   { transform: 'rotate(360deg) translateX(180px) rotate(-360deg)' },
+        },
+        rippleOut: {
+          '0%':   { transform: 'scale(0.85)', opacity: '0.6' },
+          '100%': { transform: 'scale(2.4)',  opacity: '0' },
+        },
+        borderRotate: {
+          from: { '--gb-angle': '0deg' },
+          to:   { '--gb-angle': '360deg' },
+        },
+        livePulse: {
+          '0%, 100%': { boxShadow: '0 0 0 0 rgba(34,197,94,0.45)' },
+          '70%':      { boxShadow: '0 0 0 10px rgba(34,197,94,0)' },
+        },
+        marquee: {
+          from: { transform: 'translateX(0)' },
+          to:   { transform: 'translateX(-50%)' },
+        },
+        breathe: {
+          '0%, 100%': { transform: 'scale(1)',    opacity: '0.7' },
+          '50%':      { transform: 'scale(1.04)', opacity: '1.0' },
+        },
+        tiltGlow: {
+          '0%, 100%': { filter: 'drop-shadow(0 0 8px rgba(212,175,55,0.20))' },
+          '50%':      { filter: 'drop-shadow(0 0 24px rgba(212,175,55,0.55))' },
         },
       },
     },

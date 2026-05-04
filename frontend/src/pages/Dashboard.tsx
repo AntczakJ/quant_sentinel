@@ -12,6 +12,14 @@ import { FlashOnChange } from '@/components/FlashOnChange'
 import { ExpandableCard } from '@/components/ExpandableCard'
 import { Sparkline } from '@/components/Sparkline'
 import { RiskHaltBanner } from '@/components/RiskHaltBanner'
+import { TiltCard } from '@/components/TiltCard'
+import { LiveDot } from '@/components/LiveDot'
+import { GradientText } from '@/components/GradientText'
+import { BlobField } from '@/components/BlobField'
+import { Marquee } from '@/components/Marquee'
+import { StaggerReveal } from '@/components/StaggerReveal'
+import { ConfettiBurst } from '@/components/ConfettiBurst'
+import { useEffect, useRef, useState } from 'react'
 
 export default function Dashboard() {
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.portfolio, refetchInterval: 15_000 })
@@ -40,10 +48,30 @@ export default function Dashboard() {
     pnlSeries.push(cumPnl)
   })
 
+  // Confetti trigger — fires once per new winning trade
+  const lastWinIdRef = useRef<number | null>(null)
+  const [winBurst, setWinBurst] = useState(0)
+  useEffect(() => {
+    const winners = trades.filter((t) => t.status === 'WIN' || t.status === 'PROFIT')
+    if (!winners.length) return
+    const newest = winners[0].id ?? null
+    if (lastWinIdRef.current === null) {
+      lastWinIdRef.current = newest
+      return
+    }
+    if (newest !== lastWinIdRef.current) {
+      lastWinIdRef.current = newest
+      setWinBurst((b) => b + 1)
+    }
+  }, [trades])
+
   return (
     <div className="flex flex-col gap-10">
       <RiskHaltBanner />
-      <Hero ticker={ticker} portfolio={portfolio} macro={macro} />
+      <Hero ticker={ticker} portfolio={portfolio} macro={macro} winBurst={winBurst} />
+
+      {/* ─── Live ticker marquee — XAU + recent trades ─────────────── */}
+      <TickerMarquee ticker={ticker} trades={trades.slice(0, 8)} />
 
       {/* ─── Bento KPI grid ───────────────────────────────────────────── */}
       <section className="reveal-on-scroll">
@@ -206,10 +234,12 @@ function Hero({
   ticker,
   portfolio,
   macro,
+  winBurst = 0,
 }: {
   ticker: { price: number; change_pct?: number } | undefined
   portfolio: { balance?: number; pnl?: number; currency?: string } | undefined
   macro: MacroContext | undefined
+  winBurst?: number
 }) {
   const regime = macro?.macro_regime
   const regimeLabel = regime === 'zielony' ? 'BULL' : regime === 'czerwony' ? 'BEAR' : 'NEUTRAL'
@@ -222,8 +252,11 @@ function Hero({
       transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
       className="surface-grain relative overflow-hidden rounded-xl3 bg-mesh-gold border border-white/[0.06] p-10 lg:p-16"
     >
+      <BlobField variant="mixed" />
+      <ConfettiBurst trigger={winBurst} count={36} origin={{ x: '50%', y: '40%' }} />
       <div className="relative z-10 flex flex-col gap-8">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <LiveDot label="LIVE" color="bull" />
           <span className="pill">XAU/USD</span>
           {macro?.market_regime && (
             <span className="pill capitalize">{macro.market_regime.replace('_', ' ')}</span>
@@ -234,7 +267,7 @@ function Hero({
         <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
           <div>
             <div className="text-micro uppercase tracking-wider text-ink-600 mb-3">
-              Spot · gold per ounce
+              <GradientText>Spot · gold per ounce</GradientText>
             </div>
             <div
               className="num font-display text-display-lg text-ink-900 leading-none"
@@ -291,6 +324,62 @@ function Hero({
         </div>
       </div>
     </motion.section>
+  )
+}
+
+// ─── Ticker marquee ───────────────────────────────────────────────────
+function TickerMarquee({
+  ticker,
+  trades,
+}: {
+  ticker: { price: number; change_pct?: number } | undefined
+  trades: Trade[]
+}) {
+  const items: { label: string; value: string; tone: 'bull' | 'bear' | 'neutral' }[] = []
+  if (ticker?.price != null) {
+    items.push({
+      label: 'XAU/USD',
+      value: `$${ticker.price.toFixed(2)}`,
+      tone: ticker.change_pct == null ? 'neutral' : ticker.change_pct >= 0 ? 'bull' : 'bear',
+    })
+  }
+  if (ticker?.change_pct != null) {
+    items.push({
+      label: '24H',
+      value: `${ticker.change_pct >= 0 ? '+' : ''}${(ticker.change_pct * 100).toFixed(3)}%`,
+      tone: ticker.change_pct >= 0 ? 'bull' : 'bear',
+    })
+  }
+  trades.forEach((t) => {
+    const pnl = t.profit ?? 0
+    const isWin = t.status === 'WIN' || t.status === 'PROFIT'
+    const isLoss = t.status === 'LOSS' || t.status === 'LOSE'
+    items.push({
+      label: `${t.direction.slice(0, 1)} #${t.id ?? '—'}`,
+      value: pnl !== 0 ? `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}` : t.status,
+      tone: isWin ? 'bull' : isLoss ? 'bear' : 'neutral',
+    })
+  })
+  if (!items.length) return null
+
+  return (
+    <div className="surface-raised relative overflow-hidden rounded-xl py-3 px-1">
+      <Marquee speed="slow">
+        {items.map((it, i) => (
+          <div key={i} className="flex items-center gap-3 whitespace-nowrap">
+            <span className="text-micro uppercase tracking-wider text-ink-600">{it.label}</span>
+            <span
+              className={`num text-body ${
+                it.tone === 'bull' ? 'text-bull' : it.tone === 'bear' ? 'text-bear' : 'text-ink-800'
+              }`}
+            >
+              {it.value}
+            </span>
+            <span className="h-4 w-px bg-white/[0.08]" />
+          </div>
+        ))}
+      </Marquee>
+    </div>
   )
 }
 
