@@ -3608,6 +3608,46 @@ async def macro_context():
     return result
 
 
+@app.get("/api/openai/cost", tags=["System"])
+async def openai_cost(days: int = 7):
+    """Daily OpenAI token usage + estimated $ over last N days.
+
+    2026-05-04: per integration audit (token spend was untracked).
+    Reads dynamic_params keys openai_tokens_in_<date> / openai_cost_usd_<date>
+    written by src/integrations/ai_engine._record_openai_usage.
+    """
+    from datetime import date, timedelta
+    from src.core.database import NewsDB
+    db = NewsDB()
+    out: list = []
+    total_in = 0
+    total_out = 0
+    total_cost = 0.0
+    for i in range(days):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        ti = int(float(db.get_param(f"openai_tokens_in_{d}", 0) or 0))
+        to = int(float(db.get_param(f"openai_tokens_out_{d}", 0) or 0))
+        cu = float(db.get_param(f"openai_cost_usd_{d}", 0) or 0)
+        out.append({
+            "date": d,
+            "tokens_in": ti,
+            "tokens_out": to,
+            "cost_usd": round(cu, 4),
+        })
+        total_in += ti
+        total_out += to
+        total_cost += cu
+    return {
+        "days": days,
+        "by_day": out,
+        "totals": {
+            "tokens_in": total_in,
+            "tokens_out": total_out,
+            "cost_usd": round(total_cost, 4),
+        },
+    }
+
+
 @app.get("/api/flags", tags=["System"])
 async def feature_flags():
     """Single pane of all feature flags + dynamic params controlling behavior.

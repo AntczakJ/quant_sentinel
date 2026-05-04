@@ -36,7 +36,12 @@ KEYWORDS = ["gold", "xau", "fed", "inflation", "cpi", "powell", "dollar", "usd",
 # next day re-queries (regime/context may have shifted). Without TTL, a
 # Monday verdict survives until process restart, masking fresh sentiment.
 import time as _time
-_LLM_SENTIMENT_CACHE: dict[str, tuple[str, float]] = {}
+# 2026-05-04: switched FIFO → LRU per 6-agent integration audit.
+# OrderedDict + move_to_end on read keeps frequently-accessed headlines
+# in cache (e.g., NFP coverage repeated across cycles). FIFO would
+# evict hot headlines first, causing duplicate LLM calls.
+from collections import OrderedDict as _OrderedDict
+_LLM_SENTIMENT_CACHE: "_OrderedDict[str, tuple[str, float]]" = _OrderedDict()
 _LLM_SENTIMENT_CACHE_MAX = 1000
 _LLM_SENTIMENT_CACHE_TTL = 86400  # 24h
 
@@ -58,14 +63,20 @@ def _detect_sentiment_llm(title: str) -> str:
     if cached is not None:
         verdict, ts = cached
         if now - ts < _LLM_SENTIMENT_CACHE_TTL:
+            # LRU bump: move-to-end marks as recently-used
+            _LLM_SENTIMENT_CACHE.move_to_end(title)
             return verdict
         # Expired — fall through to re-query
 
-    # Cache size cap — drop oldest to avoid unbounded memory
+    # LRU eviction: drop oldest 25% when cap reached. OrderedDict's
+    # iter order is insertion-order; popitem(last=False) drops oldest
+    # (LRU) — keeps frequently-accessed headlines.
     if len(_LLM_SENTIMENT_CACHE) >= _LLM_SENTIMENT_CACHE_MAX:
-        # Drop ~25% oldest entries (simple FIFO via insertion-order dict)
-        for k in list(_LLM_SENTIMENT_CACHE.keys())[:_LLM_SENTIMENT_CACHE_MAX // 4]:
-            _LLM_SENTIMENT_CACHE.pop(k, None)
+        for _ in range(_LLM_SENTIMENT_CACHE_MAX // 4):
+            try:
+                _LLM_SENTIMENT_CACHE.popitem(last=False)
+            except KeyError:
+                break
 
     try:
         from src.integrations.ai_engine import client

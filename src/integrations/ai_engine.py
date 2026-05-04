@@ -25,6 +25,38 @@ else:
     client = None
     logger.warning("⚠️ OpenAI API key not found in .env - AI features will be unavailable")
 
+
+# 2026-05-04: token usage tracking. Per-call adds to daily counter in
+# dynamic_params. Daily reset implicit via date-keyed param.
+# Pricing reference (gpt-4o): $2.50/1M input, $10/1M output.
+_PRICING = {
+    "gpt-4o": {"input": 2.50, "output": 10.00},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+}
+
+
+def _record_openai_usage(input_tokens: int, output_tokens: int, model: str = "gpt-4o") -> None:
+    """Append today's input/output tokens + estimated $ to dynamic_params."""
+    try:
+        from datetime import date
+        from src.core.database import NewsDB
+        db = NewsDB()
+        today = date.today().isoformat()
+        in_key = f"openai_tokens_in_{today}"
+        out_key = f"openai_tokens_out_{today}"
+        cost_key = f"openai_cost_usd_{today}"
+        prev_in = float(db.get_param(in_key, 0) or 0)
+        prev_out = float(db.get_param(out_key, 0) or 0)
+        prev_cost = float(db.get_param(cost_key, 0) or 0)
+        # $ per token
+        pricing = _PRICING.get(model, _PRICING["gpt-4o"])
+        cost = (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+        db.set_param(in_key, prev_in + input_tokens)
+        db.set_param(out_key, prev_out + output_tokens)
+        db.set_param(cost_key, round(prev_cost + cost, 4))
+    except Exception as e:
+        logger.debug(f"openai usage recording failed: {e}")
+
 # Słownik systemowych promptów dla różnych kontekstów analizy.
 # Każdy kontekst ma swój specjalistyczny prompt który optymalizuje odpowiedź AI.
 # Słownik systemowych promptów - wersja AGRESYWNY TRADER
@@ -112,6 +144,17 @@ def ask_ai_gold(context_type: str, raw_data: str) -> str:
                 input=f"DANE RYNKOWE: {raw_data}",
                 temperature=0.5,
             )
+            # 2026-05-04: log token usage for daily $ budget tracking.
+            # gpt-4o pricing ~$2.50/1M input + $10/1M output. Sum
+            # daily via dynamic_params openai_tokens_today_in/out.
+            try:
+                usage = getattr(response, "usage", None)
+                if usage is not None:
+                    in_t = int(getattr(usage, "input_tokens", 0) or 0)
+                    out_t = int(getattr(usage, "output_tokens", 0) or 0)
+                    _record_openai_usage(in_t, out_t, model="gpt-4o")
+            except Exception:
+                pass
             return response.output_text
         except Exception as e:
             last_err = e
