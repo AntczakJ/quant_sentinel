@@ -1,0 +1,46 @@
+# Pre-commit hooks for Quant Sentinel
+#
+# Install once:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Hooks run on every git commit. Skip with `git commit --no-verify` (avoid).
+#
+# 2026-05-04: shipped per ops audit recommendation. Catches lint/typing
+# issues before commit instead of finding them in CI 30 min later.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$|memory/'
+      - id: end-of-file-fixer
+        exclude: '\.md$|memory/'
+      - id: check-yaml
+      - id: check-json
+        exclude: '\.vscode/|reports/'
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=5000']  # 5MB max — model files go via LFS or .gitignore
+      - id: debug-statements
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        # Tolerant: only flag real bugs, not stylistic
+        # Project pyproject.toml controls rule selection if [tool.ruff] exists.
+      - id: ruff-format
+        # Optional formatting — comment out if too aggressive
+
+  - repo: local
+    hooks:
+      - id: smoke-tests
+        name: Run critical regression tests
+        entry: .venv/Scripts/python.exe -m pytest tests/test_smc_engine.py tests/test_smc_extended.py tests/test_factor_weight_wiring.py tests/test_session_2026_05_04_fixes.py tests/test_new_detectors_2026_05_04.py -q --tb=line
+        language: system
+        pass_filenames: false
+        types: [python]
+        # Only run when Python files changed; subset of full pytest to keep <60s

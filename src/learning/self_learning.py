@@ -6,6 +6,7 @@ self_learning.py – mechanizmy samouczenia: optymalizacja parametrów, analiza 
 import asyncio
 import re
 import random
+import sys
 
 from src.core.database import NewsDB
 from src.core.logger import logger
@@ -307,7 +308,33 @@ def run_learning_cycle():
             )
             holdout_profitable = holdout_equity > 10000.0
 
-            if holdout_profitable:
+            # 2026-05-04: also require WALK-FORWARD validation pass.
+            # Holdout-profitable alone is necessary but not sufficient;
+            # if recent fold WR collapsed (regime shift), don't tune to it.
+            wf_pass = True
+            try:
+                import subprocess as _sub
+                from pathlib import Path as _P
+                _root = _P(__file__).resolve().parents[2]
+                _wfv = _root / "scripts" / "walk_forward_validator.py"
+                if _wfv.exists():
+                    res = _sub.run(
+                        [sys.executable, str(_wfv), "--db", "live"],
+                        capture_output=True, text=True, timeout=60,
+                        cwd=str(_root),
+                    )
+                    # Exit code 1 = walk-forward alarm
+                    wf_pass = (res.returncode == 0)
+                    if not wf_pass:
+                        logger.warning(
+                            "Bayesian REJECTED: walk-forward validator alarm. "
+                            "Recent fold deviates from older folds — likely regime shift. "
+                            "Keeping current params."
+                        )
+            except Exception as _wfe:
+                logger.debug(f"walk-forward validation skipped: {_wfe}")
+
+            if holdout_profitable and wf_pass:
                 db = NewsDB()
                 for name, val in best_params.items():
                     db.set_param(name, val)
