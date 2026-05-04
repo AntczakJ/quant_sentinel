@@ -297,6 +297,7 @@ async def lifespan(app: FastAPI):
     drift_task = asyncio.create_task(_dynamic_params_drift_watchdog())
     health_check_task = asyncio.create_task(_periodic_health_check())
     db_backup_task = asyncio.create_task(_daily_db_backup())
+    wal_checkpoint_task = asyncio.create_task(_hourly_wal_checkpoint())
 
     # Macro-snapshot persister (5-min cadence). Decoupled from trade
     # evaluation so historical regime data is captured even on scan-paused
@@ -341,7 +342,7 @@ async def lifespan(app: FastAPI):
     # list — they kept running 30s past shutdown, possibly emitting Telegram.
     tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task,
              retention_task, macro_snapshot_task, replay_task, drift_task,
-             health_check_task, shadow_task, db_backup_task]
+             health_check_task, shadow_task, db_backup_task, wal_checkpoint_task]
     try:
         if health_task is not None:
             tasks.append(health_task)
@@ -533,6 +534,39 @@ async def _fire_journal_async(trade_id: int):
         logger.info(f"[journal] auto-fire done for trade #{trade_id}")
     except Exception as e:
         logger.debug(f"[journal] auto-fire trade #{trade_id} failed: {e}")
+
+
+async def _hourly_wal_checkpoint():
+    """
+    Hourly WAL checkpoint — keeps WAL file from bloating.
+
+    2026-05-04 DB perf audit found WAL was 3.9MB (23% of main DB) due
+    to infrequent auto-checkpoint. Manual hourly checkpoint forces
+    consolidation of recent writes back into main DB file. Uses RESTART
+    mode (safer than TRUNCATE — doesn't risk dropping uncommitted txns).
+    """
+    import asyncio
+    repo_root = Path(__file__).resolve().parents[1]
+    db_path = repo_root / "data" / "sentinel.db"
+
+    await asyncio.sleep(600)  # 10-min startup delay
+    while True:
+        try:
+            import sqlite3
+            def _do_checkpoint():
+                conn = sqlite3.connect(str(db_path))
+                cur = conn.cursor()
+                cur.execute("PRAGMA wal_checkpoint(RESTART)")
+                # Returns (busy, log, checkpointed) — log info only
+                row = cur.fetchone()
+                conn.close()
+                return row
+            row = await asyncio.to_thread(_do_checkpoint)
+            if row:
+                logger.debug(f"[wal-checkpoint] busy={row[0]}, log={row[1]}, checkpointed={row[2]}")
+        except Exception as e:
+            logger.debug(f"[wal-checkpoint] failed: {e}")
+        await asyncio.sleep(3600)  # hourly
 
 
 async def _daily_db_backup():

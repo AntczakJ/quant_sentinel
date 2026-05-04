@@ -103,15 +103,24 @@ _turso_conn = None
 _turso_cursor = None
 
 if TURSO_URL and TURSO_URL.startswith("libsql://"):
-    try:
-        import libsql
-        _turso_conn = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN) if TURSO_TOKEN else libsql.connect(TURSO_URL)
-        _turso_cursor = _turso_conn.cursor()
-        logger.info(f"Secondary database (Turso): {TURSO_URL[:50]}...")
-    except ImportError:
-        logger.info("Turso sync disabled (libsql not installed)")
-    except Exception as e:
-        logger.warning(f"Turso connection failed: {e} — running local only")
+    # 2026-05-04 audit (DB+storage+APIs deep audit) found Turso has
+    # NEGATIVE value: 500ms+ latency per scanner cycle, silent sync
+    # failure mode, NO read benefit (all reads go to local), NO backup
+    # for libsql:// URLs, schema drift risk. Recommendation: drop.
+    # Now env-gated: set QUANT_DISABLE_TURSO=1 to skip Turso entirely.
+    # Set to "0" or unset to keep legacy dual-write behavior (rollback).
+    if os.environ.get("QUANT_DISABLE_TURSO", "").strip() == "1":
+        logger.info("Turso sync DISABLED via QUANT_DISABLE_TURSO=1")
+    else:
+        try:
+            import libsql
+            _turso_conn = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN) if TURSO_TOKEN else libsql.connect(TURSO_URL)
+            _turso_cursor = _turso_conn.cursor()
+            logger.info(f"Secondary database (Turso): {TURSO_URL[:50]}...")
+        except ImportError:
+            logger.info("Turso sync disabled (libsql not installed)")
+        except Exception as e:
+            logger.warning(f"Turso connection failed: {e} — running local only")
 
 
 def _should_sync_to_turso(sql: str) -> bool:
