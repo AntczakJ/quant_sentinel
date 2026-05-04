@@ -8,6 +8,7 @@ import { OfflineBanner } from './OfflineBanner'
 import { ScrambleText } from './ScrambleText'
 import { HealthDeepPopover } from './HealthDeepPopover'
 import { ScrollProgress } from './ScrollProgress'
+import { CursorFollower } from './CursorFollower'
 import { isSoundEnabled, setSoundEnabled, playClick } from '@/lib/sound'
 
 // Lazy-load WebGL shader to avoid blocking initial paint on slower routes
@@ -40,6 +41,9 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="min-h-screen flex flex-col relative">
       {/* ─── Top scroll-progress bar ────────────────────────────────── */}
       <ScrollProgress />
+
+      {/* ─── Magnetic cursor follower (gold dot + glow trail) ───────── */}
+      <CursorFollower />
 
       {/* ─── Cursor-reactive WebGL mesh background ──────────────────── */}
       <Suspense fallback={null}>

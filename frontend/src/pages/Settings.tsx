@@ -4,6 +4,10 @@ import { api } from '@/api/client'
 import { Card } from '@/components/Card'
 import { AuroraBackground } from '@/components/AuroraBackground'
 import { FeatureFlagsPanel } from '@/components/FeatureFlagsPanel'
+import { GradientText } from '@/components/GradientText'
+import { TextReveal } from '@/components/TextReveal'
+import { TiltCard } from '@/components/TiltCard'
+import { Spotlight } from '@/components/Spotlight'
 import { useEffect, useMemo, useState } from 'react'
 import { isSoundEnabled, setSoundEnabled } from '@/lib/sound'
 
@@ -21,26 +25,37 @@ export default function Settings() {
       </div>
 
       <header className="reveal-on-scroll">
-        <h1 className="text-display-sm font-display tracking-tight text-display-gradient">Settings</h1>
-        <p className="text-body text-ink-600 mt-2">System configuration and live state.</p>
+        <h1 className="text-display-sm font-display tracking-tight">
+          <GradientText>
+            <TextReveal text="Settings" splitBy="char" />
+          </GradientText>
+        </h1>
+        <p className="text-body text-ink-600 mt-2">
+          <TextReveal text="System configuration and live state." delay={0.18} />
+        </p>
       </header>
 
       <div className="grid lg:grid-cols-2 gap-4 reveal-on-scroll">
-        <Card variant="raised" className="p-6">
-          <h3 className="text-title font-display">API</h3>
-          <div className="mt-4 space-y-2">
-            {[
-              ['Status', health?.status ?? '—'],
-              ['Uptime', health?.uptime ?? '—'],
-              ['Models loaded', String(health?.models_loaded ?? '—')],
-            ].map(([k, v]) => (
-              <Row key={k as string} label={k as string} value={v as string} />
-            ))}
-          </div>
-        </Card>
+        <TiltCard className="rounded-xl" intensity={6}>
+          <Card variant="raised" className="relative overflow-hidden p-6">
+            <Spotlight color="rgba(212,175,55,0.16)" />
+            <h3 className="text-title font-display">API</h3>
+            <div className="mt-4 space-y-2">
+              {[
+                ['Status', health?.status ?? '—'],
+                ['Uptime', health?.uptime ?? '—'],
+                ['Models loaded', String(health?.models_loaded ?? '—')],
+              ].map(([k, v]) => (
+                <Row key={k as string} label={k as string} value={v as string} />
+              ))}
+            </div>
+          </Card>
+        </TiltCard>
 
-        <Card variant="raised" className="p-6">
-          <h3 className="text-title font-display">Account</h3>
+        <TiltCard className="rounded-xl" intensity={6}>
+          <Card variant="raised" className="relative overflow-hidden p-6">
+            <Spotlight color="rgba(59,130,246,0.16)" />
+            <h3 className="text-title font-display">Account</h3>
           <div className="mt-4 space-y-2">
             <Row
               label="Balance"
@@ -68,7 +83,8 @@ export default function Settings() {
             />
             <Row label="Open positions" value={String(portfolio?.open_positions ?? 0)} />
           </div>
-        </Card>
+          </Card>
+        </TiltCard>
 
         {/* ─── Audio toggle ──────────────────────────────────────── */}
         <Card variant="raised" className="p-6">
