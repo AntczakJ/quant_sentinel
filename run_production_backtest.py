@@ -930,6 +930,19 @@ async def _run_backtest(args) -> dict:
                     "UPDATE trades SET timestamp=? WHERE id=(SELECT MAX(id) FROM trades)",
                     (sim_ts,)
                 )
+                # 2026-05-04: parity with production — backfill setup_grade + score
+                # so backtest trades are comparable to live cohort. Previously only
+                # production (api/main.py:785) wrote these columns; backtest left
+                # them NULL, breaking by-grade analytics.
+                sq = trade.get("setup_quality")
+                if sq and sq.get("grade"):
+                    try:
+                        db.update_trade_setup_grade(
+                            db._query_one("SELECT MAX(id) FROM trades")[0],
+                            sq["grade"], sq.get("score", 0)
+                        )
+                    except Exception:
+                        pass
                 # Update sim-last-trade-ts so cooldown check blocks the next
                 # rapid-fire duplicate (fixes 2026-04-24 cluster bug where
                 # same setup fired 6× at 15-min intervals).
