@@ -98,16 +98,36 @@ def ask_ai_gold(context_type: str, raw_data: str) -> str:
     # Używamy zdefiniowanego promptu lub generycznego jeśli typ nie jest znany
     system_prompt = PROMPTS.get(context_type, "Analizuj dane rynkowe.")
 
-    try:
-        response = client.responses.create(
-            model="gpt-4o",
-            instructions=system_prompt,
-            input=f"DANE RYNKOWE: {raw_data}",
-            temperature=0.5  # Niższa temperatura = bardziej logiczne, powtarzalne odpowiedzi
-        )
-        return response.output_text
-
-    except Exception as e:
-        error_msg = f"⚠️ Błąd AI ({type(e).__name__}): {str(e)}"
-        logger.error(error_msg)
-        return "⚠️ Błąd komunikacji z OpenAI - spróbuj później"
+    # 2026-05-04: retry with exponential backoff on transient errors
+    # (429 rate limit, 500/502/503 service errors). Max 3 attempts,
+    # backoff 1s → 2s → 4s. Per 6-agent integration audit.
+    import time as _time
+    max_attempts = 3
+    last_err = None
+    for attempt in range(max_attempts):
+        try:
+            response = client.responses.create(
+                model="gpt-4o",
+                instructions=system_prompt,
+                input=f"DANE RYNKOWE: {raw_data}",
+                temperature=0.5,
+            )
+            return response.output_text
+        except Exception as e:
+            last_err = e
+            err_str = str(e).lower()
+            # Retry only on transient errors
+            transient = (
+                "429" in err_str or "rate" in err_str
+                or "500" in err_str or "502" in err_str or "503" in err_str
+                or "timeout" in err_str or "connection" in err_str
+            )
+            if not transient or attempt == max_attempts - 1:
+                logger.error(f"OpenAI call failed (final, {type(e).__name__}): {e}")
+                return "⚠️ Błąd komunikacji z OpenAI - spróbuj później"
+            backoff = 2 ** attempt
+            logger.warning(f"OpenAI transient error (attempt {attempt+1}/{max_attempts}): "
+                           f"{type(e).__name__}; retrying in {backoff}s")
+            _time.sleep(backoff)
+    # Shouldn't reach here, but defensive
+    return "⚠️ Błąd komunikacji z OpenAI - spróbuj później"

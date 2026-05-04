@@ -200,8 +200,22 @@ class PersistentCache:
             else:
                 del self.memory_cache[key]
 
-        # For frequently changing data, don't use disk cache
-        # (only memory cache to reduce I/O)
+        # 2026-05-04 fix: re-enabled disk cache fallback. Previously
+        # disabled "to reduce I/O" but caused API floods on process
+        # restart — fresh boot lost in-memory cache, refetched everything.
+        # Disk read is ~5ms vs ~500ms API call. TTL still gates freshness.
+        cache_path = self._get_cache_path(key)
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'rb') as f:
+                    cached = pickle.load(f)
+                if self._is_fresh(cached['timestamp'], ttl):
+                    # Promote disk hit back into memory for next call
+                    self.memory_cache[key] = cached
+                    logger.debug(f"💾 Disk cache hit: {symbol} {interval}")
+                    return cached['data']
+            except Exception as e:
+                logger.debug(f"Disk cache read err for {key}: {e}")
 
         return None
 
