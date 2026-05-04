@@ -20,6 +20,7 @@ import { Marquee } from '@/components/Marquee'
 import { StaggerReveal } from '@/components/StaggerReveal'
 import { ConfettiBurst } from '@/components/ConfettiBurst'
 import { useEffect, useRef, useState } from 'react'
+import { isSoundEnabled, playWin, playLoss } from '@/lib/sound'
 
 export default function Dashboard() {
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.portfolio, refetchInterval: 15_000 })
@@ -50,18 +51,29 @@ export default function Dashboard() {
 
   // Confetti trigger — fires once per new winning trade
   const lastWinIdRef = useRef<number | null>(null)
+  const lastLossIdRef = useRef<number | null>(null)
   const [winBurst, setWinBurst] = useState(0)
   useEffect(() => {
     const winners = trades.filter((t) => t.status === 'WIN' || t.status === 'PROFIT')
-    if (!winners.length) return
-    const newest = winners[0].id ?? null
-    if (lastWinIdRef.current === null) {
-      lastWinIdRef.current = newest
-      return
+    if (winners.length) {
+      const newest = winners[0].id ?? null
+      if (lastWinIdRef.current === null) {
+        lastWinIdRef.current = newest
+      } else if (newest !== lastWinIdRef.current) {
+        lastWinIdRef.current = newest
+        setWinBurst((b) => b + 1)
+        if (isSoundEnabled()) playWin()
+      }
     }
-    if (newest !== lastWinIdRef.current) {
-      lastWinIdRef.current = newest
-      setWinBurst((b) => b + 1)
+    const losers = trades.filter((t) => t.status === 'LOSS' || t.status === 'LOSE')
+    if (losers.length) {
+      const newest = losers[0].id ?? null
+      if (lastLossIdRef.current === null) {
+        lastLossIdRef.current = newest
+      } else if (newest !== lastLossIdRef.current) {
+        lastLossIdRef.current = newest
+        if (isSoundEnabled()) playLoss()
+      }
     }
   }, [trades])
 
