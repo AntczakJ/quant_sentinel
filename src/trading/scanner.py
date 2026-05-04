@@ -159,6 +159,18 @@ def extract_factors(analysis: dict, direction: str) -> dict:
     except Exception:
         pass
 
+    # 2026-05-04: IFVG (Inverse FVG retest) — Stage 1 logging.
+    # ICT premium pattern: broken FVG retested from opposite side.
+    # +4-7pp WR estimate per 10-agent research.
+    ifvg_type = analysis.get('ifvg_type')
+    if (direction == 'LONG' and ifvg_type == 'ifvg_long') or \
+       (direction == 'SHORT' and ifvg_type == 'ifvg_short'):
+        factors['ifvg'] = 1
+        # Track bars-since-break as quality bucket
+        bsb = analysis.get('ifvg_bars_since_break') or 0
+        if bsb <= 5:
+            factors['ifvg_fresh'] = 1  # premium retest within 5 bars
+
     # 2026-05-04: OTE (Optimal Trade Entry) zone factor — Stage 1 logging.
     # ICT-style 50-79% retracement of dealing range. Highest expected WR
     # impact per 10-agent research (+5-8pp combined with FVG).

@@ -597,6 +597,92 @@ def detect_fvg(df: pd.DataFrame, atr: float = None) -> dict:
     return fvg
 
 
+def detect_ifvg(df: pd.DataFrame, atr: float = None, lookback: int = 30) -> dict:
+    """Inverse FVG (IFVG) detection — retest of broken FVG from opposite side.
+
+    2026-05-04 — added per 10-agent ICT research (+4-7pp WR estimate).
+
+    Logic:
+      1. Walk back through `lookback` bars, find FVGs at each window.
+      2. For each historical FVG, check if subsequent bars BROKE it
+         (close beyond opposite boundary).
+      3. After break, check if current price is RETESTING the broken
+         FVG boundary from the opposite side.
+
+    A bullish FVG broken downward, then price retests the OLD LOWER boundary
+    from below → IFVG SHORT signal (was support, now resistance).
+
+    A bearish FVG broken upward, then price retests the OLD UPPER boundary
+    from above → IFVG LONG signal (was resistance, now support).
+
+    Returns: {"type": None | "ifvg_long" | "ifvg_short", "broken_at": price,
+              "retest_distance_atr": float, "bars_since_break": int}
+    """
+    result = {"type": None, "broken_at": None,
+              "retest_distance_atr": None, "bars_since_break": None}
+    if len(df) < 5:
+        return result
+    n = len(df)
+    current_price = float(df['close'].iloc[-1])
+    atr_val = float(atr) if atr and atr > 0 else 1.0
+
+    # Walk back through the lookback window, detecting FVGs at each i
+    # (i is the right edge of the 3-bar FVG pattern).
+    candidates = []
+    for i in range(n - 3, max(2, n - lookback), -1):
+        if i + 1 >= n:
+            continue
+        try:
+            c1_high = float(df['high'].iloc[i - 2])
+            c1_low = float(df['low'].iloc[i - 2])
+            c3_high = float(df['high'].iloc[i])
+            c3_low = float(df['low'].iloc[i])
+        except (IndexError, KeyError):
+            continue
+        # Bullish FVG (gap up)
+        if c3_low > c1_high:
+            gap_size = c3_low - c1_high
+            if gap_size < 0.4 * atr_val:
+                continue
+            # Check if subsequent close broke FVG downward (close < c1_high)
+            for j in range(i + 1, n):
+                if float(df['close'].iloc[j]) < c1_high:
+                    # FVG broken. Now check if current price is retesting
+                    # the old lower boundary (c1_high) from below.
+                    # Tolerance: within 1 ATR (loose at first; tighten later
+                    # via factor_predictive evidence).
+                    distance = current_price - c1_high
+                    if -1.0 * atr_val <= distance <= 1.0 * atr_val:
+                        # Currently near or just below old support → IFVG SHORT
+                        result["type"] = "ifvg_short"
+                        result["broken_at"] = round(c1_high, 2)
+                        result["retest_distance_atr"] = round(distance / atr_val, 2)
+                        result["bars_since_break"] = n - 1 - j
+                        candidates.append(result.copy())
+                    break
+        # Bearish FVG (gap down)
+        elif c3_high < c1_low:
+            gap_size = c1_low - c3_high
+            if gap_size < 0.4 * atr_val:
+                continue
+            for j in range(i + 1, n):
+                if float(df['close'].iloc[j]) > c1_low:
+                    # FVG broken upward. Check retest of c1_low from above.
+                    distance = current_price - c1_low
+                    if -1.0 * atr_val <= distance <= 1.0 * atr_val:
+                        result["type"] = "ifvg_long"
+                        result["broken_at"] = round(c1_low, 2)
+                        result["retest_distance_atr"] = round(distance / atr_val, 2)
+                        result["bars_since_break"] = n - 1 - j
+                        candidates.append(result.copy())
+                    break
+
+    # Return freshest IFVG (smallest bars_since_break)
+    if candidates:
+        return min(candidates, key=lambda r: r["bars_since_break"])
+    return result
+
+
 def detect_dbr_rbd(df: pd.DataFrame, window: int = 5) -> dict:
     """
     Wykrywa formacje DBR (Drop-Base-Rally) i RBD (Rally-Base-Drop) na ostatnich świecach.
@@ -995,6 +1081,8 @@ def get_smc_analysis(tf: str) -> dict | None:
 
         # 9. FAIR VALUE GAP (z filtrem ATR)
         fvg = detect_fvg(df, atr=atr)
+        # 2026-05-04: IFVG (Inverse FVG retest) — premium ICT pattern
+        ifvg = detect_ifvg(df, atr=atr)
 
         # 10. EQUILIBRIUM + OTE (Optimal Trade Entry)
         # 2026-05-04: ICT 70.5% retracement zone added per 10-agent research.
@@ -1204,6 +1292,10 @@ def get_smc_analysis(tf: str) -> dict | None:
             "fvg_lower": fvg["lower"],
             "fvg_size": fvg["size"],
             "fvg": fvg["description"],
+            "ifvg_type": ifvg["type"],
+            "ifvg_broken_at": ifvg["broken_at"],
+            "ifvg_distance_atr": ifvg["retest_distance_atr"],
+            "ifvg_bars_since_break": ifvg["bars_since_break"],
             "ob_price": ob_price,
             "eq_level": eq_level,
             "is_discount": is_discount,
