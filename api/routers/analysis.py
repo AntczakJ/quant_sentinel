@@ -380,10 +380,13 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
     try:
         db = NewsDB()
 
-        # Query recent trades — explicit column list
+        # Query recent trades — explicit column list. 2026-05-04: added
+        # setup_grade, setup_score, factors so frontend can show grade
+        # badge + confluence_v2 score.
         trades = db._query(
             """
-            SELECT id, direction, entry, sl, tp, status, timestamp, profit, pattern
+            SELECT id, direction, entry, sl, tp, status, timestamp, profit, pattern,
+                   setup_grade, setup_score, factors
             FROM trades
             ORDER BY timestamp DESC
             LIMIT ?
@@ -446,6 +449,9 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
                 trade_time = trade[6] if cols > 6 else None
                 profit = trade[7] if cols > 7 else None
                 pattern = trade[8] if cols > 8 else None
+                setup_grade = trade[9] if cols > 9 else None
+                setup_score = trade[10] if cols > 10 else None
+                factors_json = trade[11] if cols > 11 else None
             except (IndexError, TypeError):
                 continue
 
@@ -477,6 +483,9 @@ def get_recent_trades(limit: int = Query(20, description="Number of trades to re
                 "result": "✅ WIN" if is_win else "❌ LOSS" if status == "LOSS" else "⏳ PENDING",
                 "timeframe": tf_label,  # e.g. "H4", "M15" — None if not set
                 "pattern": pattern,
+                "setup_grade": setup_grade,
+                "setup_score": _safe_float(setup_score),
+                "factors": factors_json,  # JSON string; frontend parses
             })
 
         return {

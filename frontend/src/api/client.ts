@@ -119,6 +119,9 @@ export interface Trade {
   profit: number | null
   timeframe?: string
   pattern?: string
+  setup_grade?: string | null
+  setup_score?: number | null
+  factors?: string | null  // JSON-encoded factors dict
 }
 
 export interface Ticker {
@@ -186,6 +189,9 @@ export const api = {
         profit: string | number | null
         timeframe?: string
         pattern?: string
+        setup_grade?: string | null
+        setup_score?: number | null
+        factors?: string | null
       }>
     }>('/analysis/trades', { limit })
     return (raw.trades ?? []).map((t) => ({
@@ -199,6 +205,9 @@ export const api = {
       profit: parsePrice(t.profit),
       timeframe: t.timeframe,
       pattern: t.pattern,
+      setup_grade: t.setup_grade,
+      setup_score: t.setup_score,
+      factors: t.factors,
     }))
   },
 

@@ -114,6 +114,8 @@ export default function Trades() {
               <th className="text-right py-4 px-2 font-medium">Exit</th>
               <th className="text-right py-4 px-2 font-medium">TF</th>
               <th className="text-right py-4 px-2 font-medium">P&L</th>
+              <th className="text-center py-4 px-2 font-medium">Grade</th>
+              <th className="text-center py-4 px-2 font-medium">v2</th>
               <th className="text-left py-4 px-2 font-medium">Pattern</th>
               <th className="text-right py-4 px-6 font-medium">Status</th>
             </tr>
@@ -157,6 +159,43 @@ export default function Trades() {
                     {t.profit != null
                       ? `${t.profit >= 0 ? '+' : ''}${t.profit.toFixed(2)}`
                       : '—'}
+                  </td>
+                  <td className="py-3 px-2 text-center">
+                    {t.setup_grade ? (
+                      <span
+                        className={`text-micro font-medium px-2 py-0.5 rounded ${
+                          t.setup_grade === 'A+' ? 'bg-bull/30 text-bull' :
+                          t.setup_grade === 'A' ? 'bg-bull/15 text-bull' :
+                          t.setup_grade === 'B' ? 'bg-amber-500/15 text-amber-500' :
+                          'bg-ink-200 text-ink-600'
+                        }`}
+                      >
+                        {t.setup_grade}
+                      </span>
+                    ) : '—'}
+                  </td>
+                  <td className="py-3 px-2 text-center">
+                    {(() => {
+                      try {
+                        const f = t.factors ? JSON.parse(t.factors) : {}
+                        const v2 = f.v2_score_high ? 'H' : f.v2_score_mid ? 'M' : f.v2_score_low ? 'L' : null
+                        if (!v2) return <span className="text-ink-600">—</span>
+                        return (
+                          <span
+                            className={`text-micro font-mono px-2 py-0.5 rounded ${
+                              v2 === 'H' ? 'bg-bull/20 text-bull' :
+                              v2 === 'M' ? 'bg-amber-500/15 text-amber-500' :
+                              'bg-bear/15 text-bear'
+                            }`}
+                            title={`confluence_v2 score bucket: ${v2 === 'H' ? '70+' : v2 === 'M' ? '50-69' : '30-49'}`}
+                          >
+                            {v2}
+                          </span>
+                        )
+                      } catch {
+                        return <span className="text-ink-600">—</span>
+                      }
+                    })()}
                   </td>
                   <td className="py-3 px-2 text-caption text-ink-600 truncate max-w-[160px]">
                     {t.pattern || '—'}
