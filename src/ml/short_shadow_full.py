@@ -115,7 +115,7 @@ def predict_short_lstm(
         # LSTM expects sequence input — match training shape.
         # If the scaler is per-bar (StandardScaler), scale last window.
         # We use the last 50 bars as the standard sequence length.
-        seq_len = 50
+        seq_len = 60  # SHORT models trained 2026-05-02 with seq_len=60
         if len(feats) < seq_len:
             return None
         x = feats[FEATURE_COLS].iloc[-seq_len:].values
@@ -141,7 +141,7 @@ def predict_short_attention(
         return None
     try:
         from src.analysis.compute import FEATURE_COLS
-        seq_len = 50
+        seq_len = 60  # SHORT models trained 2026-05-02 with seq_len=60
         if len(feats) < seq_len:
             return None
         x = feats[FEATURE_COLS].iloc[-seq_len:].values
