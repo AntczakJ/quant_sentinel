@@ -84,7 +84,23 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        python -m pytest tests/test_risk_manager.py tests/test_new_modules.py \
+        # 2026-05-04: extended test set with today's regression suites.
+        # Covers: scanner gates, SMC detectors (IFVG/breaker/REH-REL),
+        # factor weight wiring, Phase V2 regime routing, queries module,
+        # finance position sizing, smc score branches, session fixes.
+        python -m pytest \
+          tests/test_risk_manager.py \
+          tests/test_new_modules.py \
+          tests/test_scanner_gates_2026_05_04.py \
+          tests/test_smc_engine.py \
+          tests/test_smc_extended.py \
+          tests/test_smc_score_branches.py \
+          tests/test_factor_weight_wiring.py \
+          tests/test_regime_routing.py \
+          tests/test_session_2026_05_04_fixes.py \
+          tests/test_new_detectors_2026_05_04.py \
+          tests/test_queries_module.py \
+          tests/test_finance_position.py \
           --cov=src --cov-report=term-missing --cov-report=xml \
           -v --tb=short
 

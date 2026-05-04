@@ -178,6 +178,34 @@ ignore_missing_imports = true
 check_untyped_defs = false
 exclude = ["tests/", "train_all.py", "train_rl.py"]
 
+# 2026-05-04: per-module overrides — strict on critical modules,
+# permissive on legacy / third-party-heavy ones. Ratchet up over time.
+[[tool.mypy.overrides]]
+module = ["src.trading.confluence_v2", "src.analysis.regime_routing", "src.core.queries.*"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["src.ml.*"]
+# ML modules wrap keras/tf/onnx — heavy any-typing. Don't enforce here.
+ignore_errors = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+# E (pycodestyle errors), F (pyflakes), W (pycodestyle warnings),
+# I (isort), B (bugbear — common bug catches), UP (pyupgrade — modernize)
+select = ["E", "F", "W", "I", "B", "UP"]
+# Ignore noisy rules that aren't bugs
+ignore = [
+    "E501",  # line too long (we use line-length=120 anyway)
+    "E731",  # lambda assignments OK in trading code
+    "B008",  # function call in default argument (FastAPI uses Depends)
+    "UP007", # X | None instead of Optional — noisy on big codebase
+]
+exclude = ["tests/", "memory/", "frontend_v1/", "frontend_v3_baseline/"]
+
 [tool.black]
 line-length = 120
 target-version = ["py310", "py313"]

@@ -3642,6 +3642,97 @@ async def macro_context():
     return result
 
 
+@app.get("/metrics", tags=["System"], include_in_schema=False)
+async def prometheus_metrics():
+    """Prometheus-format metrics endpoint.
+
+    2026-05-04: shipped per highend production audit. Exposes key
+    operational metrics in Prometheus exposition format. Scrape from
+    Prometheus / Grafana / Datadog. Zero-config for the operator —
+    just point Prometheus at /metrics.
+
+    Metrics:
+    - quant_trades_total{status} — total trades by status
+    - quant_open_trades — current open trade count
+    - quant_win_rate — current WR (0-1)
+    - quant_total_pnl_usd — cumulative P&L
+    - quant_rejected_setups_24h — rejections last 24h
+    - quant_scanner_paused — 0 or 1
+    - quant_openai_cost_today_usd — today's OpenAI spend
+    """
+    from fastapi.responses import PlainTextResponse
+    from src.core.database import NewsDB
+    from datetime import date
+    db = NewsDB()
+    lines = []
+
+    # Trades by status
+    rows = db._query(
+        "SELECT status, COUNT(*) FROM trades GROUP BY status"
+    ) or []
+    lines.append("# HELP quant_trades_total Total trades by status")
+    lines.append("# TYPE quant_trades_total counter")
+    for status, n in rows:
+        lines.append(f'quant_trades_total{{status="{status}"}} {n}')
+
+    # Open count
+    open_n = db._query_one("SELECT COUNT(*) FROM trades WHERE status='OPEN'")
+    open_n = open_n[0] if open_n else 0
+    lines.append("# HELP quant_open_trades Currently open trades")
+    lines.append("# TYPE quant_open_trades gauge")
+    lines.append(f"quant_open_trades {open_n}")
+
+    # WR + P/L (closed trades only)
+    closed = db._query(
+        "SELECT status, profit FROM trades WHERE status IN ('WIN','LOSS')"
+    ) or []
+    if closed:
+        n = len(closed)
+        wins = sum(1 for r in closed if r[0] == "WIN")
+        wr = wins / n
+        pnl = sum(float(r[1] or 0) for r in closed)
+        lines.append("# HELP quant_win_rate Closed-trade win rate")
+        lines.append("# TYPE quant_win_rate gauge")
+        lines.append(f"quant_win_rate {wr:.4f}")
+        lines.append("# HELP quant_total_pnl_usd Cumulative P&L USD")
+        lines.append("# TYPE quant_total_pnl_usd gauge")
+        lines.append(f"quant_total_pnl_usd {pnl:.2f}")
+
+    # Rejections last 24h (requires our new index for speed)
+    from datetime import datetime as _dt, timedelta as _td
+    cutoff = (_dt.utcnow() - _td(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    n_rej = db._query_one(
+        "SELECT COUNT(*) FROM rejected_setups WHERE timestamp >= ?", (cutoff,)
+    )
+    n_rej = n_rej[0] if n_rej else 0
+    lines.append("# HELP quant_rejected_setups_24h Rejected setups last 24h")
+    lines.append("# TYPE quant_rejected_setups_24h gauge")
+    lines.append(f"quant_rejected_setups_24h {n_rej}")
+
+    # Scanner paused
+    from pathlib import Path as _P
+    paused = (_P(__file__).resolve().parents[1] / "data" / "SCANNER_PAUSED").exists()
+    lines.append("# HELP quant_scanner_paused 1 if scanner paused, else 0")
+    lines.append("# TYPE quant_scanner_paused gauge")
+    lines.append(f"quant_scanner_paused {1 if paused else 0}")
+
+    # Today's OpenAI spend
+    today = date.today().isoformat()
+    cost = float(db.get_param(f"openai_cost_usd_{today}", 0) or 0)
+    lines.append("# HELP quant_openai_cost_today_usd Today's OpenAI spend in USD")
+    lines.append("# TYPE quant_openai_cost_today_usd gauge")
+    lines.append(f"quant_openai_cost_today_usd {cost:.4f}")
+
+    # ML predictions count
+    n_ml = db._query_one("SELECT COUNT(*) FROM ml_predictions")
+    n_ml = n_ml[0] if n_ml else 0
+    lines.append("# HELP quant_ml_predictions_total ML predictions persisted")
+    lines.append("# TYPE quant_ml_predictions_total counter")
+    lines.append(f"quant_ml_predictions_total {n_ml}")
+
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+
 @app.get("/api/openai/cost", tags=["System"])
 async def openai_cost(days: int = 7):
     """Daily OpenAI token usage + estimated $ over last N days.
