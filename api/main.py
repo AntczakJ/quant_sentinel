@@ -3642,6 +3642,23 @@ async def macro_context():
     return result
 
 
+@app.get("/api/drift/status", tags=["System"])
+async def drift_status(reference_days: int = 90, recent_days: int = 14):
+    """Concept drift detection (Page-Hinkley + PSI on RSI/setup_score + WR).
+
+    2026-05-04: shipped per learning system audit. Soft signal only —
+    never auto-disables models. Operator decides retrain timing based
+    on verdict (stable / warn / drifted / insufficient_data).
+
+    First production run found drifted state: 4/4 signals fired.
+    """
+    try:
+        from src.learning.drift_detector import detect_drift
+        return detect_drift(reference_days=reference_days, recent_days=recent_days)
+    except Exception as e:
+        return {"verdict": "error", "error": str(e)}
+
+
 @app.get("/metrics", tags=["System"], include_in_schema=False)
 async def prometheus_metrics():
     """Prometheus-format metrics endpoint.
