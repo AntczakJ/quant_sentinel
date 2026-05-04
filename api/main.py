@@ -3436,6 +3436,64 @@ async def macro_context():
     return result
 
 
+@app.get("/api/flags", tags=["System"])
+async def feature_flags():
+    """Single pane of all feature flags + dynamic params controlling behavior.
+
+    Returns env flags (read from os.environ) and dynamic_params (DB) that
+    control runtime behavior. Useful for ops debugging — "is QUANT_REGIME_V2
+    on right now?" — and audit trail.
+
+    Per memory/2026-05-04 audit: flags were scattered across .env + DB.
+    """
+    import os as _os
+    out = {"env_flags": {}, "dynamic_params": {}, "session_2026_05_04_flags": {}}
+
+    # Env flags shipped today and earlier sessions
+    env_keys = [
+        "QUANT_REGIME_V2", "QUANT_BLOCK_CHOCH_OBCOUNT", "QUANT_NEWS_LLM",
+        "QUANT_SHORT_XGB_VETO_T", "QUANT_SHORT_XGB_VETO_SKIP_REGIMES",
+        "QUANT_BACKTEST_MODE", "QUANT_USE_DUCKDB", "QUANT_ENABLE_TRANSFORMER",
+        "QUANT_ML_MAJORITY_GATE", "QUANT_AGGRESSIVE_TP",
+        "DISABLE_TRAILING", "DISABLE_CALIBRATION", "MAX_LOT_CAP",
+        "ONNX_FORCE_CPU", "LSTM_BULLISH_ONLY",
+        "ENABLE_GRID", "ENABLE_BAYES",
+        "BACKTEST_EQUAL_LOT", "WF_PURGE_BARS",
+    ]
+    for k in env_keys:
+        v = _os.environ.get(k)
+        out["env_flags"][k] = v if v is not None else "(unset)"
+
+    # Critical dynamic_params
+    try:
+        from src.core.database import NewsDB
+        db = NewsDB()
+        param_keys = [
+            "risk_percent", "target_rr", "tp_to_sl_ratio", "sl_atr_multiplier",
+            "sl_min_distance", "min_tp_distance_mult", "vol_target_atr",
+            "min_score", "min_score_5m", "min_score_15m", "min_score_30m",
+            "min_score_1h", "min_score_4h",
+            "kelly_reset_ts", "risk_halted", "risk_halt_reason",
+            "portfolio_balance", "portfolio_initial_balance",
+        ]
+        for k in param_keys:
+            v = db.get_param(k)
+            out["dynamic_params"][k] = v if v is not None else "(unset)"
+    except Exception as e:
+        out["dynamic_params_error"] = str(e)
+
+    # Session 2026-05-04 specific quick reference
+    out["session_2026_05_04_flags"] = {
+        "regime_v2_active": _os.environ.get("QUANT_REGIME_V2") == "1",
+        "toxic_pair_filter_active": _os.environ.get("QUANT_BLOCK_CHOCH_OBCOUNT") == "1",
+        "llm_news_active": _os.environ.get("QUANT_NEWS_LLM") == "1",
+        "calibration_disabled": _os.environ.get("DISABLE_CALIBRATION") == "1",
+        "trailing_disabled": _os.environ.get("DISABLE_TRAILING") == "1",
+        "max_lot_cap": float(_os.environ.get("MAX_LOT_CAP", 0.01)),
+    }
+    return out
+
+
 @app.get("/api/macro/regime-routing", tags=["System"])
 async def regime_routing_preview(tf: str = "5m"):
     """Phase V2 routing preview — what would happen if QUANT_REGIME_V2=1.
