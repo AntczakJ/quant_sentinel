@@ -9,6 +9,7 @@ import { ScrambleText } from './ScrambleText'
 import { HealthDeepPopover } from './HealthDeepPopover'
 import { ScrollProgress } from './ScrollProgress'
 import { CursorFollower } from './CursorFollower'
+import { RouteTransitionOverlay } from './RouteTransitionOverlay'
 import { isSoundEnabled, setSoundEnabled, playClick } from '@/lib/sound'
 
 // Lazy-load WebGL shader to avoid blocking initial paint on slower routes
@@ -44,6 +45,9 @@ export function Shell({ children }: { children: ReactNode }) {
 
       {/* ─── Magnetic cursor follower (gold dot + glow trail) ───────── */}
       <CursorFollower />
+
+      {/* ─── Route transition gradient sweep ───────────────────────── */}
+      <RouteTransitionOverlay />
 
       {/* ─── Cursor-reactive WebGL mesh background ──────────────────── */}
       <Suspense fallback={null}>
