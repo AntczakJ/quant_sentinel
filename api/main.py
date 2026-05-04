@@ -275,6 +275,7 @@ async def lifespan(app: FastAPI):
     # silent rename gets caught early. Always-on, very cheap.
     drift_task = asyncio.create_task(_dynamic_params_drift_watchdog())
     health_check_task = asyncio.create_task(_periodic_health_check())
+    db_backup_task = asyncio.create_task(_daily_db_backup())
 
     # Macro-snapshot persister (5-min cadence). Decoupled from trade
     # evaluation so historical regime data is captured even on scan-paused
@@ -319,7 +320,7 @@ async def lifespan(app: FastAPI):
     # list — they kept running 30s past shutdown, possibly emitting Telegram.
     tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task,
              retention_task, macro_snapshot_task, replay_task, drift_task,
-             health_check_task, shadow_task]
+             health_check_task, shadow_task, db_backup_task]
     try:
         if health_task is not None:
             tasks.append(health_task)
@@ -511,6 +512,56 @@ async def _fire_journal_async(trade_id: int):
         logger.info(f"[journal] auto-fire done for trade #{trade_id}")
     except Exception as e:
         logger.debug(f"[journal] auto-fire trade #{trade_id} failed: {e}")
+
+
+async def _daily_db_backup():
+    """
+    Daily snapshot of data/sentinel.db to data/backups/sentinel_<date>.db.
+
+    2026-05-04: cron audit identified DB backup as missing critical task.
+    Without this, a corruption / disk failure / accidental DELETE could
+    cause irrecoverable data loss across thousands of trades + ml predictions.
+
+    Keeps last 14 daily backups (auto-cleanup older). Quick: ~1s for 50MB DB.
+    Safe: uses sqlite3.Connection.backup() which is atomic vs concurrent
+    writers.
+    """
+    import asyncio
+    import sqlite3
+    from datetime import datetime as _dt
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[1]
+    src = repo_root / "data" / "sentinel.db"
+    backup_dir = repo_root / "data" / "backups"
+    backup_dir.mkdir(exist_ok=True)
+
+    await asyncio.sleep(900)  # 15-min startup delay so live tasks settle
+    while True:
+        try:
+            ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+            dest = backup_dir / f"sentinel_{ts}.db"
+            def _do_backup():
+                src_conn = sqlite3.connect(str(src))
+                dst_conn = sqlite3.connect(str(dest))
+                src_conn.backup(dst_conn)
+                src_conn.close()
+                dst_conn.close()
+                return dest.stat().st_size
+            size = await asyncio.to_thread(_do_backup)
+            logger.info(f"[backup] sentinel.db → {dest.name} ({size/1024/1024:.1f} MB)")
+            # Cleanup: keep last 14 backups
+            backups = sorted(backup_dir.glob("sentinel_*.db"))
+            if len(backups) > 14:
+                for old in backups[:-14]:
+                    try:
+                        old.unlink()
+                        logger.debug(f"[backup] purged old {old.name}")
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"[backup] daily backup failed: {e}")
+        # 24h until next backup
+        await asyncio.sleep(86400)
 
 
 async def _periodic_health_check():

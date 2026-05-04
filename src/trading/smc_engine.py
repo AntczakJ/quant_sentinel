@@ -683,6 +683,149 @@ def detect_ifvg(df: pd.DataFrame, atr: float = None, lookback: int = 30) -> dict
     return result
 
 
+def detect_breaker_block(df: pd.DataFrame, atr: float = None, lookback: int = 40) -> dict:
+    """Breaker Block: failed Order Block whose polarity flipped.
+
+    2026-05-04 — added per 10-agent ICT research (+1-3pp WR estimate).
+
+    A Breaker Block forms when:
+      1. An Order Block (OB) was identified
+      2. Price BROKE THROUGH the OB (closed beyond opposite boundary)
+      3. Now price is testing the OB level FROM THE OPPOSITE SIDE
+
+    Distinguished from regular OB: a Breaker has "failed" once → mitigation
+    block. ICT 2024+ research: breakers have HIGHER reversal probability than
+    fresh OBs because the flip-of-polarity adds confirmation.
+
+    Returns: {"type": None | "breaker_long" | "breaker_short",
+              "level": price, "bars_since_break": int}
+    """
+    result = {"type": None, "level": None, "bars_since_break": None}
+    if len(df) < 10:
+        return result
+    n = len(df)
+    current_price = float(df['close'].iloc[-1])
+    atr_val = float(atr) if atr and atr > 0 else 1.0
+    body = abs(df['close'] - df['open'])
+    avg_body = body.tail(20).mean()
+
+    candidates = []
+    # Walk back through lookback to find OBs that have been broken
+    for i in range(n - 4, max(0, n - lookback), -1):
+        # Bullish OB: bearish candle followed by strong bullish impulse
+        if (df['close'].iloc[i] < df['open'].iloc[i]
+                and i + 1 < n
+                and body.iloc[i + 1] > avg_body
+                and df['close'].iloc[i + 1] > df['open'].iloc[i + 1]):
+            ob_low = float(df['low'].iloc[i])
+            ob_high = float(df['high'].iloc[i])
+            # Check if broken downward (close below ob_low) in subsequent bars
+            for j in range(i + 2, n):
+                if float(df['close'].iloc[j]) < ob_low:
+                    # OB broken down — now check if price is retesting
+                    # ob_high (the broken support, now flipped to resistance).
+                    distance = current_price - ob_high
+                    if -1.0 * atr_val <= distance <= 1.0 * atr_val:
+                        candidates.append({
+                            "type": "breaker_short",
+                            "level": round(ob_high, 2),
+                            "bars_since_break": n - 1 - j,
+                        })
+                    break
+        # Bearish OB: bullish candle followed by strong bearish impulse
+        elif (df['close'].iloc[i] > df['open'].iloc[i]
+                and i + 1 < n
+                and body.iloc[i + 1] > avg_body
+                and df['close'].iloc[i + 1] < df['open'].iloc[i + 1]):
+            ob_high = float(df['high'].iloc[i])
+            ob_low = float(df['low'].iloc[i])
+            for j in range(i + 2, n):
+                if float(df['close'].iloc[j]) > ob_high:
+                    distance = current_price - ob_low
+                    if -1.0 * atr_val <= distance <= 1.0 * atr_val:
+                        candidates.append({
+                            "type": "breaker_long",
+                            "level": round(ob_low, 2),
+                            "bars_since_break": n - 1 - j,
+                        })
+                    break
+
+    if candidates:
+        return min(candidates, key=lambda r: r["bars_since_break"])
+    return result
+
+
+def detect_equal_levels(df: pd.DataFrame, atr: float = None, tolerance: float = 0.001) -> dict:
+    """REH/REL: Relative Equal Highs / Equal Lows.
+
+    2026-05-04 — added per 10-agent ICT research (+2-4pp WR estimate).
+
+    ICT theory: when 2+ swing highs (or lows) cluster within a tight
+    tolerance, that level becomes a "liquidity pool" — institutional algos
+    target it for stop-hunt + reversal.
+
+    Returns: {"reh_level": price | None, "reh_n": int (count of equal highs),
+              "rel_level": price | None, "rel_n": int}
+
+    Detection:
+      - Find swing highs in last `swing_lookback` bars
+      - Group highs within `tolerance` % of each other
+      - If 2+ swings cluster → REH detected at their average
+
+    `tolerance` default 0.1% (10 bps) — typical XAU 5m swing-cluster threshold.
+    """
+    result = {"reh_level": None, "reh_n": 0, "rel_level": None, "rel_n": 0}
+    if len(df) < 50:
+        return result
+    n = len(df)
+    # Find swing highs/lows in last 100 bars
+    lookback = min(100, n - 5)
+    swing_window = 5
+    swing_highs = []
+    swing_lows = []
+    for i in range(n - lookback, n - swing_window):
+        h = float(df['high'].iloc[i])
+        l = float(df['low'].iloc[i])
+        # Local swing high?
+        if all(h >= float(df['high'].iloc[j])
+               for j in range(max(0, i - swing_window), min(n, i + swing_window + 1))
+               if j != i):
+            swing_highs.append((i, h))
+        if all(l <= float(df['low'].iloc[j])
+               for j in range(max(0, i - swing_window), min(n, i + swing_window + 1))
+               if j != i):
+            swing_lows.append((i, l))
+
+    # Group highs within tolerance
+    if len(swing_highs) >= 2:
+        for i, (idx_a, ph_a) in enumerate(swing_highs):
+            cluster = [ph_a]
+            for j, (idx_b, ph_b) in enumerate(swing_highs):
+                if j == i:
+                    continue
+                if abs(ph_b - ph_a) / max(ph_a, 0.01) <= tolerance:
+                    cluster.append(ph_b)
+            if len(cluster) >= 2:
+                result["reh_level"] = round(sum(cluster) / len(cluster), 2)
+                result["reh_n"] = len(cluster)
+                break
+
+    if len(swing_lows) >= 2:
+        for i, (idx_a, pl_a) in enumerate(swing_lows):
+            cluster = [pl_a]
+            for j, (idx_b, pl_b) in enumerate(swing_lows):
+                if j == i:
+                    continue
+                if abs(pl_b - pl_a) / max(pl_a, 0.01) <= tolerance:
+                    cluster.append(pl_b)
+            if len(cluster) >= 2:
+                result["rel_level"] = round(sum(cluster) / len(cluster), 2)
+                result["rel_n"] = len(cluster)
+                break
+
+    return result
+
+
 def detect_dbr_rbd(df: pd.DataFrame, window: int = 5) -> dict:
     """
     Wykrywa formacje DBR (Drop-Base-Rally) i RBD (Rally-Base-Drop) na ostatnich świecach.
@@ -1083,6 +1226,10 @@ def get_smc_analysis(tf: str) -> dict | None:
         fvg = detect_fvg(df, atr=atr)
         # 2026-05-04: IFVG (Inverse FVG retest) — premium ICT pattern
         ifvg = detect_ifvg(df, atr=atr)
+        # 2026-05-04: Breaker block (failed OB, polarity flip)
+        breaker = detect_breaker_block(df, atr=atr)
+        # 2026-05-04: REH/REL (equal highs/lows liquidity pools)
+        equal_levels = detect_equal_levels(df, atr=atr)
 
         # 10. EQUILIBRIUM + OTE (Optimal Trade Entry)
         # 2026-05-04: ICT 70.5% retracement zone added per 10-agent research.
@@ -1296,6 +1443,13 @@ def get_smc_analysis(tf: str) -> dict | None:
             "ifvg_broken_at": ifvg["broken_at"],
             "ifvg_distance_atr": ifvg["retest_distance_atr"],
             "ifvg_bars_since_break": ifvg["bars_since_break"],
+            "breaker_type": breaker["type"],
+            "breaker_level": breaker["level"],
+            "breaker_bars_since_break": breaker["bars_since_break"],
+            "reh_level": equal_levels["reh_level"],
+            "reh_n": equal_levels["reh_n"],
+            "rel_level": equal_levels["rel_level"],
+            "rel_n": equal_levels["rel_n"],
             "ob_price": ob_price,
             "eq_level": eq_level,
             "is_discount": is_discount,

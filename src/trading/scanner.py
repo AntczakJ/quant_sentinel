@@ -159,6 +159,26 @@ def extract_factors(analysis: dict, direction: str) -> dict:
     except Exception:
         pass
 
+    # 2026-05-04: Breaker block (failed OB polarity flip) — Stage 1.
+    breaker = analysis.get('breaker_type')
+    if (direction == 'LONG' and breaker == 'breaker_long') or \
+       (direction == 'SHORT' and breaker == 'breaker_short'):
+        factors['breaker_block'] = 1
+        bsb = analysis.get('breaker_bars_since_break') or 0
+        if bsb <= 5:
+            factors['breaker_fresh'] = 1
+
+    # 2026-05-04: REH/REL liquidity pool — Stage 1.
+    # Equal highs/lows = institutional stop-hunt targets. ICT theory:
+    # when price approaches REH/REL, sweep+reverse is high-probability.
+    reh_n = analysis.get('reh_n', 0) or 0
+    rel_n = analysis.get('rel_n', 0) or 0
+    if reh_n >= 2 and direction == 'SHORT':
+        # Approaching equal highs → SHORT after sweep
+        factors['rel_eql_highs'] = min(reh_n, 3)  # up to 3 points for cluster
+    if rel_n >= 2 and direction == 'LONG':
+        factors['rel_eql_lows'] = min(rel_n, 3)
+
     # 2026-05-04: D1 (daily) trend alignment — Stage 1 logging.
     # 10-agent research: only H1/H4 HTF currently checked. D1 alignment
     # captures multi-day swing context. +3-4pp WR estimated when added

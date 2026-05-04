@@ -18,7 +18,9 @@ from src.core.logger import logger
 # Inicjalizujemy klienta OpenAI raz przy imporcie modułu
 if OPENAI_KEY:
     client = OpenAI(api_key=OPENAI_KEY)
-    logger.info(f"✅ OpenAI client initialized (key: {OPENAI_KEY[:20]}...)")
+    # 2026-05-04 fix: don't log key prefix even partially (security audit
+    # flagged 20-char prefix as sufficient for reconnaissance attacks).
+    logger.info("OpenAI client initialized (key configured)")
 else:
     client = None
     logger.warning("⚠️ OpenAI API key not found in .env - AI features will be unavailable")
