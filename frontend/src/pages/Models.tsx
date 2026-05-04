@@ -7,6 +7,8 @@ import { Card } from '@/components/Card'
 import { AnimatedBeam } from '@/components/AnimatedBeam'
 import { GradientText } from '@/components/GradientText'
 import { TextReveal } from '@/components/TextReveal'
+import { TiltCard } from '@/components/TiltCard'
+import { Spotlight } from '@/components/Spotlight'
 
 export default function Models() {
   const { data: models = [] } = useQuery({ queryKey: ['models'], queryFn: api.models, refetchInterval: 60_000 })
@@ -217,30 +219,37 @@ export default function Models() {
                 : m.accuracy != null
                 ? m.accuracy * 100
                 : null
+              const tone = acc == null ? 'rgba(212,175,55,0.14)'
+                : acc >= 60 ? 'rgba(34,197,94,0.16)'
+                : acc >= 45 ? 'rgba(212,175,55,0.16)'
+                : 'rgba(239,68,68,0.14)'
               return (
-                <Card key={m.model_name + i} variant="interactive" delay={i * 0.05} className="p-6">
-                  <div className="text-micro uppercase tracking-wider text-ink-600">
-                    {m.win_rate != null ? 'Win rate' : 'Accuracy'}
-                  </div>
-                  <div className="num text-display-sm font-display mt-1 text-ink-900">
-                    {acc != null ? (
-                      <NumberFlow
-                        value={acc}
-                        format={{ maximumFractionDigits: 0 }}
-                        suffix="%"
-                        respectMotionPreference
-                      />
-                    ) : (
-                      '—'
-                    )}
-                  </div>
-                  <div className="mt-3 text-body text-ink-800 truncate">{m.model_name}</div>
-                  <div className="text-caption text-ink-600 mt-1">
-                    Trained {m.last_training
-                      ? new Date(m.last_training).toLocaleString(undefined, { month: 'short', day: 'numeric' })
-                      : '—'}
-                  </div>
-                </Card>
+                <TiltCard key={m.model_name + i} className="rounded-xl" intensity={6}>
+                  <Card variant="interactive" delay={i * 0.05} className="relative overflow-hidden p-6">
+                    <Spotlight color={tone} />
+                    <div className="text-micro uppercase tracking-wider text-ink-600">
+                      {m.win_rate != null ? 'Win rate' : 'Accuracy'}
+                    </div>
+                    <div className="num text-display-sm font-display mt-1 text-ink-900">
+                      {acc != null ? (
+                        <NumberFlow
+                          value={acc}
+                          format={{ maximumFractionDigits: 0 }}
+                          suffix="%"
+                          respectMotionPreference
+                        />
+                      ) : (
+                        '—'
+                      )}
+                    </div>
+                    <div className="mt-3 text-body text-ink-800 truncate">{m.model_name}</div>
+                    <div className="text-caption text-ink-600 mt-1">
+                      Trained {m.last_training
+                        ? new Date(m.last_training).toLocaleString(undefined, { month: 'short', day: 'numeric' })
+                        : '—'}
+                    </div>
+                  </Card>
+                </TiltCard>
               )
             })}
           </div>
