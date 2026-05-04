@@ -29,6 +29,26 @@ try:
         from sentry_sdk.integrations.fastapi import FastApiIntegration
         from sentry_sdk.integrations.httpx import HttpxIntegration
         from sentry_sdk.integrations.asyncio import AsyncioIntegration
+
+        # 2026-05-04: bridge fatal errors to Telegram so operator gets paged
+        # immediately instead of having to check Sentry dashboard. Only fires
+        # for level=fatal (intentional) — regular exceptions still go only
+        # to Sentry to avoid Telegram spam.
+        def _sentry_telegram_bridge(event, hint):
+            try:
+                if event.get("level") == "fatal":
+                    msg = event.get("message", "")
+                    exc = (hint or {}).get("exc_info")
+                    exc_str = str(exc[1])[:200] if exc and len(exc) > 1 else ""
+                    from src.trading.scanner import send_telegram_alert
+                    send_telegram_alert(
+                        f"🚨 CRITICAL: {msg}\n{exc_str}\n"
+                        f"(Sentry env={os.environ.get('SENTRY_ENV', 'production')})"
+                    )
+            except Exception:
+                pass  # Don't let bridge failure block Sentry shipping
+            return event
+
         _sentry.init(
             dsn=_sentry_dsn,
             release=os.environ.get("SENTRY_RELEASE") or "quant-sentinel@4.0.0",
@@ -40,6 +60,7 @@ try:
                 HttpxIntegration(),
                 AsyncioIntegration(),
             ],
+            before_send=_sentry_telegram_bridge,
             # Don't ship request bodies — they contain account state.
             send_default_pii=False,
         )

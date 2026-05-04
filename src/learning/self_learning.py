@@ -750,16 +750,16 @@ def update_factor_weights(trade_id, outcome):
         # 2026-05-04: ANTI-OVERFIT SAFEGUARD.
         # Sample size = (alpha-1) + (beta-1) trades observed. Below N=20,
         # Beta posterior is too uncertain — sampling from wide distribution
-        # can produce extreme weights (0.5 → 3.0) on noise. Hold weight
-        # near 1.0 (with mild sampling drift) until factor has 20+ trades.
-        # Above N=20, full Thompson Sampling kicks in.
+        # can produce extreme weights on noise. Linear blend toward
+        # NEUTRAL_SAMPLE=0.2 (which maps to weight=1.0 via 0.5+0.2*2.5).
+        # At N=0, sample=0.2 → weight=1.0 (no edge claim). At N=20+, full
+        # Thompson sample (data-driven weight).
+        NEUTRAL_SAMPLE = 0.2  # → weight 1.0
         n_observed = (alpha - 1) + (beta - 1)
         sampled_weight = random.betavariate(max(alpha, 0.1), max(beta_val, 0.1))
         if n_observed < 20:
-            # Linear blend toward 0.5 (neutral) — at N=0, weight=1.0;
-            # at N=20, weight = full Thompson sample.
             blend = n_observed / 20.0
-            sampled_weight = blend * sampled_weight + (1 - blend) * 0.5
+            sampled_weight = blend * sampled_weight + (1 - blend) * NEUTRAL_SAMPLE
 
         # Map [0,1] Beta sample to weight range [0.5, 3.0]
         weight = 0.5 + sampled_weight * 2.5
