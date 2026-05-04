@@ -231,7 +231,15 @@ def auto_tune_pattern_weights():
             db.set_param(f"pattern_weight_{pattern}", 1.0)
 
 def run_learning_cycle():
-    optimize_parameters()
+    # 2026-05-04 fix: legacy `optimize_parameters()` is a discrete grid
+    # search (4×4×4 = 64 combos) that writes target_rr/risk_percent without
+    # holdout validation. When Bayesian (below) rejects its winner due to
+    # unprofitable holdout, the grid result was still applied — silent
+    # overfit. Skipped now; Bayesian is the canonical optimizer with
+    # train/holdout split. Use ENABLE_BAYES=0 + ENABLE_GRID=1 to revert.
+    import os as _os
+    if _os.environ.get("ENABLE_GRID") == "1":
+        optimize_parameters()
     auto_tune_pattern_weights()
     if ENABLE_BAYES:
         from src.learning.bayesian_opt import BayesianOptimizer
