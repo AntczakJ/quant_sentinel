@@ -828,15 +828,23 @@ def _persist_prediction(results: Dict):
         vol_pctile = results.get('volatility_percentile', 0.5)
         vol_regime = "low" if vol_pctile < 0.25 else ("high" if vol_pctile > 0.75 else "normal")
 
-        # Shadow log: SHORT-direction XGB prediction for future per-direction
+        # Shadow log: SHORT-direction predictions for future per-direction
         # routing. Read-only path — no effect on live signal. See
-        # src/ml/short_shadow.py and memory/next_session_2026-05-02.
+        # src/ml/short_shadow.py + short_shadow_full.py.
         shadow_short = None
+        shadow_short_full = None  # 2026-05-04: extended to LSTM + Attention
         try:
             from src.ml.short_shadow import predict_short_xgb
             df_for_shadow = results.get('_df_for_shadow')  # set by caller if available
             if df_for_shadow is not None:
                 shadow_short = predict_short_xgb(df_for_shadow)
+                # Full SHORT ensemble (xgb + lstm + attention). Cheap re-call
+                # internally reuses the lazy-loaded xgb model.
+                try:
+                    from src.ml.short_shadow_full import predict_short_ensemble
+                    shadow_short_full = predict_short_ensemble(df_for_shadow)
+                except Exception as _se2:
+                    logger.debug(f"shadow_short_full skipped: {_se2}")
         except Exception as _se:
             logger.debug(f"shadow_short predict skipped: {_se}")
 
@@ -851,6 +859,12 @@ def _persist_prediction(results: Dict):
             'vol_regime': vol_regime,
             'regime_weights': {k: round(v, 4) for k, v in results.get('regime_weights', {}).items()},
             'shadow_short_xgb': shadow_short,  # null if model not loaded
+            # 2026-05-04: full SHORT shadow ensemble — xgb+lstm+attention.
+            # Lets us compare LONG-trained voters vs SHORT-trained voters
+            # on the same setup. After ≥30 resolved trades, run
+            # factor_predictive_power on this column to validate per-
+            # direction accuracy delta.
+            'shadow_short_full': shadow_short_full,
             # 2026-05-04: ml_majority_disagrees was missing from JSON
             # despite being computed in get_ensemble_prediction. Verified
             # via row #10996 showing None instead of False.
