@@ -138,6 +138,27 @@ def extract_factors(analysis: dict, direction: str) -> dict:
     if analysis.get('is_killzone'):
         factors['killzone'] = 1
 
+    # 2026-05-04: confluence_v2 SHADOW logger.
+    # Compute next-gen score (5 factor pairs merged + time-decay + signal
+    # class separation) alongside existing scoring. Logs score_v2 +
+    # p_win_estimate as factors so factor_predictive can A/B against
+    # current confluence after N=50 trades.
+    try:
+        from src.trading.confluence_v2 import score_v2
+        v2 = score_v2(analysis, direction, tf=analysis.get('tf', '5m'),
+                      macro_regime=analysis.get('macro_regime'))
+        # Log as discrete buckets so factor_predictive treats as enum:
+        if v2.score >= 70:
+            factors['v2_score_high'] = 1
+        elif v2.score >= 50:
+            factors['v2_score_mid'] = 1
+        elif v2.score >= 30:
+            factors['v2_score_low'] = 1
+        if v2.conflicts:
+            factors['v2_has_conflict'] = 1
+    except Exception:
+        pass
+
     # 2026-05-04: OTE (Optimal Trade Entry) zone factor — Stage 1 logging.
     # ICT-style 50-79% retracement of dealing range. Highest expected WR
     # impact per 10-agent research (+5-8pp combined with FVG).
