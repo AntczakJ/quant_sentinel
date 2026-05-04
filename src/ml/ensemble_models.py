@@ -830,9 +830,10 @@ def _persist_prediction(results: Dict):
 
         # Shadow log: SHORT-direction predictions for future per-direction
         # routing. Read-only path — no effect on live signal. See
-        # src/ml/short_shadow.py + short_shadow_full.py.
+        # src/ml/short_shadow.py + short_shadow_full.py + v2_lstm.py.
         shadow_short = None
         shadow_short_full = None  # 2026-05-04: extended to LSTM + Attention
+        shadow_v2_lstm = None     # 2026-05-04: v2 LSTM (per-direction) shadow
         try:
             from src.ml.short_shadow import predict_short_xgb
             df_for_shadow = results.get('_df_for_shadow')  # set by caller if available
@@ -845,6 +846,14 @@ def _persist_prediction(results: Dict):
                     shadow_short_full = predict_short_ensemble(df_for_shadow)
                 except Exception as _se2:
                     logger.debug(f"shadow_short_full skipped: {_se2}")
+                # v2 LSTM (per-direction) shadow — was trained 2026-04-25 but
+                # never wired. Logging now to validate predictive power before
+                # adding as full voter in the ensemble.
+                try:
+                    from src.ml.v2_lstm import predict_v2_lstm
+                    shadow_v2_lstm = predict_v2_lstm(df_for_shadow)
+                except Exception as _se3:
+                    logger.debug(f"v2_lstm shadow skipped: {_se3}")
         except Exception as _se:
             logger.debug(f"shadow_short predict skipped: {_se}")
 
@@ -865,6 +874,9 @@ def _persist_prediction(results: Dict):
             # factor_predictive_power on this column to validate per-
             # direction accuracy delta.
             'shadow_short_full': shadow_short_full,
+            # 2026-05-04: v2 LSTM (per-direction) shadow. Returns dict
+            # {long_r, short_r, value, available} or None.
+            'shadow_v2_lstm': shadow_v2_lstm,
             # 2026-05-04: ml_majority_disagrees was missing from JSON
             # despite being computed in get_ensemble_prediction. Verified
             # via row #10996 showing None instead of False.
