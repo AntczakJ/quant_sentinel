@@ -577,9 +577,11 @@ async def _background_scanner():
             import datetime as _dt
             from src.core.database import NewsDB as _StreakDB
             _sdb = _StreakDB()
+            # ORDER BY timestamp (not id) so backfilled / out-of-order inserts
+            # don't fool the streak detector into seeing newest losses as oldest.
             _recent = _sdb._query(
                 "SELECT id, status, timestamp FROM trades WHERE status IN ('WIN','LOSS') "
-                "ORDER BY id DESC LIMIT ?",
+                "ORDER BY timestamp DESC LIMIT ?",
                 (_STREAK_THRESHOLD,)
             )
             if _recent and len(_recent) >= _STREAK_THRESHOLD and all(

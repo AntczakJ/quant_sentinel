@@ -13,6 +13,7 @@ Usage in main.py:
 """
 
 import os
+import secrets
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -61,7 +62,8 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
             or request.query_params.get("api_key")
         )
 
-        if api_key != API_SECRET_KEY:
+        # Constant-time compare to prevent timing-attack key recovery.
+        if not api_key or not secrets.compare_digest(api_key, API_SECRET_KEY):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or missing API key. Set X-API-Key header."},

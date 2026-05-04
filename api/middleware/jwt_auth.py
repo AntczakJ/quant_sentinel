@@ -13,6 +13,7 @@ Sets request.state.user with user context if authenticated.
 """
 
 import os
+import secrets
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -24,11 +25,14 @@ _LEGACY_KEY = os.getenv("API_SECRET_KEY", "")
 # Endpoints always public (no auth required)
 _PUBLIC_PATHS = {"/api/health", "/docs", "/openapi.json", "/redoc"}
 _PUBLIC_PREFIXES = (
-    "/api/auth/",        # registration + login
-    "/api/training/",    # backtest + training controls
-    "/api/portfolio/",   # portfolio reads + trade management
-    "/api/agent/",       # AI agent chat
+    "/api/auth/",        # registration + login (must remain public for bootstrap)
 )
+# 2026-05-04 audit: removed /api/training/, /api/portfolio/, /api/agent/ from
+# public prefixes. They expose write endpoints (start/stop training, quick-trade,
+# update-balance, agent chat that spends OpenAI tokens) that an unauthenticated
+# caller could trigger. GET routes under these prefixes are still public via
+# the `method not in _PROTECTED_METHODS` shortcut below — only POST/PUT/DELETE/
+# PATCH now require auth.
 
 # Methods requiring authentication
 _PROTECTED_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
@@ -78,7 +82,9 @@ class _JwtAuthHTTPMiddleware(BaseHTTPMiddleware):
                         pass
 
                 # Method 3: Legacy API_SECRET_KEY from .env
-                if user is None and _LEGACY_KEY and api_key == _LEGACY_KEY:
+                # Constant-time compare prevents timing-attack key recovery.
+                if (user is None and _LEGACY_KEY and api_key
+                        and secrets.compare_digest(api_key, _LEGACY_KEY)):
                     user = {"user_id": 0, "username": "admin", "role": "admin"}
 
         # No auth configured at all → allow (backwards compatible)

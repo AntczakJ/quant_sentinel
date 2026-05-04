@@ -31,8 +31,14 @@ KEYWORDS = ["gold", "xau", "fed", "inflation", "cpi", "powell", "dollar", "usd",
 # existing src.integrations.ai_engine.client. Cached per-title to avoid
 # spam. Env QUANT_NEWS_LLM=1 enables, default OFF (fallback to neutral).
 # Cheap: ~$0.0001 per headline, 30 articles/cycle × 5min cycles = ~$0.40/day.
-_LLM_SENTIMENT_CACHE: dict[str, str] = {}
+#
+# Cache stores (verdict, timestamp). 24h TTL — same headline re-asked the
+# next day re-queries (regime/context may have shifted). Without TTL, a
+# Monday verdict survives until process restart, masking fresh sentiment.
+import time as _time
+_LLM_SENTIMENT_CACHE: dict[str, tuple[str, float]] = {}
 _LLM_SENTIMENT_CACHE_MAX = 1000
+_LLM_SENTIMENT_CACHE_TTL = 86400  # 24h
 
 
 def _detect_sentiment_llm(title: str) -> str:
@@ -40,14 +46,20 @@ def _detect_sentiment_llm(title: str) -> str:
 
     Returns: 'bullish' | 'bearish' | 'neutral'
 
-    Cached by title — same article doesn't re-query.
+    Cached by title with 24h TTL — same article re-asked within a day uses
+    the cached verdict; older entries are re-queried.
     Falls back to 'neutral' on any error (network, missing key, parse fail).
     """
     if not title:
         return "neutral"
     title = title.strip()
-    if title in _LLM_SENTIMENT_CACHE:
-        return _LLM_SENTIMENT_CACHE[title]
+    cached = _LLM_SENTIMENT_CACHE.get(title)
+    now = _time.time()
+    if cached is not None:
+        verdict, ts = cached
+        if now - ts < _LLM_SENTIMENT_CACHE_TTL:
+            return verdict
+        # Expired — fall through to re-query
 
     # Cache size cap — drop oldest to avoid unbounded memory
     if len(_LLM_SENTIMENT_CACHE) >= _LLM_SENTIMENT_CACHE_MAX:
@@ -86,7 +98,7 @@ def _detect_sentiment_llm(title: str) -> str:
     except Exception as e:
         logger.debug(f"_detect_sentiment_llm failed for '{title[:60]}': {e}")
         result = "neutral"
-    _LLM_SENTIMENT_CACHE[title] = result
+    _LLM_SENTIMENT_CACHE[title] = (result, now)
     return result
 
 
