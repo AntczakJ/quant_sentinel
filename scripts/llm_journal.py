@@ -205,6 +205,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=10, help="Number of recent trades to analyze")
     ap.add_argument("--status", choices=["WIN", "LOSS", "TIMEOUT"], default=None)
+    ap.add_argument("--trade-id", type=int, default=None,
+                    help="Analyze a specific trade ID only (for auto-fire on resolve)")
     ap.add_argument("--write-md", action="store_true", help="Write reports/journal_<date>.md")
     ap.add_argument("--no-cache", action="store_true", help="Re-analyze even if cached")
     args = ap.parse_args()
@@ -219,7 +221,28 @@ def main():
     conn = sqlite3.connect(ROOT / "data" / "sentinel.db")
     init_journal_table(conn)
 
-    trades = fetch_trades_with_context(conn, args.n, args.status)
+    if args.trade_id is not None:
+        # Single-trade mode (auto-fire from API resolver). Pull just that row.
+        sql = (
+            "SELECT t.id, t.timestamp, t.direction, t.entry, t.sl, t.tp, "
+            "t.status, t.profit, t.setup_grade, t.setup_score, t.factors, "
+            "t.rsi, t.trend, t.structure, t.failure_reason, t.vol_regime, "
+            "t.spread_at_entry, m.lstm_pred, m.xgb_pred, m.smc_pred, "
+            "m.attention_pred, m.dqn_action, m.ensemble_score, "
+            "m.ensemble_signal, m.confidence, m.predictions_json "
+            "FROM trades t LEFT JOIN ml_predictions m ON m.trade_id = t.id "
+            "WHERE t.id = ?"
+        )
+        rows = conn.execute(sql, (args.trade_id,)).fetchall()
+        cols = [d[0] for d in conn.execute(sql, (args.trade_id,)).description]
+        trades = [dict(zip(cols, r)) for r in rows]
+        for t in trades:
+            try:
+                t["factors_dict"] = json.loads(t["factors"]) if t["factors"] else {}
+            except Exception:
+                t["factors_dict"] = {}
+    else:
+        trades = fetch_trades_with_context(conn, args.n, args.status)
     if not trades:
         print("No closed trades found.")
         return

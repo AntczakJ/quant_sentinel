@@ -485,6 +485,34 @@ async def _replay_rejections_daily():
         await asyncio.sleep(86400)
 
 
+async def _fire_journal_async(trade_id: int):
+    """Run scripts/llm_journal.py for one trade in background.
+
+    2026-05-04: trade resolves -> spawn LLM journal -> writes to
+    llm_trade_journal table. Cost ~$0.001 per call. Cached so reruns
+    are free. No-op if OPENAI_API_KEY missing.
+    """
+    import asyncio
+    import subprocess
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[1]
+    py_exec = sys.executable
+    script = repo_root / "scripts" / "llm_journal.py"
+    if not script.exists():
+        return
+    try:
+        def _run():
+            subprocess.run(
+                [py_exec, str(script), "--trade-id", str(trade_id)],
+                capture_output=True, text=True, timeout=60,
+                cwd=str(repo_root), encoding="utf-8", errors="replace",
+            )
+        await asyncio.to_thread(_run)
+        logger.info(f"[journal] auto-fire done for trade #{trade_id}")
+    except Exception as e:
+        logger.debug(f"[journal] auto-fire trade #{trade_id} failed: {e}")
+
+
 async def _periodic_health_check():
     """
     Daily wrapper around scripts/learning_health_check.py.
@@ -1414,6 +1442,16 @@ async def _auto_resolve_trades():
                         # module level so all 3 resolve paths (SL/TP,
                         # time-exit, pre-weekend) share it.
                         _apply_voter_attribution(db, trade_id, status, direction)
+
+                        # 2026-05-04: auto-fire LLM journal post-mortem if
+                        # OPENAI_API_KEY set + LOSS or interesting WIN.
+                        # Async (fire-and-forget) so resolver returns fast.
+                        # Skipped on TIMEOUT/BREAKEVEN (less informative).
+                        if status in ("WIN", "LOSS") and os.getenv("OPENAI_API_KEY"):
+                            try:
+                                asyncio.create_task(_fire_journal_async(trade_id))
+                            except Exception as _je:
+                                logger.debug(f"[Resolver] journal fire skipped: {_je}")
 
                         icon = "✅" if hit_tp else "❌"
                         target = f"TP:{tp_f}" if hit_tp else f"SL:{sl_f}"
