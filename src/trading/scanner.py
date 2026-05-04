@@ -1017,6 +1017,23 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     # Block trading in sessions where historical WR is poor for this direction
     try:
         current_session = analysis.get('session', 'unknown')
+
+        # 2026-05-05: HARD LONDON BLOCK (1yr backtest evidence).
+        # 1yr cohort: London n=19, WR 21.1%, total -$127 (worst session).
+        # Off_hours+NY+overlap all profitable. ML coef sess_london=-0.823
+        # was strongest LOSS predictor in factor analysis. Confirmed across
+        # 12 months — not a regime artifact.
+        # Env opt-out: set BLOCK_LONDON_SESSION=0 to disable.
+        import os as _os
+        if current_session == 'london' and _os.getenv('BLOCK_LONDON_SESSION', '1') != '0':
+            logger.info(f"[MTF] {tf}: London session — hard-blocked (1yr backtest WR=21%)")
+            _log_rejection(db, tf, direction_str, current_price,
+                           "session=london_hard_block(1yr_WR=21%)",
+                           "london_hard_block",
+                           confluence_count=confluence_count, rsi=current_rsi,
+                           trend=current_trend, pattern=pattern, atr=current_atr)
+            return None
+
         session_perf = db.get_session_win_rate(current_session, direction_str, min_trades=5)
         if session_perf.get('sufficient_data') and session_perf['win_rate'] is not None:
             if session_perf['win_rate'] < 0.30:
