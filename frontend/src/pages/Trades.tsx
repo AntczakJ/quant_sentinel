@@ -6,6 +6,10 @@ import { api } from '@/api/client'
 import { Card } from '@/components/Card'
 import { FlashOnChange } from '@/components/FlashOnChange'
 import { MagneticButton } from '@/components/MagneticButton'
+import { TiltCard } from '@/components/TiltCard'
+import { Spotlight } from '@/components/Spotlight'
+import { GradientText } from '@/components/GradientText'
+import { TextReveal } from '@/components/TextReveal'
 
 type Filter = 'all' | 'win' | 'loss' | 'open' | 'long' | 'short'
 
@@ -38,51 +42,69 @@ export default function Trades() {
   return (
     <div className="flex flex-col gap-8">
       <header className="reveal-on-scroll flex flex-col gap-2">
-        <h1 className="text-display-sm font-display tracking-tight text-display-gradient">Trades</h1>
-        <p className="text-body text-ink-600">All closed and open positions, most recent first.</p>
+        <h1 className="text-display-sm font-display tracking-tight">
+          <GradientText>
+            <TextReveal text="Trades" splitBy="char" />
+          </GradientText>
+        </h1>
+        <p className="text-body text-ink-600">
+          <TextReveal text="All closed and open positions, most recent first." delay={0.18} />
+        </p>
       </header>
 
       {/* Quick stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card variant="flat" className="p-5">
-          <div className="text-micro uppercase tracking-wider text-ink-600">Total</div>
-          <div className="mt-2 text-headline font-display num">
-            <NumberFlow value={filtered.length} respectMotionPreference />
-          </div>
-        </Card>
-        <Card variant="flat" className="p-5">
-          <div className="text-micro uppercase tracking-wider text-ink-600">Win Rate</div>
-          <div className="mt-2 text-headline font-display num">
-            {wr != null ? (
-              <NumberFlow
-                value={wr}
-                format={{ minimumFractionDigits: 1, maximumFractionDigits: 1 }}
-                suffix="%"
-                respectMotionPreference
-              />
-            ) : (
-              '—'
-            )}
-          </div>
-        </Card>
-        <Card variant="flat" className="p-5">
-          <div className="text-micro uppercase tracking-wider text-ink-600">Net P&L</div>
-          <div className={`mt-2 text-headline font-display num ${total > 0 ? 'text-bull' : total < 0 ? 'text-bear' : ''}`}>
-            <FlashOnChange value={total}>
-              <NumberFlow
-                value={total}
-                format={{ maximumFractionDigits: 0, signDisplay: 'exceptZero' }}
-                respectMotionPreference
-              />
-            </FlashOnChange>
-          </div>
-        </Card>
-        <Card variant="flat" className="p-5">
-          <div className="text-micro uppercase tracking-wider text-ink-600">Closed</div>
-          <div className="mt-2 text-headline font-display num">
-            <NumberFlow value={closed.length} respectMotionPreference />
-          </div>
-        </Card>
+        <TiltCard className="rounded-xl">
+          <Card variant="flat" className="relative overflow-hidden p-5">
+            <Spotlight />
+            <div className="text-micro uppercase tracking-wider text-ink-600">Total</div>
+            <div className="mt-2 text-headline font-display num">
+              <NumberFlow value={filtered.length} respectMotionPreference />
+            </div>
+          </Card>
+        </TiltCard>
+        <TiltCard className="rounded-xl">
+          <Card variant="flat" className="relative overflow-hidden p-5">
+            <Spotlight color="rgba(34,197,94,0.14)" />
+            <div className="text-micro uppercase tracking-wider text-ink-600">Win Rate</div>
+            <div className="mt-2 text-headline font-display num">
+              {wr != null ? (
+                <NumberFlow
+                  value={wr}
+                  format={{ minimumFractionDigits: 1, maximumFractionDigits: 1 }}
+                  suffix="%"
+                  respectMotionPreference
+                />
+              ) : (
+                '—'
+              )}
+            </div>
+          </Card>
+        </TiltCard>
+        <TiltCard className="rounded-xl">
+          <Card variant="flat" className="relative overflow-hidden p-5">
+            <Spotlight color={total >= 0 ? 'rgba(34,197,94,0.14)' : 'rgba(239,68,68,0.14)'} />
+            <div className="text-micro uppercase tracking-wider text-ink-600">Net P&L</div>
+            <div className={`mt-2 text-headline font-display num ${total > 0 ? 'text-bull' : total < 0 ? 'text-bear' : ''}`}>
+              <FlashOnChange value={total}>
+                <NumberFlow
+                  value={total}
+                  format={{ maximumFractionDigits: 0, signDisplay: 'exceptZero' }}
+                  respectMotionPreference
+                />
+              </FlashOnChange>
+            </div>
+          </Card>
+        </TiltCard>
+        <TiltCard className="rounded-xl">
+          <Card variant="flat" className="relative overflow-hidden p-5">
+            <Spotlight color="rgba(59,130,246,0.14)" />
+            <div className="text-micro uppercase tracking-wider text-ink-600">Closed</div>
+            <div className="mt-2 text-headline font-display num">
+              <NumberFlow value={closed.length} respectMotionPreference />
+            </div>
+          </Card>
+        </TiltCard>
       </div>
 
       {/* Filter tabs */}

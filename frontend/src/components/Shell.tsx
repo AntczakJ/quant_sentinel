@@ -7,6 +7,7 @@ import { api } from '@/api/client'
 import { OfflineBanner } from './OfflineBanner'
 import { ScrambleText } from './ScrambleText'
 import { HealthDeepPopover } from './HealthDeepPopover'
+import { ScrollProgress } from './ScrollProgress'
 import { isSoundEnabled, setSoundEnabled, playClick } from '@/lib/sound'
 
 // Lazy-load WebGL shader to avoid blocking initial paint on slower routes
@@ -37,6 +38,9 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen flex flex-col relative">
+      {/* ─── Top scroll-progress bar ────────────────────────────────── */}
+      <ScrollProgress />
+
       {/* ─── Cursor-reactive WebGL mesh background ──────────────────── */}
       <Suspense fallback={null}>
         <MeshBackground enabled={meshEnabled} />

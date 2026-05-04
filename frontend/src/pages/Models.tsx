@@ -5,6 +5,8 @@ import NumberFlow from '@number-flow/react'
 import { api, type ModelStat, type Trade } from '@/api/client'
 import { Card } from '@/components/Card'
 import { AnimatedBeam } from '@/components/AnimatedBeam'
+import { GradientText } from '@/components/GradientText'
+import { TextReveal } from '@/components/TextReveal'
 
 export default function Models() {
   const { data: models = [] } = useQuery({ queryKey: ['models'], queryFn: api.models, refetchInterval: 60_000 })
@@ -61,7 +63,11 @@ export default function Models() {
   return (
     <div className="flex flex-col gap-10">
       <header className="reveal-on-scroll">
-        <h1 className="text-display-sm font-display tracking-tight text-display-gradient">Models</h1>
+        <h1 className="text-display-sm font-display tracking-tight">
+          <GradientText>
+            <TextReveal text="Models" splitBy="char" />
+          </GradientText>
+        </h1>
         <p className="text-body text-ink-600 mt-2">
           Voter ensemble — live data flow from <span className="font-mono">/api/models/stats</span>.
         </p>
