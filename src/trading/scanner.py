@@ -977,6 +977,27 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     if htf_checks and htf_conflicts == 0:
         logger.info(f"[MTF] {tf}: HTF trend alignment confirmed for {direction}")
 
+    # --- 6h. TOXIC PAIR FILTER (env-gated, default OFF) ---
+    # 2026-05-04: choch + ob_count globally has WR 16.7% on N=30 — strongest
+    # anti-pattern found. Block when both fire together.
+    # Memory: toxic_pair_choch_obcount_2026-05-04.md
+    if os.environ.get("QUANT_BLOCK_CHOCH_OBCOUNT") == "1":
+        # Use the analysis output to detect — factors are derived in
+        # score_setup_quality but available here from analysis dict.
+        try:
+            choch_present = bool(analysis.get("choch") or analysis.get("change_of_character"))
+            ob_count = analysis.get("ob_count", 0) or 0
+            if choch_present and ob_count >= 1:
+                _log_rejection(db, tf, direction_str, current_price,
+                               "toxic_pair_choch_ob_count_WR16.7%",
+                               "toxic_pair_filter",
+                               confluence_count=confluence_count, rsi=current_rsi,
+                               trend=current_trend, pattern=pattern, atr=current_atr)
+                logger.info(f"[MTF] {tf}: TOXIC pair choch+ob_count → block (N=30 WR 16.7%)")
+                return None
+        except Exception as _e:
+            logger.debug(f"toxic_pair check skipped: {_e}")
+
     # --- 7. SETUP QUALITY SCORING (nowe!) ---
     setup_quality = None
     try:
