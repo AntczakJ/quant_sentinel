@@ -247,6 +247,14 @@ def predict_attention(df, model_dir='models', seq_len=60, usdjpy_df=None):
     with open(scaler_path, 'rb') as f:
         scaler = pickle.load(f)
 
+    # Defensive: scaler-feature mismatch = train/inference split. Per 2026-05-04 audit.
+    scaler_n = getattr(scaler, "n_features_in_", None)
+    if scaler_n is not None and scaler_n != data.shape[1]:
+        logger.error(
+            f"Attention scaler n_features={scaler_n} != input n_features={data.shape[1]} "
+            f"— scaler from older training, retrain. Skipping voter."
+        )
+        return None
     scaled = scaler.transform(data)
     X = scaled.reshape(1, seq_len, -1).astype(np.float32)
 

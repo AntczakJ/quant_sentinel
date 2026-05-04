@@ -385,6 +385,15 @@ def predict_lstm_direction(df: pd.DataFrame, seq_len: int = 60) -> Optional[floa
         # Normalizuj
         scaler, is_fitted = _get_scaler()
         if scaler is not None:
+            # Defensive: scaler-feature mismatch is a silent train/inference
+            # split; fail loud instead of degrading. Per 2026-05-04 audit.
+            scaler_n = getattr(scaler, "n_features_in_", None)
+            if scaler_n is not None and scaler_n != data.shape[1]:
+                logger.error(
+                    f"LSTM scaler n_features={scaler_n} != input n_features={data.shape[1]} "
+                    f"— scaler from older training, retrain models. Skipping voter."
+                )
+                return None
             if is_fitted:
                 data = scaler.transform(data)
             else:
