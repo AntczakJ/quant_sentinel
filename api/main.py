@@ -3436,6 +3436,60 @@ async def macro_context():
     return result
 
 
+@app.get("/api/macro/regime-routing", tags=["System"])
+async def regime_routing_preview(tf: str = "5m"):
+    """Phase V2 routing preview — what would happen if QUANT_REGIME_V2=1.
+
+    Returns the routing decision (block_entry / min_score_floor /
+    allowed_directions / voter_weight_mult) for the current
+    market_regime + macro_regime + given TF.
+
+    Read-only — does not affect live trading. Useful for the dashboard
+    to show "in this regime, V2 would block / allow / restrict to LONG".
+
+    Activate by setting `QUANT_REGIME_V2=1` in .env after backtest A/B
+    confirms net +EV. See memory/regime_v2_integration_runbook.md.
+    """
+    out = {"tf": tf, "active": False, "market_regime": None,
+           "macro_regime": None, "routing": None}
+    try:
+        from src.analysis.regime_routing import is_active, explain_routing
+        out["active"] = is_active()
+        # Reuse the macro_context machinery to find current regimes
+        from src.trading.smc_engine import get_smc_analysis
+        from src.analysis.regime import classify_regime
+        from src.analysis.compute import compute_features
+        from src.data.data_sources import get_provider
+
+        macro_regime = None
+        try:
+            analysis = get_smc_analysis("1h")
+            if analysis:
+                macro_regime = analysis.get("macro_regime")
+        except Exception:
+            pass
+
+        market_regime = "ranging"  # safe default
+        try:
+            provider = get_provider()
+            df = provider.get_candles("XAU/USD", tf, 100)
+            if df is not None and len(df) >= 50:
+                try:
+                    feat = compute_features(df.copy(), use_cache=False)
+                    market_regime = classify_regime(feat)
+                except Exception:
+                    market_regime = classify_regime(df)
+        except Exception as e:
+            out["regime_error"] = str(e)
+
+        out["market_regime"] = market_regime
+        out["macro_regime"] = macro_regime
+        out["routing"] = explain_routing(market_regime, tf, macro_regime)
+    except Exception as e:
+        out["error"] = str(e)
+    return out
+
+
 @app.get("/api/scanner/factors-attribution", tags=["System"])
 async def scanner_factors_attribution(window_days: int = 30, last_n: int = 20):
     """Per-factor attribution + recent-trades breakdown.
