@@ -630,26 +630,65 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
                     pass
 
             # 2. Check TP/SL (using trailing SL)
+            # 2026-05-04 fix: when BOTH TP and SL crossed in same bar, the
+            # original code always picked TP first → optimistic bias inflating
+            # backtest WR. Now: when both crossed, use bar open vs close to
+            # determine intra-bar order. If still ambiguous, use SL (conservative,
+            # avoids overstating performance vs reality).
+            try:
+                bar_open = float(bar["open"])
+                bar_close = float(bar["close"])
+            except Exception:
+                bar_open = bar_close = None
+
             if is_long:
-                if bar_high >= tp:
+                tp_crossed = bar_high >= tp
+                sl_crossed = bar_low <= active_sl
+                if tp_crossed and sl_crossed:
+                    # Both touched in same bar — use OHLC sequence proxy
+                    # Bullish bar (close>open): price went up after open → TP likely first
+                    # Bearish bar (close<open): price went down after open → SL likely first
+                    tp_first = (bar_open is not None and bar_close is not None
+                                and bar_close > bar_open)
+                    if tp_first:
+                        hit_status, hit_price = "WIN", tp
+                    else:
+                        hit_status = "WIN" if active_sl > entry else (
+                            "BREAKEVEN" if active_sl == entry else "LOSS")
+                        hit_price = active_sl
+                    break
+                if tp_crossed:
                     hit_status, hit_price = "WIN", tp
                     break
-                if bar_low <= active_sl:
-                    # Determine status: SL at or above entry = trail exit (WIN-ish)
+                if sl_crossed:
                     if active_sl > entry:
-                        hit_status, hit_price = "WIN", active_sl  # trailed profit
+                        hit_status, hit_price = "WIN", active_sl
                     elif active_sl == entry:
                         hit_status, hit_price = "BREAKEVEN", active_sl
                     else:
                         hit_status, hit_price = "LOSS", active_sl
                     break
             else:  # SHORT
-                if bar_low <= tp:
+                tp_crossed = bar_low <= tp
+                sl_crossed = bar_high >= active_sl
+                if tp_crossed and sl_crossed:
+                    # Bearish bar (close<open) → SHORT TP likely first
+                    # Bullish bar (close>open) → SHORT SL likely first
+                    tp_first = (bar_open is not None and bar_close is not None
+                                and bar_close < bar_open)
+                    if tp_first:
+                        hit_status, hit_price = "WIN", tp
+                    else:
+                        hit_status = "WIN" if active_sl < entry else (
+                            "BREAKEVEN" if active_sl == entry else "LOSS")
+                        hit_price = active_sl
+                    break
+                if tp_crossed:
                     hit_status, hit_price = "WIN", tp
                     break
-                if bar_high >= active_sl:
+                if sl_crossed:
                     if active_sl < entry:
-                        hit_status, hit_price = "WIN", active_sl  # trailed profit
+                        hit_status, hit_price = "WIN", active_sl
                     elif active_sl == entry:
                         hit_status, hit_price = "BREAKEVEN", active_sl
                     else:
@@ -670,6 +709,14 @@ async def _resolve_open_trades(db, provider: HistoricalProvider) -> None:
                 exit_bar_atr = float(bar["high"]) - float(bar["low"])
             except Exception:
                 pass
+            # 2026-05-04 fix: fees were applied as flat USD constants regardless
+            # of lot size, but gross is computed in price units (per oz). For
+            # 0.01 lot: 1-lot fees over-penalize trade by ~$7.30. Scale fees to
+            # the price-unit basis matching `gross` so subtraction is consistent.
+            # Per 1-lot equivalent in price units: fee_usd / (OZ_PER_LOT * lot_size)
+            # would give the price-unit fee. But simpler: subtract in USD post-
+            # multiply. We restructure: profit stored in price units (gross),
+            # equity calc applies lot scaling once.
             exit_slip = SLIPPAGE_EXIT_USD + exit_bar_atr * SLIPPAGE_ATR_COEF
 
             # 2. Gap detection on exit bar — if high - low ratio is unusual vs

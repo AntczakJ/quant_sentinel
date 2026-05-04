@@ -32,14 +32,27 @@ const cb = {
   },
 }
 
+// 2026-05-04: backend now requires X-API-Key on all POST/PUT/DELETE under
+// /api/* (commit 86ee235 removed /api/training/, /api/portfolio/, /api/agent/
+// from public prefixes). Frontend must send the API key. Read from Vite env
+// VITE_API_SECRET_KEY (set in .env.local for dev). GETs unaffected.
+const API_KEY = (import.meta.env.VITE_API_SECRET_KEY as string | undefined) ?? ''
+
 const ax = axios.create({
   baseURL: BASE,
   timeout: 8000,
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
+  },
 })
 
 ax.interceptors.request.use((config) => {
   if (!cb.canRequest()) return Promise.reject(new Error('circuit-open'))
+  // Defensive: re-attach API key if header was stripped by an interceptor.
+  if (API_KEY && !config.headers['X-API-Key']) {
+    config.headers['X-API-Key'] = API_KEY
+  }
   return config
 })
 ax.interceptors.response.use(
