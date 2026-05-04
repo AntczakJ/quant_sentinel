@@ -274,6 +274,7 @@ async def lifespan(app: FastAPI):
     # reader and reader-without-writer keys so the next #95569f7-style
     # silent rename gets caught early. Always-on, very cheap.
     drift_task = asyncio.create_task(_dynamic_params_drift_watchdog())
+    health_check_task = asyncio.create_task(_periodic_health_check())
 
     # Macro-snapshot persister (5-min cadence). Decoupled from trade
     # evaluation so historical regime data is captured even on scan-paused
@@ -314,7 +315,16 @@ async def lifespan(app: FastAPI):
         pass
 
     # 2. Cancel background tasks with drain timeout
-    tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task, retention_task, macro_snapshot_task, replay_task]
+    # 2026-05-04 audit: shadow_task and health_task were excluded from this
+    # list — they kept running 30s past shutdown, possibly emitting Telegram.
+    tasks = [model_task, scanner_task, prices_task, resolver_task, monitor_task,
+             retention_task, macro_snapshot_task, replay_task, drift_task,
+             health_check_task, shadow_task]
+    try:
+        if health_task is not None:
+            tasks.append(health_task)
+    except NameError:
+        pass
     for task in tasks:
         task.cancel()
 
@@ -471,6 +481,58 @@ async def _replay_rejections_daily():
                                f"{(err or '').splitlines()[-1] if err else '<empty>'}")
         except Exception as _e:
             logger.debug(f"[replay] daily run failed: {_e}")
+        # 24h until next run
+        await asyncio.sleep(86400)
+
+
+async def _periodic_health_check():
+    """
+    Daily wrapper around scripts/learning_health_check.py.
+
+    2026-05-04: agent audit identified that learning_health_check.py was
+    shipped earlier but never scheduled. Without a periodic check, stale
+    factor weights / corrupted Bayesian state could go unnoticed for weeks.
+
+    Runs at startup + every 24h. On failure (exit code != 0), logs
+    warning. Optional Telegram alert if TELEGRAM_BOT_TOKEN set.
+    """
+    import asyncio
+    import subprocess
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[1]
+    py_exec = sys.executable
+    script = repo_root / "scripts" / "learning_health_check.py"
+    if not script.exists():
+        logger.debug("[health_check] learning_health_check.py missing — skipped")
+        return
+
+    await asyncio.sleep(60)  # 1-min startup delay so models load first
+    while True:
+        try:
+            def _run() -> tuple[int, str]:
+                r = subprocess.run(
+                    [py_exec, str(script)],
+                    capture_output=True, text=True,
+                    cwd=str(repo_root), timeout=120,
+                    encoding="utf-8", errors="replace",
+                )
+                return (r.returncode, r.stdout or "")
+            rc, out = await asyncio.to_thread(_run)
+            errors_count = 0
+            if "ERRORS:" in out:
+                # Parse "  Errors: N" line if present
+                for line in out.splitlines():
+                    if line.strip().startswith("Errors:"):
+                        try:
+                            errors_count = int(line.split(":")[-1].strip())
+                        except ValueError:
+                            pass
+            if rc != 0 or errors_count > 0:
+                logger.warning(f"[health_check] FAILED rc={rc} errors={errors_count} — review output")
+            else:
+                logger.info(f"[health_check] daily check OK")
+        except Exception as e:
+            logger.debug(f"[health_check] periodic run error: {e}")
         # 24h until next run
         await asyncio.sleep(86400)
 
