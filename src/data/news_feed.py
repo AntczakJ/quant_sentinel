@@ -93,14 +93,19 @@ def _is_gold_relevant(headline: str) -> bool:
 
 def _classify_headline(headline: str) -> Dict:
     """
-    Classify headline sentiment for gold using keyword matching.
-    Fast alternative to FinBERT for real-time classification.
+    Classify headline sentiment for gold.
+
+    2026-05-04: env QUANT_NEWS_LLM=1 routes through OpenAI gpt-4o-mini
+    classifier in src.data.news._detect_sentiment_llm. Maps {bullish,
+    bearish, neutral} → score {+1.0, -1.0, 0.0}. Cached per-title.
+    Falls back to keyword path on LLM error/disabled.
 
     Returns: {"score": float (-1 to +1), "impact": "high"|"medium"|"low"}
     """
+    import os as _os
     hl = headline.lower()
 
-    # Impact level
+    # Impact level (unchanged — keyword-based, low cost, fine)
     if any(kw in hl for kw in _HIGH_IMPACT_KEYWORDS):
         impact = "high"
     elif _is_gold_relevant(hl):
@@ -108,15 +113,30 @@ def _classify_headline(headline: str) -> Dict:
     else:
         impact = "low"
 
-    # Sentiment scoring
-    bullish_hits = sum(1 for kw in _BULLISH_KEYWORDS if kw in hl)
-    bearish_hits = sum(1 for kw in _BEARISH_KEYWORDS if kw in hl)
+    # Sentiment via LLM if enabled, else keyword fallback
+    score = None
+    if _os.environ.get("QUANT_NEWS_LLM") == "1":
+        try:
+            from src.data.news import _detect_sentiment_llm
+            verdict = _detect_sentiment_llm(headline)
+            if verdict == "bullish":
+                score = 1.0
+            elif verdict == "bearish":
+                score = -1.0
+            else:
+                score = 0.0
+        except Exception:
+            score = None  # fallback to keyword path
 
-    total = bullish_hits + bearish_hits
-    if total == 0:
-        score = 0.0
-    else:
-        score = (bullish_hits - bearish_hits) / total  # range [-1, +1]
+    if score is None:
+        # Keyword fallback (legacy path, kept for resilience)
+        bullish_hits = sum(1 for kw in _BULLISH_KEYWORDS if kw in hl)
+        bearish_hits = sum(1 for kw in _BEARISH_KEYWORDS if kw in hl)
+        total = bullish_hits + bearish_hits
+        if total == 0:
+            score = 0.0
+        else:
+            score = (bullish_hits - bearish_hits) / total
 
     # Boost score for high-impact news
     if impact == "high":
