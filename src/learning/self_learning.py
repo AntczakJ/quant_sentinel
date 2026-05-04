@@ -422,11 +422,20 @@ async def auto_analyze_and_learn(context):
         if (direction == "LONG" and s.get('choch_bullish')) or (direction == "SHORT" and s.get('choch_bearish')):
             factors['choch'] = 1
 
-        # Liczba OB (z listy order_blocks)
+        # Liczba OB (z listy order_blocks) — direction-filtered
+        # 2026-05-04 fix: find_order_blocks(df, trend) returns OBs matching
+        # the EMA trend, NOT the SETUP direction. When SHORT fires in a
+        # bull-EMA regime (contrarian reversal), the bullish OBs were being
+        # counted as factors for SHORT — opposite direction. This was the
+        # most-likely root cause of ob_count factor's -17.7pp WR delta.
+        # Per 10-agent deep audit 2026-05-04 evening.
         ob_list = s.get('order_blocks', [])
         if ob_list:
-            ob_count = min(len(ob_list), 3)
-            factors['ob_count'] = ob_count   # maks. 3 punkty
+            expected_type = 'bullish' if direction == 'LONG' else 'bearish'
+            ob_dir_aligned = [b for b in ob_list if b.get('type') == expected_type]
+            ob_count = min(len(ob_dir_aligned), 3)
+            if ob_count > 0:
+                factors['ob_count'] = ob_count   # maks. 3 punkty
 
 
         # Order block główny
