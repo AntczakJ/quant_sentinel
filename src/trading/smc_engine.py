@@ -1844,6 +1844,55 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
             score += 10
             factors_detail['vwap_confluence'] = 10
 
+    # --- OTE — Optimal Trade Entry zone (2026-05-05, +12/+18 pkt) ---
+    # Fibonacci 0.62-0.79 retracement of last dealing range — the canonical
+    # ICT institutional entry zone. Detected since 2026-05-04 (smc_engine
+    # line 1248-1257) but never weighted into score until now. Sweet spot
+    # at 0.705 retracement gets a higher bonus.
+    in_ote_long = analysis.get('in_ote_long', False)
+    in_ote_short = analysis.get('in_ote_short', False)
+    in_ote_sweet = analysis.get('in_ote_sweet', False)
+    if (direction == "LONG" and in_ote_long) or (direction == "SHORT" and in_ote_short):
+        ote_pts = 18 if in_ote_sweet else 12
+        score += ote_pts
+        factors_detail['ote_zone'] = ote_pts
+
+    # --- BREAKER BLOCK (2026-05-05, +10 pkt) ---
+    # Failed Order Block flipped support/resistance. ICT 2024+ research
+    # shows higher reversal probability than standard OBs. Detected since
+    # 2026-05-04 (smc_engine line 686-784) but never scored.
+    breaker = analysis.get('breaker_type')
+    if (direction == "LONG" and breaker == 'breaker_long') or \
+       (direction == "SHORT" and breaker == 'breaker_short'):
+        score += 10
+        factors_detail['breaker_block'] = 10
+
+    # --- IFVG — Inverse Fair Value Gap (2026-05-05, +10 pkt) ---
+    # FVG that's been broken in one direction and now retests the OPPOSITE
+    # boundary. Strong reversal setup per ICT 2024+ research. Detected
+    # since 2026-05-04 (smc_engine line 600-684) but never scored.
+    ifvg_type = analysis.get('ifvg_type')
+    if (direction == "LONG" and ifvg_type == 'ifvg_long') or \
+       (direction == "SHORT" and ifvg_type == 'ifvg_short'):
+        score += 10
+        factors_detail['ifvg'] = 10
+
+    # --- POC PROXIMITY (2026-05-05, +5 pkt) ---
+    # Volume-Profile Point of Control acts as institutional anchor.
+    # Setups initiated near POC (within 0.5 ATR) tend to get reaction.
+    # `near_poc` was detected since 2026-04-24 but never scored.
+    if analysis.get('near_poc'):
+        score += 5
+        factors_detail['near_poc'] = 5
+
+    # --- D1 ALIGNMENT (2026-05-05, +6 pkt) ---
+    # Setup direction agrees with the daily-bar trend. HTF alignment is
+    # one of the strongest single SMC factors per audit factor analysis.
+    # `d1_aligned` flag was added Stage-1 logging factors but never scored.
+    if analysis.get('d1_aligned'):
+        score += 6
+        factors_detail['d1_aligned'] = 6
+
     # RSI w optymalnej strefie (max 5 pkt)
     rsi = analysis.get('rsi', 50)
     if direction == "LONG" and 35 <= rsi <= 55:
@@ -2037,10 +2086,15 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
             score -= macro_penalty
             factors_detail['macro_opposing_penalty'] = -macro_penalty
 
-    # Penalty: off-hours / low liquidity session
+    # 2026-05-05: off_hours penalty REMOVED based on 1yr backtest evidence.
+    # Cohort: off_hours n=46, WR 47.8%, total +$443 — the BEST-performing
+    # session, single largest contributor to the +4.54% return. The old
+    # "low liquidity" penalty was a theoretical assumption inverted by
+    # data. We keep `volatility_expected == 'low'` penalty for genuinely
+    # low-vol windows (those still suffer wide spread), but off_hours
+    # alone is no longer penalized.
     session_info = analysis.get('session_info', {})
-    if session_info.get('volatility_expected') == 'low' or \
-       session_info.get('session') in ('off_hours',):
+    if session_info.get('volatility_expected') == 'low':
         score -= 5
         factors_detail['low_liquidity_penalty'] = -5
 
