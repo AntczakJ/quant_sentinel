@@ -781,6 +781,29 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     lot = pos.get('lot', 0.01)
     logic = pos.get('logic', '')
 
+    # --- 3a. PORTFOLIO-RISK CAP (2026-05-05, env-tunable) ---
+    # Bloomberg PORT pattern: aggregate open R-units across all positions,
+    # cap total at QUANT_MAX_OPEN_R (default 2.0). Single-asset XAU today,
+    # but adding 2nd asset would silently double exposure without this gate.
+    # Cheap to add now, painful to retrofit.
+    try:
+        from src.risk.portfolio import would_breach_cap
+        breaches, info = would_breach_cap(db, entry, sl, lot)
+        if breaches:
+            logger.warning(
+                f"[MTF] {tf}: PORTFOLIO-RISK cap breach — "
+                f"existing={info['existing_r']:.2f}R + new={info['new_r']:.2f}R = "
+                f"{info['total_r_after']:.2f}R > {info['cap']:.2f}R cap. Refusing."
+            )
+            _log_rejection(db, tf, direction, current_price,
+                           f"portfolio_r={info['total_r_after']:.2f}>{info['cap']:.2f}",
+                           "portfolio_cap",
+                           confluence_count=confluence_count, rsi=current_rsi,
+                           trend=current_trend, pattern=pattern, atr=current_atr)
+            return None
+    except Exception as _pr_err:
+        logger.debug(f"Portfolio cap check skipped: {_pr_err}")
+
     # --- 3b. FVG-DIRECTION CHECK (moved from line 530, 2026-05-02) ---
     # Block when FVG opposes the actual trade direction (not just trend).
     # FVG bearish + LONG trade = setup contradicts itself; same for inverse.
