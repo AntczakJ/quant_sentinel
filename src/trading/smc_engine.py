@@ -391,15 +391,46 @@ def get_macro_regime(usdjpy_prices: list, current_usdjpy: float, atr: float, atr
     except (ImportError, AttributeError):
         pass
 
-    # --- Combine: require 2+ signals to agree for regime flip ---
+    # --- 2026-05-05: weighted combine (was equal-vote per signal) ---
+    # Per WR audit Agent 4: equal-vote treats FRED real-yields (corr -0.82,
+    # gold's #1 fundamental) as one vote, equal to VIXY hard-cutoffs
+    # (15/60 thresholds). Now weighted by approximate |historical correlation|
+    # with XAU spot. Bullish "score" = sum(weight × signal) where signal ∈
+    # {-1, 0, +1}. Regime flip requires score crossing the same cutoffs as
+    # the old count system (effective threshold ≈ 1.5 weighted units).
+    SIGNAL_WEIGHTS = {
+        "real_yields":   1.5,   # FRED — gold's #1 fundamental predictor
+        "usdjpy":        1.0,   # documented USD-strength proxy
+        "dollar":        1.0,   # UUP confirms dollar move
+        "yields":        0.9,   # TLT bond proxy (overlaps real_yields)
+        "fear":          0.8,   # VIXY risk-off proxy
+        "volatility":    0.6,   # ATR regime — descriptive, not causal
+        "cot":           0.7,   # weekly contrarian signal
+        "geopolitical":  0.6,   # GPR index, sporadic but high impact
+        "seasonality":   0.4,   # month/dow bias — weak but non-zero
+        "news":          0.5,   # Finnhub headline sentiment
+    }
+    bullish_score = 0.0
+    bearish_score = 0.0
+    for name, val in signals.items():
+        w = SIGNAL_WEIGHTS.get(name, 0.5)  # default 0.5 for unweighted signals
+        if val == -1:
+            bullish_score += w
+        elif val == 1:
+            bearish_score += w
+
+    # Keep raw counts for legacy callers / logging
     signal_values = list(signals.values())
     bullish_count = sum(1 for s in signal_values if s == -1)
     bearish_count = sum(1 for s in signal_values if s == 1)
     total_signals = len(signal_values)
 
-    if bullish_count >= 2 and bullish_count > bearish_count:
+    # Threshold ≈ 1.5 weighted units = roughly equivalent to old "2 signals
+    # agree" rule but biased toward higher-correlation pillars
+    REGIME_FLIP_THRESHOLD = 1.5
+    if bullish_score >= REGIME_FLIP_THRESHOLD and bullish_score > bearish_score:
         regime = "zielony"
-    elif bearish_count >= 2 and bearish_count > bullish_count:
+    elif bearish_score >= REGIME_FLIP_THRESHOLD and bearish_score > bullish_score:
         regime = "czerwony"
     else:
         regime = "neutralny"
@@ -418,6 +449,9 @@ def get_macro_regime(usdjpy_prices: list, current_usdjpy: float, atr: float, atr
         "bullish_count": bullish_count,
         "bearish_count": bearish_count,
         "total_signals": total_signals,
+        # 2026-05-05: weighted scores exposed for /api/macro/context observability
+        "bullish_score": round(bullish_score, 2),
+        "bearish_score": round(bearish_score, 2),
     }
 
 
