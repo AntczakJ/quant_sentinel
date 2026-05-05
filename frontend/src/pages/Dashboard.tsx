@@ -536,10 +536,15 @@ function ScannerPanel({ insight, expanded = false }: { insight: ScanI | undefine
 
 // ─── Macro mini ───────────────────────────────────────────────────────
 function MacroMini({ macro }: { macro: MacroContext }) {
+  const bull = macro.macro_bullish_score
+  const bear = macro.macro_bearish_score
+  const pillarStr = bull != null && bear != null
+    ? `${bull.toFixed(1)} bull / ${bear.toFixed(1)} bear`
+    : '—'
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 h-full">
       <MacroCell label="USD/JPY z-score" value={macro.usdjpy_zscore?.toFixed(2) ?? '—'} />
-      <MacroCell label="XAU·USDJPY corr" value={macro.xau_usdjpy_corr != null ? macro.xau_usdjpy_corr.toFixed(2) : '—'} />
+      <MacroCell label="Pillar score" value={pillarStr} />
       <MacroCell
         label="Macro regime"
         value={

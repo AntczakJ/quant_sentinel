@@ -154,6 +154,9 @@ export interface MacroContext {
   xau_usdjpy_corr?: number | null
   macro_regime?: 'zielony' | 'czerwony' | 'neutralny' | null
   market_regime?: 'squeeze' | 'trending_high_vol' | 'trending_low_vol' | 'ranging' | null
+  /** 2026-05-05: weighted pillar scores (FRED 1.5, USDJPY 1.0, ...). ≥1.5 flips regime. */
+  macro_bullish_score?: number | null
+  macro_bearish_score?: number | null
 }
 
 export interface ModelStat {

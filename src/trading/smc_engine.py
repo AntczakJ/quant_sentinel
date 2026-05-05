@@ -1470,6 +1470,9 @@ def get_smc_analysis(tf: str) -> dict | None:
             "macro_signals": macro.get("signals", {}),
             "macro_bullish_count": macro.get("bullish_count", 0),
             "macro_bearish_count": macro.get("bearish_count", 0),
+            # 2026-05-05: weighted macro scores (FRED real_yields 1.5, etc)
+            "macro_bullish_score": macro.get("bullish_score", 0.0),
+            "macro_bearish_score": macro.get("bearish_score", 0.0),
             "fvg_type": fvg["type"],
             "fvg_upper": fvg["upper"],
             "fvg_lower": fvg["lower"],

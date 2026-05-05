@@ -3725,6 +3725,10 @@ async def macro_context():
         "usdjpy": None, "usdjpy_zscore": None, "xau_usdjpy_corr": None,
         "macro_regime": None, "uup": None, "tlt": None, "vixy": None,
         "market_regime": None, "regime_diag": None,
+        # 2026-05-05: weighted macro pillar scores (FRED real_yields 1.5,
+        # USDJPY 1.0, etc — see smc_engine.get_macro_regime SIGNAL_WEIGHTS).
+        # Threshold ≥1.5 weighted units flips regime.
+        "macro_bullish_score": None, "macro_bearish_score": None,
     }
     try:
         from src.trading.smc_engine import get_smc_analysis
@@ -3738,6 +3742,8 @@ async def macro_context():
                 "uup": analysis.get("uup"),
                 "tlt": analysis.get("tlt"),
                 "vixy": analysis.get("vixy"),
+                "macro_bullish_score": analysis.get("macro_bullish_score"),
+                "macro_bearish_score": analysis.get("macro_bearish_score"),
             })
     except Exception as e:
         result["error"] = str(e)

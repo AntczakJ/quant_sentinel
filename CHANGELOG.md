@@ -4,6 +4,95 @@ All notable changes to Quant Sentinel. Format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### 2026-05-05 — 1yr backtest results + 3-fix cascade + 4-agent WR audit + frontend wow
+
+Highest-output session yet. ~17h, 86 commits. Tracks: trading-logic
+fixes from a 1yr backtest cohort, two parallel deep-audit waves
+(6-agent project + 4-agent WR), data-quality observability, end-to-end
+frontend "wow" makeover.
+
+#### Big 1yr backtest result (`reports/big_backtest_1yr.json`)
+PF 1.29 / +4.54% / MaxDD -2.23% on 178 trades. Memory persisted at
+`memory/big_backtest_1yr_2026-05-04.md`. Key cohort findings:
+- **London n=19 WR 21.1% -$127** — worst session
+- **A grade n=3 WR 0% -$36** — toxic factor stacking
+- **SHORT n=26 WR 34.6% -$68** in bull macro regime
+- **off_hours n=46 WR 47.8% +$443** — best session contributor
+- **overlap n=28 WR 53.6%** — best per-trade quality
+- **M30 n=6 WR 100% +$375** — sample too small but signal noted
+
+#### Trading-logic fixes (commits `fa98fb0` → `7d03862`)
+- **London hard-block** in scanner.py filter 6f. Env `BLOCK_LONDON_SESSION=0` opt-out.
+- **A grade demoted → B treatment**: risk_mult 1.0 → 0.5, target_rr 2.5 → 2.0.
+- **A+ target_rr 3.0 → 2.5** per `target_rr_finding_2026-05-04` evidence.
+- **STRICT_SHORT_IN_BULL score floor**: SHORT in `macro_regime='zielony'` requires score ≥ 50.
+- **finance.py max-floor REMOVED**: was silently undoing A demote in production.
+- **scanner.py exception fallback** B-grade defaults (was A 1.0/2.5).
+- **off_hours -5 penalty REMOVED** per evidence (best session, not worst).
+- **Asia ORB gate loosened**: HTF EMA200 dropped at call site, window 2h → 4h.
+
+#### 5 unweighted SMC factors → properly scored (commit `f6883a1`)
+Detected since prior weeks but never consumed by `score_setup_quality`:
+OTE +12/+18 sweet spot (Fibonacci 0.62-0.79), breaker_block +10,
+ifvg +10 with linear age-decay over 30 bars, near_poc +5, d1_aligned +6.
+
+#### Hour + session refinements (commit `d263a80`)
+`db.get_good_hours()` shipped (mirror of get_bad_hours, n≥10 + WR≥55%).
+good_hour bonus +5. IFVG age-decay linear 0→30 bars. session_overlap
++4 → +6 per 1yr WR 53.6% evidence.
+
+#### Self-learning hardening (commits `12a8b85` → `5bbe93b`)
+- `drift_detector.py` shipped — Page-Hinkley + PSI + WR delta. `/api/drift/status`.
+  First production run: 4/4 signals → DRIFTED (matches walk-forward Fold 4 -18.4pp).
+- Walk-forward gate in `optimize_parameters` (cdb885a).
+- N<20 self-learning blend toward neutral.
+- TIMEOUT/BREAKEVEN skipped from factor weight + voter attribution.
+- Confidence-weighted Bayesian update (α/β += clamp(conf, 0.4, 1.5)).
+- Atomic factor weight read+write (race fix).
+- Daily drift check task (6h cadence).
+- 340 dead lines deleted (`auto_analyze_and_learn`, `classify_loss`,
+  news_sentiment veto).
+- Walk-forward fail-CLOSED on subprocess error (was silently permissive).
+
+#### Macro pillars |corr|-weighted (commit `0ac0047`)
+`get_macro_regime` no longer equal-vote. Weighted by approximate
+|historical correlation| — FRED real_yields 1.5 (gold's #1 fundamental,
+corr -0.82), VIXY 0.8, seasonality 0.4. Threshold 1.5 weighted units
+flips regime. `bullish_score` + `bearish_score` exposed via
+`/api/macro/context` and Dashboard MacroMini.
+
+#### Observability + data quality (commit `e52e2a6`)
+- `vol_regime` + `spread_at_entry` columns now persisted in `log_trade`
+  (53/53 NULL → live values).
+- `ml_predictions.trade_id` linkage at insert time (11k+ rows had NULL).
+- BREAKEVEN classification in time-exit (|pnl| < $1).
+- DQN reward double-count removed.
+- v2_xgb features failure WARN-once (was silent debug-log for 11k rows).
+- Friday close window off-by-one fix.
+
+#### Frontend wow stack (9 commits, 19 new components)
+TiltCard, BlobField, ConfettiBurst, LiveDot, Marquee, GradientText,
+GradientBorderCard, FloatingOrbs, StaggerReveal, ScrollProgress,
+Spotlight, TextReveal, NumberCounterRoll, CursorFollower,
+RouteTransitionOverlay, GridBackground, HoverGlow, ParticleField,
+AnimatedDivider, MagicCard. + 12 new tailwind keyframes. Bundle
+764 → 534 kB (-30%) via React.lazy code-split. All honor
+`prefers-reduced-motion` + `(pointer: fine)`.
+
+#### Tests
+21 new regression tests (test_2026_05_05_trading_fixes + late_fixes).
+All 60+ existing tests still pass.
+
+#### Tools
+`scripts/run_walk_forward_post_audit.sh` — 4-fold walk-forward preset.
+`scripts/compare_backtests.py` — markdown diff between two result JSONs.
+
+#### State at session end
+- 3yr backtest running, ETA ~16h. Will validate today's fixes.
+- API restarted, 0 open trades, drift detector still drifted (4/4).
+- 7 stale memory files archived to `memory/archive/`. MEMORY.md
+  pruned 78 → 72 lines.
+
 ### 2026-05-03 — SHORT-XGB veto, per-direction Platt, walk-forward fix
 
 Continuation of forward-WR work. Janek away again. 6 commits:
