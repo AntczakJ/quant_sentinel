@@ -475,6 +475,9 @@ def _load_v2_xgb():
         return None
 
 
+_v2_features_warned = False
+
+
 def predict_v2_xgb_direction(df: pd.DataFrame) -> Optional[float]:
     """Predykcja v2 XGBoost: returns 0-1 LONG-bias score from R-multiple preds.
 
@@ -494,13 +497,27 @@ def predict_v2_xgb_direction(df: pd.DataFrame) -> Optional[float]:
 
         # Use features_v2 (62 features). Falls back gracefully if warehouse
         # files for cross-asset are missing (defaults to 0).
+        # 2026-05-05 audit: 11k+ ml_predictions had v2_xgb_pred=NULL because
+        # compute_features_v2 was raising silently. Elevate to WARNING so
+        # we see the actual failure pattern in logs (rate-limit via
+        # `_v2_features_warned` so we don't spam every cycle).
         try:
             from src.analysis.features_v2 import compute_features_v2
             features = compute_features_v2(df.copy())
         except Exception as e:
-            logger.debug(f"v2_xgb features error: {e}")
+            global _v2_features_warned
+            if not _v2_features_warned:
+                logger.warning(
+                    f"v2_xgb features compute failed (first occurrence): {e}. "
+                    f"v2_xgb voter will return None until resolved. "
+                    f"Subsequent failures suppressed at debug level."
+                )
+                _v2_features_warned = True
+            else:
+                logger.debug(f"v2_xgb features error: {e}")
             return None
         if features.empty:
+            logger.debug("v2_xgb features empty")
             return None
 
         feature_cols = cache["feature_cols"]
