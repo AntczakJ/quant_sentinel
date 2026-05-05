@@ -1010,6 +1010,25 @@ async def _background_scanner():
                     # Save to trades (OPEN status for auto-resolver)
                     structure_desc = f"[{tf_label}] {structure}"
                     factors = trade.get('factors')
+
+                    # 2026-05-05 audit fix: persist vol_regime + spread_at_entry
+                    # so volatility-regime asymmetry analytics have data to
+                    # work with. Both fields existed in schema but were never
+                    # written ⇒ 100% NULL across 53 closed live trades.
+                    _atr_ratio = trade.get('atr_ratio')
+                    if _atr_ratio is None:
+                        _atr_ratio = (analysis or {}).get('atr_ratio')
+                    if _atr_ratio is not None:
+                        if _atr_ratio > 1.2:
+                            _vol_regime = 'high'
+                        elif _atr_ratio < 0.8:
+                            _vol_regime = 'low'
+                        else:
+                            _vol_regime = 'mid'
+                    else:
+                        _vol_regime = None
+                    _spread = trade.get('spread_pct') or (analysis or {}).get('spread_pct')
+
                     db.log_trade(
                         direction=direction,
                         price=entry,
@@ -1021,18 +1040,43 @@ async def _background_scanner():
                         pattern=f"[{tf_label}] {logic}",
                         lot=lot,
                         factors=factors,
+                        vol_regime=_vol_regime,
+                        spread_at_entry=_spread,
                     )
                     # Backfill setup_grade + score (was always None before)
                     sq = trade.get('setup_quality')
-                    if sq and sq.get('grade'):
+                    latest_trade_id = None
+                    try:
+                        latest = db._query_one(
+                            "SELECT id FROM trades ORDER BY id DESC LIMIT 1"
+                        )
+                        if latest:
+                            latest_trade_id = latest[0]
+                    except Exception:
+                        pass
+                    if sq and sq.get('grade') and latest_trade_id:
                         try:
-                            latest = db._query_one(
-                                "SELECT id FROM trades ORDER BY id DESC LIMIT 1"
+                            db.update_trade_setup_grade(
+                                latest_trade_id, sq['grade'], sq.get('score', 0)
                             )
-                            if latest:
-                                db.update_trade_setup_grade(
-                                    latest[0], sq['grade'], sq.get('score', 0)
-                                )
+                        except Exception:
+                            pass
+
+                    # 2026-05-05 audit fix: link the most-recent ml_predictions
+                    # row to this trade. Previously trade_id stayed NULL across
+                    # 11k+ rows because predictions are inserted BEFORE the
+                    # trade is logged. Voter-attribution analytics relied on a
+                    # fragile timestamp join. Now: explicit linkage right after
+                    # log_trade — same scanner cycle, latest prediction is
+                    # this setup's.
+                    if latest_trade_id is not None:
+                        try:
+                            db._execute(
+                                "UPDATE ml_predictions SET trade_id = ? "
+                                "WHERE id = (SELECT id FROM ml_predictions "
+                                "WHERE trade_id IS NULL ORDER BY id DESC LIMIT 1)",
+                                (latest_trade_id,),
+                            )
                         except Exception:
                             pass
 
@@ -1451,7 +1495,19 @@ async def _auto_resolve_trades():
                                     pnl = round((current_price - entry_f) * OZ * lot_f, 2)
                                 else:
                                     pnl = round((entry_f - current_price) * OZ * lot_f, 2)
-                                status_label = "WIN" if pnl > 0 else "LOSS"
+                                # 2026-05-05 audit fix: BREAKEVEN classification
+                                # for trades that timed out near scratch. Old
+                                # code stamped a $0.50 winning trade as WIN
+                                # (skews WR up) and a -$0.50 trade as LOSS
+                                # (skews WR down). Both are inconclusive
+                                # max_horizon outcomes — should not feed the
+                                # learner. Threshold $1 ≈ 1 pip × 0.01 lot.
+                                if abs(pnl) < 1.0:
+                                    status_label = "BREAKEVEN"
+                                elif pnl > 0:
+                                    status_label = "WIN"
+                                else:
+                                    status_label = "LOSS"
                                 db._execute(
                                     "UPDATE trades SET status=?, profit=? WHERE id=?",
                                     (status_label, pnl, trade_id),

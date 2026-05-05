@@ -893,18 +893,31 @@ class NewsDB:
         history = self._query("SELECT timestamp, direction, status FROM trades ORDER BY id DESC LIMIT 5")
         return results, history
 
-    def log_trade(self, direction, price, sl, tp, rsi, trend, structure="Stable", pattern=None, factors=None, lot=None, profit=None):
+    def log_trade(self, direction, price, sl, tp, rsi, trend, structure="Stable",
+                  pattern=None, factors=None, lot=None, profit=None,
+                  vol_regime=None, spread_at_entry=None):
         # 2026-05-04 fix (TZ audit): get_session() refactored to PARSE UTC
         # input (line 577 — `Parse ISO timestamp as UTC`), but log_trade was
         # still passing `datetime.now()` (naive local CEST). Result: every
         # trade tagged with session ~1-2h offset (summer/winter) — CEST 15:00
         # was interpreted as UTC 15:00 → London BST 16:00 = post-killzone
         # when actual was within killzone. Now: pass UTC consistently.
+        # 2026-05-05 audit fix: vol_regime + spread_at_entry now persisted.
+        # Columns existed in schema but log_trade never wrote them ⇒ all
+        # 53 closed trades had vol_regime=NULL, blocking volatility-regime
+        # asymmetry analysis. Caller passes from analysis dict.
         now_utc = datetime.datetime.utcnow()
         ts = now_utc.strftime("%Y-%m-%d %H:%M:%S")
         session = self.get_session(ts)
         fj = json.dumps(factors) if factors else None
-        self._execute("INSERT INTO trades (timestamp, direction, entry, sl, tp, rsi, trend, structure, pattern, factors, session, lot, profit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (ts, direction, price, sl, tp, rsi, trend, structure, pattern, fj, session, lot, profit))
+        self._execute(
+            "INSERT INTO trades "
+            "(timestamp, direction, entry, sl, tp, rsi, trend, structure, "
+            "pattern, factors, session, lot, profit, vol_regime, spread_at_entry) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ts, direction, price, sl, tp, rsi, trend, structure,
+             pattern, fj, session, lot, profit, vol_regime, spread_at_entry),
+        )
 
     def get_open_trades(self):
         return self._query("SELECT id, direction, entry, sl, tp FROM trades WHERE status = 'OPEN'")
