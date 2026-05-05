@@ -1344,16 +1344,18 @@ def get_smc_analysis(tf: str) -> dict | None:
         orb_asia_low = None
         try:
             from src.trading.asia_orb import detect_orb_signal
-            # Compute 200-EMA for HTF filter (uses current TF's close)
-            ema200_val = None
-            try:
-                import pandas_ta as _ta
-                _ema200 = _ta.ema(df['close'], 200)
-                if _ema200 is not None and len(_ema200) > 0 and not pd.isna(_ema200.iloc[-1]):
-                    ema200_val = float(_ema200.iloc[-1])
-            except Exception:
-                pass
-            orb = detect_orb_signal(df, htf_ema200=ema200_val)
+            # 2026-05-05: ORB gate loosened.
+            # 1yr backtest cohort had n=0 ORB-tagged trades — gate too tight.
+            # Two changes:
+            #  1. HTF EMA200 filter dropped here. The +15 score bonus at
+            #     score_setup_quality already requires `orb_direction ==
+            #     direction`, so HTF alignment is implicitly checked via
+            #     the setup's primary trigger (grab_mss/bos/etc derive
+            #     direction from local price action vs HTF). Double-check
+            #     was over-blocking on HTF chop.
+            #  2. Extend post-London-open window 2h → 4h. Captures slower
+            #     breakouts that emerge late in the morning session.
+            orb = detect_orb_signal(df, htf_ema200=None, max_post_open_hours=4.0)
             orb_direction = orb.get('direction', 'NONE')
             orb_reason = orb.get('reason', '')
             orb_asia_high = orb.get('asia_high')
