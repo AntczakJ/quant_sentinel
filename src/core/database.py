@@ -377,6 +377,29 @@ class NewsDB:
             notes TEXT,
             FOREIGN KEY (trade_id) REFERENCES trades(id))""")
 
+        # 2026-05-05: schema bootstrap for LLM-produced records. Tables are
+        # written by scripts/llm_journal.py + scripts/trade_premortem.py at
+        # runtime; including the CREATE here so a fresh DB has them up
+        # front (audit caught the drift).
+        self._execute("""CREATE TABLE IF NOT EXISTS llm_trade_journal (
+            trade_id INTEGER PRIMARY KEY,
+            verdict TEXT,
+            root_cause TEXT,
+            lesson TEXT,
+            confidence REAL,
+            llm_model TEXT,
+            analysis_json TEXT,
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        self._execute("""CREATE TABLE IF NOT EXISTS llm_premortem (
+            trade_id INTEGER PRIMARY KEY,
+            prediction TEXT,
+            confidence REAL,
+            reasoning TEXT,
+            red_flags_json TEXT,
+            actual_outcome TEXT,
+            correct INTEGER,
+            generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
     def migrate(self):
         needed = {'pattern': 'TEXT', 'failure_reason': 'TEXT', 'condition_at_loss': 'TEXT',
                   'factors': 'TEXT', 'session': 'TEXT', 'lot': 'REAL', 'profit': 'REAL',

@@ -936,33 +936,12 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     except Exception as e:
         logger.debug(f"[MTF] {tf}: ML ensemble validation skipped: {e}")
 
-    # --- 6b. SENTIMENT FILTER (opcjonalny — nie blokuje jeśli brak danych) ---
-    try:
-        from src.core.database import NewsDB as _SentDB
-        _sent_db = _SentDB()
-        # Sprawdź ostatni sentyment z news_sentiment (jeśli istnieje)
-        _sent_row = _sent_db._query_one(
-            "SELECT sentiment, score FROM news_sentiment ORDER BY id DESC LIMIT 1"
-        )
-        if _sent_row and _sent_row[0] and _sent_row[1]:
-            news_sentiment = str(_sent_row[0]).lower()
-            sent_conf = float(_sent_row[1]) if _sent_row[1] else 0
-            # Jeśli sentyment jest silnie przeciwny do kierunku — blokuj
-            if sent_conf > 0.7:
-                if direction_str == "LONG" and "bearish" in news_sentiment:
-                    logger.info(
-                        f"📰 [MTF] {tf}: Sentyment BEARISH ({sent_conf:.0%}) "
-                        f"vs LONG — BLOKUJĘ trade"
-                    )
-                    return None
-                elif direction_str == "SHORT" and "bullish" in news_sentiment:
-                    logger.info(
-                        f"📰 [MTF] {tf}: Sentyment BULLISH ({sent_conf:.0%}) "
-                        f"vs SHORT — BLOKUJĘ trade"
-                    )
-                    return None
-    except Exception as e:
-        logger.debug(f"[MTF] Sentiment filter skipped: {e}")
+    # 2026-05-05: removed news_sentiment veto (was filter 6b).
+    # `news_sentiment` table is empty (CLAUDE.md "stale tables wiped" memo,
+    # 3 rows from 2026-04-16 deleted). Reader was effectively dead code,
+    # flagged by db_storage_apis_audit_2026-05-04.md and project audit.
+    # Will be replaced by LLM-based news classification in a future phase
+    # (currently scaffolded by scripts/news_llm_*.py).
 
     # --- 6c. SMT DIVERGENCE FILTER — dolar i złoto nie powinny iść razem ---
     smt_warning = analysis.get('smt', 'Brak')

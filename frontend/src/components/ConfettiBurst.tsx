@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useReducedMotion } from '@/lib/useReducedMotion'
 
@@ -21,9 +21,18 @@ const COLORS = ['#d4af37', '#22c55e', '#3b82f6', '#f4d676', '#a8861f']
 export function ConfettiBurst({ trigger, count = 24, origin = { x: '50%', y: '50%' } }: Props) {
   const reduced = useReducedMotion()
   const [parts, setParts] = useState<Particle[]>([])
+  // Defensive timer ref — guarantees a single live clear-timer regardless
+  // of how rapidly trigger increments. Prevents the audit-flagged race
+  // where a stale 1.6s timer from burst N could clear burst N+1 mid-flight.
+  const clearTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (trigger <= 0 || reduced) return
+    // Cancel any pending clear from a previous burst before scheduling a new one
+    if (clearTimerRef.current !== null) {
+      clearTimeout(clearTimerRef.current)
+      clearTimerRef.current = null
+    }
     const next: Particle[] = Array.from({ length: count }).map((_, i) => ({
       id: trigger * 1000 + i,
       x: (Math.random() - 0.5) * 360,
@@ -32,8 +41,16 @@ export function ConfettiBurst({ trigger, count = 24, origin = { x: '50%', y: '50
       hue: i % COLORS.length,
     }))
     setParts(next)
-    const t = setTimeout(() => setParts([]), 1600)
-    return () => clearTimeout(t)
+    clearTimerRef.current = window.setTimeout(() => {
+      setParts([])
+      clearTimerRef.current = null
+    }, 1600)
+    return () => {
+      if (clearTimerRef.current !== null) {
+        clearTimeout(clearTimerRef.current)
+        clearTimerRef.current = null
+      }
+    }
   }, [trigger, count, reduced])
 
   if (reduced) return null

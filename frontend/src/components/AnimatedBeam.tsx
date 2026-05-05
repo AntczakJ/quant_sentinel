@@ -96,20 +96,35 @@ export function AnimatedBeam({
       setPathD(`M ${fx},${fy} Q ${cx},${cy} ${tx},${ty}`)
     }
 
+    // 2026-05-05: rAF-throttle ResizeObserver callbacks. When TiltCard
+    // wraps voter cards on Models.tsx, hover triggers 3D transform which
+    // fires ResizeObserver per-frame on all 3 observed elements ⇒ ~60
+    // setPathD calls/sec ⇒ 60 React re-renders. Coalesce to 1 update
+    // per frame via rAF debounce.
+    let pendingRaf: number | null = null
+    const scheduleUpdate = () => {
+      if (pendingRaf !== null) return
+      pendingRaf = requestAnimationFrame(() => {
+        pendingRaf = null
+        updatePath()
+      })
+    }
+
     updatePath()
-    const ro = new ResizeObserver(updatePath)
+    const ro = new ResizeObserver(scheduleUpdate)
     if (containerRef.current) ro.observe(containerRef.current)
     if (fromRef.current) ro.observe(fromRef.current)
     if (toRef.current) ro.observe(toRef.current)
-    window.addEventListener('resize', updatePath)
+    window.addEventListener('resize', scheduleUpdate)
     // Re-measure on next frame to handle layout settle
-    const raf = requestAnimationFrame(updatePath)
+    const initRaf = requestAnimationFrame(updatePath)
     return () => {
       ro.disconnect()
-      window.removeEventListener('resize', updatePath)
-      cancelAnimationFrame(raf)
+      window.removeEventListener('resize', scheduleUpdate)
+      cancelAnimationFrame(initRaf)
+      if (pendingRaf !== null) cancelAnimationFrame(pendingRaf)
     }
-  }, [containerRef, fromRef, toRef, curvature, startXOffset, startYOffset, endXOffset, endYOffset])
+  }, [containerRef, fromRef, toRef, curvature, startXOffset, startYOffset, endXOffset, endYOffset, fromAnchor, toAnchor])
 
   if (!pathD) return null
 

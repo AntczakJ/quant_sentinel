@@ -376,72 +376,13 @@ def run_learning_cycle():
 
 
 
-def classify_loss(trade_id: int) -> str:
-    """
-    Klasyfikuje typ straty na podstawie condition_at_loss i parametrów trade'a.
-    Zwraca pattern_type: 'sl_too_tight', 'wrong_direction', 'timing', 'news_spike', 'unknown'.
-    Zapisuje do loss_patterns w bazie.
-    """
-    db = NewsDB()
-    row = db._query_one(
-        "SELECT direction, entry, sl, tp, condition_at_loss, factors, rsi, trend FROM trades WHERE id = ?",
-        (trade_id,)
-    )
-    if not row:
-        return "unknown"
-
-    direction, entry, sl, tp, condition, factors_json, rsi, trend = row
-    import json
-    factors = json.loads(factors_json) if factors_json else {}
-
-    entry_f = float(entry or 0)
-    sl_f = float(sl or 0)
-    tp_f = float(tp or 0)
-    sl_dist = abs(entry_f - sl_f) if entry_f and sl_f else 0
-    tp_dist = abs(entry_f - tp_f) if entry_f and tp_f else 0
-
-    pattern_type = "unknown"
-    description = ""
-
-    # --- KLASYFIKACJA ---
-
-    # 1. SL za ciasny — cena prawie dotarła do TP ale cofnęła się do SL
-    # Indykator: TP daleko, ale SL bliski (niski R:R efektywny)
-    if sl_dist > 0 and tp_dist > 0:
-        rr = tp_dist / sl_dist
-        if rr > 3.0 and sl_dist < 8.0:
-            pattern_type = "sl_too_tight"
-            description = f"SL={sl_dist:.1f}$ za ciasny przy TP={tp_dist:.1f}$ (R:R={rr:.1f})"
-
-    # 2. Wrong direction — trend i direction się nie zgadzają
-    if direction and trend:
-        dir_clean = str(direction).strip().upper()
-        if ("LONG" in dir_clean and trend == "bear") or ("SHORT" in dir_clean and trend == "bull"):
-            pattern_type = "wrong_direction"
-            description = f"Trade {dir_clean} przeciw trendowi {trend}"
-
-    # 3. Timing — wejście w złej sesji / godzinie
-    # Sprawdzamy condition_at_loss po RSI extreme
-    if condition and rsi:
-        rsi_val = float(rsi) if rsi else 50
-        if rsi_val > 75 and "LONG" in str(direction).upper():
-            pattern_type = "timing"
-            description = f"LONG przy RSI={rsi_val:.0f} (wykupiony)"
-        elif rsi_val < 25 and "SHORT" in str(direction).upper():
-            pattern_type = "timing"
-            description = f"SHORT przy RSI={rsi_val:.0f} (wyprzedany)"
-
-    # 4. Brak konfluencji — za mało czynników
-    if len(factors) <= 2:
-        pattern_type = "low_confluence"
-        description = f"Tylko {len(factors)} czynników: {list(factors.keys())}"
-
-    # Zapisz do bazy
-    dir_clean = str(direction).strip().upper() if direction else "UNKNOWN"
-    db.update_loss_pattern(pattern_type, dir_clean, description)
-    logger.info(f"📝 Loss classified: {pattern_type} — {description}")
-
-    return pattern_type
+# 2026-05-05 — `classify_loss(trade_id)` removed. Audit identified zero
+# call sites across `src/`, `api/`, `scripts/`, `tests/`. Function wrote
+# to `loss_patterns` but no production caller invoked it. Loss pattern
+# matching downstream (`check_loss_pattern_match` below) reads
+# `loss_patterns` populated by other paths. If we want to revive
+# rule-based loss tagging, do it as a post-resolver task per the
+# learning_system_audit_2026-05-04 champion-challenger roadmap.
 
 
 def check_loss_pattern_match(analysis_data: dict, direction: str) -> dict | None:
