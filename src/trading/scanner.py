@@ -359,6 +359,41 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     current_rsi = analysis['rsi']
     current_trend = analysis['trend']
 
+    # --- 0a. OOD GATE (env-gated, default OFF) ---
+    # 2026-05-05: per-prediction Dissimilarity Index check via Mahalanobis
+    # distance to training-set centroid. Refuses trade up-front when current
+    # feature vector is far OOD vs the training distribution.
+    # Pattern from Freqtrade FreqAI. Pairs with PSI offline drift detector
+    # (which is population-level) — DI catches one-off outliers.
+    # Env opt-in: QUANT_OOD_GATE=1. Detector pkl at models/ood_detector.pkl
+    # (run `python -m src.ml.ood_detector` to fit from training_features.csv).
+    if os.environ.get("QUANT_OOD_GATE") == "1":
+        try:
+            from src.ml.ood_detector import get_detector
+            _ood = get_detector()
+            if _ood is not None:
+                # Build feature vector aligned to detector.feature_names from
+                # the analysis dict. Missing features default to 0 (training-
+                # set imputation matches our compute_features fallback).
+                _x = [float(analysis.get(name, 0.0) or 0.0)
+                      for name in _ood.feature_names]
+                import numpy as _np
+                _ood_flag, _ood_d = _ood.is_ood(_np.asarray(_x, dtype=_np.float64))
+                if _ood_flag:
+                    logger.info(
+                        f"[MTF] {tf}: OOD gate — distance²={_ood_d:.1f} "
+                        f"> threshold {_ood.threshold:.1f}, refusing trade"
+                    )
+                    _log_rejection(db, tf, "OOD", current_price,
+                                   f"ood_distance²={_ood_d:.1f}>thr={_ood.threshold:.1f}",
+                                   "ood_gate",
+                                   confluence_count=0, rsi=current_rsi,
+                                   trend=current_trend, pattern=None,
+                                   atr=analysis.get('atr', 0))
+                    return None
+        except Exception as _ood_err:
+            logger.debug(f"OOD gate skipped: {_ood_err}")
+
     # --- 0a. PHASE V2 REGIME ROUTING (env-gated, default OFF) ---
     # 2026-05-04: when QUANT_REGIME_V2=1, the regime classifier (V1) is
     # consumed for: (a) block_entry on squeeze, (b) min_score override per
