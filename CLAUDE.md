@@ -180,7 +180,61 @@ The 2026-04-27 walk-forward 2-yr "regime-narrow strategy" finding
 the price-sanity hard-block. Re-running on the cleaned simulator is
 listed in `memory/next_session_2026-04-29_priorities.md`.
 
-## Recent state (as of 2026-04-26 — sweep + lot-sizing rebuild + frontend v3)
+## Recent state (as of 2026-05-05 — 3 trading fixes shipped, 3yr backtest running)
+
+### Today's fixes (commits fa98fb0, a3e404f, 4ee8cea, 2fb747a)
+Three evidence-driven trading-logic changes from the 1yr backtest
+(`memory/big_backtest_1yr_2026-05-04.md` — PF 1.29 / +4.54% / MaxDD
+-2.23%):
+
+1. **London hard-block** (scanner.py filter 6f). 1yr cohort: London
+   n=19 WR 21.1% -$127. Env opt-out: `BLOCK_LONDON_SESSION=0`.
+2. **A grade demote → B-treatment sizing**. 1yr cohort: A grade n=3
+   0% WR -$36. Score-tier label still "A" (preserved for observability),
+   but `risk_mult=0.5` and `target_rr=2.0` (= B). Source of truth is
+   `score_setup_quality.target_rr`; `finance.py` no longer max-floors.
+3. **STRICT_SHORT_IN_BULL score floor**. SHORT in `macro_regime ==
+   'zielony'` requires score ≥ 50 (~A scalp). Auto-disengages when
+   macro flips to czerwony/neutralny. Env opt-out: `STRICT_SHORT_IN_BULL=0`.
+
+### Audit fixes (commit 4ee8cea — 6-agent deep audit)
+- `finance.py` `max(tp_to_sl_ratio, X)` floor REMOVED — was silently
+  undoing A-demote in production. Source of truth is now smc_engine's
+  per-grade `target_rr`.
+- `scanner.py` exception fallback: A-grade defaults (1.0/2.5)
+  → B-grade (0.5/2.0). Old fallback re-introduced removed config.
+- SHORT-floor uses post-flip `direction` (not pre-flip `direction_str`).
+- 8 regression tests in `tests/test_2026_05_05_trading_fixes.py`.
+- 6 wow components got `useReducedMotion` short-circuit
+  (ParticleField, ConfettiBurst, RouteTransitionOverlay, TextReveal,
+  StaggerReveal, TiltCard) + TiltCard touch-device guard.
+- `App.tsx` lazy-loads Trades/Models/Chart/Settings — initial bundle
+  764 → 534 kB (-30%).
+
+### Cleanups (commit 2fb747a)
+- AnimatedBeam ResizeObserver rAF-throttled (60 re-renders/s → 1/frame).
+- `news_sentiment` veto deleted (dead, table empty).
+- `classify_loss(trade_id)` deleted (zero callers).
+- `CREATE TABLE IF NOT EXISTS` for `llm_trade_journal` + `llm_premortem`.
+- 6 test-pollution rows wiped from prod `dynamic_params`.
+- 7 stale memo files archived to `memory/archive/`.
+
+### Active env flags (.env)
+| Flag | Default | Purpose |
+|---|---|---|
+| `DISABLE_TRAILING` | 1 | Trailing stops OFF (Apr 2026 backtest evidence) |
+| `MAX_LOT_CAP` | 0.01 | Hard lot cap during sizing rebuild |
+| `BLOCK_LONDON_SESSION` | 1 | Hard-block London (1yr backtest evidence) |
+| `STRICT_SHORT_IN_BULL` | 1 | SHORT in bull regime needs score ≥ 50 |
+| `ONNX_FORCE_CPU` | 1 | Workaround for DirectML suspend issue |
+
+### 3yr backtest in flight
+Started 2026-05-05: `run_production_backtest.py --warehouse --start
+2023-05-01 --end 2026-04-27 --step-minutes 15 --reset --analytics`.
+ETA ~30h. Output: `reports/2026-05-05_post_audit_3yr.json`.
+Log: `logs/big_backtest_3yr.log`.
+
+## Pre-2026-05-05 state (as of 2026-04-26 — sweep + lot-sizing rebuild + frontend v3)
 
 ### Tonight's findings + commits (bbf8702, c217ad9, fcc412d)
 - **Asymmetry FLIPPED**: with B1-B5 active, LONG is now neutral and SHORT

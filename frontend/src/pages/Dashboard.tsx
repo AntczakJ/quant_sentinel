@@ -494,12 +494,24 @@ function ScannerPanel({ insight, expanded = false }: { insight: ScanI | undefine
           <div className="text-caption text-ink-600">Quiet window.</div>
         ) : (
           <div className="flex flex-col gap-2">
-            {rejections.map((r, i) => (
-              <div key={i} className="flex items-center justify-between text-caption">
-                <span className="truncate text-ink-700">{r.filter}</span>
-                <span className="num text-ink-600 shrink-0 ml-3">{r.count}</span>
-              </div>
-            ))}
+            {rejections.map((r, i) => {
+              // 2026-05-05: highlight today's evidence-driven filters in
+              // gold so operator can see the new defenses firing live.
+              const isNew2026May = (
+                r.filter === 'london_hard_block' ||
+                r.filter === 'short_strict_floor'
+              )
+              return (
+                <div key={i} className="flex items-center justify-between text-caption">
+                  <span className={`truncate ${isNew2026May ? 'text-gold-400 font-medium' : 'text-ink-700'}`}>
+                    {isNew2026May ? '✦ ' : ''}{r.filter}
+                  </span>
+                  <span className={`num shrink-0 ml-3 ${isNew2026May ? 'text-gold-400' : 'text-ink-600'}`}>
+                    {r.count}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
