@@ -97,6 +97,40 @@ recent. Hourly WAL checkpoint prevents WAL bloat between backups.
 If you need MORE granular RPO than 24h, configure backup task cadence
 in `api/main.py:_daily_db_backup` (currently `await asyncio.sleep(86400)`).
 
+### Off-host backup (added 2026-05-05)
+
+`scripts/offhost_backup_sync.sh` rclone-syncs `data/backups/`,
+`data/sentinel.db`, `reports/`, `memory/`, `models/` to a configured
+remote (S3 / Backblaze B2 / Wasabi recommended).
+
+**RTO target:** 2h (download + integrity check + restart).
+**RPO target:** 1h (combine with hourly cron of `_daily_db_backup` task).
+
+**Setup once:**
+```
+rclone config             # add remote, name it "qs_backup"
+bash scripts/offhost_backup_sync.sh   # initial push
+```
+
+**Schedule on Windows (Task Scheduler):**
+- Trigger: Daily 03:00 local
+- Action: Start a program → `C:\Program Files\Git\bin\bash.exe`
+  with arguments: `-c "cd C:\quant_sentinel && bash scripts/offhost_backup_sync.sh"`
+
+**Schedule on Linux/macOS:** add to `crontab -e`:
+```
+0 3 * * * cd /path/to/quant_sentinel && bash scripts/offhost_backup_sync.sh >> logs/offhost_backup.log 2>&1
+```
+
+**Monthly restore drill** (validates backup integrity):
+```bash
+mkdir /tmp/restore_drill
+rclone copy qs_backup:quant_sentinel/data/sentinel.db.latest /tmp/restore_drill/
+sqlite3 /tmp/restore_drill/sentinel.db "PRAGMA integrity_check"
+sqlite3 /tmp/restore_drill/sentinel.db "SELECT COUNT(*) FROM trades"
+```
+Document drill in `logs/dr_drill_YYYY-MM.log`.
+
 ## P1 — Model files corrupted / mass-deleted
 
 ```bash
