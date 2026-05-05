@@ -1059,6 +1059,28 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                                "hourly_stats", confluence_count=confluence_count,
                                rsi=current_rsi, trend=current_trend, pattern=pattern, atr=current_atr)
                 return None
+
+        # 2026-05-05: positive bonus for historically GOOD hours.
+        # Mirror of the bad-hour block, asymmetry caught by WR audit
+        # Agent 1. min_trades=10 (vs bad_hours' 5) and min_winrate 0.55
+        # to require stronger evidence before rewarding.
+        # Bonus is logged to analysis dict so score_setup_quality can
+        # consume it without needing its own DB call.
+        try:
+            good_hours = db.get_good_hours(min_trades=10, min_winrate=0.55)
+            good_hour_match = False
+            for gh in good_hours:
+                gh_hour, gh_dir, gh_wr, gh_count = gh
+                if gh_hour == current_hour and gh_dir == direction_str:
+                    good_hour_match = True
+                    logger.info(
+                        f"⏰ [MTF] {tf}: Godzina {current_hour}:00 GOOD WR={gh_wr:.0%} "
+                        f"dla {direction_str} (n={gh_count}) — +5 bonus"
+                    )
+                    break
+            analysis['good_hour_match'] = good_hour_match
+        except Exception:
+            analysis['good_hour_match'] = False
     except Exception as e:
         logger.debug(f"Hourly stats check skipped: {e}")
 

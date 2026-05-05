@@ -1124,6 +1124,22 @@ class NewsDB:
             "SELECT hour, direction, win_rate, count FROM hourly_stats WHERE count >= ? AND win_rate < ? ORDER BY win_rate ASC",
             (min_trades, max_winrate))
 
+    def get_good_hours(self, min_trades: int = 10, min_winrate: float = 0.55) -> list:
+        """Zwraca godziny z win_rate >= min_winrate (historycznie wygrywające).
+
+        2026-05-05: shipped per WR audit Agent 1 finding — `get_bad_hours`
+        existed but `get_good_hours` did not, leaving hour-of-day filter
+        asymmetric (only bad-hour blocks, no good-hour bonus). Higher
+        min_trades default (10) than bad_hours (5) to avoid false
+        positives — overfitting to a small lucky cohort would hurt more
+        than slow-rolling out a real bonus.
+        """
+        return self._query(
+            "SELECT hour, direction, win_rate, count FROM hourly_stats "
+            "WHERE count >= ? AND win_rate >= ? ORDER BY win_rate DESC",
+            (min_trades, min_winrate),
+        )
+
     # ── TRAILING STOP LOG ──
 
     def log_trailing_stop_event(self, trade_id: int, event: str, old_sl: float, new_sl: float, price: float, r_multiple: float):

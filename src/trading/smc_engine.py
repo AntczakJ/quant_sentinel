@@ -1874,8 +1874,15 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     ifvg_type = analysis.get('ifvg_type')
     if (direction == "LONG" and ifvg_type == 'ifvg_long') or \
        (direction == "SHORT" and ifvg_type == 'ifvg_short'):
-        score += 10
-        factors_detail['ifvg'] = 10
+        # 2026-05-05: age-decay weighting. Fresh IFVG retests have higher
+        # reversal probability per ICT research; old retests = stale and
+        # can flip to continuation. Linear decay over 30 bars: bars=0 ⇒
+        # +10, bars=15 ⇒ +5, bars=30+ ⇒ 0.
+        bars_since = analysis.get('ifvg_bars_since_break') or 0
+        ifvg_pts = max(0, round(10 * (1.0 - bars_since / 30.0), 1))
+        if ifvg_pts > 0:
+            score += ifvg_pts
+            factors_detail['ifvg'] = ifvg_pts
 
     # --- POC PROXIMITY (2026-05-05, +5 pkt) ---
     # Volume-Profile Point of Control acts as institutional anchor.
@@ -1892,6 +1899,15 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
     if analysis.get('d1_aligned'):
         score += 6
         factors_detail['d1_aligned'] = 6
+
+    # --- GOOD HOUR BONUS (2026-05-05, +5 pkt) ---
+    # Hour-of-day positive bonus, mirror of bad_hours block. scanner.py
+    # sets analysis['good_hour_match'] when the current hour×direction
+    # combo has historical n>=10 with WR>=55%. Conservative threshold
+    # to avoid overfitting to a small lucky cohort.
+    if analysis.get('good_hour_match'):
+        score += 5
+        factors_detail['good_hour'] = 5
 
     # RSI w optymalnej strefie (max 5 pkt)
     rsi = analysis.get('rsi', 50)
@@ -1991,9 +2007,13 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
             score += _kz_pts
             factors_detail['killzone_short'] = _kz_pts
     elif session_name == 'overlap':
-        # London+NY overlap — good liquidity even outside killzone
-        score += 4
-        factors_detail['session_overlap'] = 4
+        # London+NY overlap — good liquidity even outside killzone.
+        # 2026-05-05: bumped 4 → 6 per 1yr backtest evidence. Overlap
+        # cohort: n=28, WR 53.6% — highest WR of any session bucket.
+        # +4 was conservative; +6 still less than killzone_short max
+        # but reflects measured per-trade quality.
+        score += 6
+        factors_detail['session_overlap'] = 6
     elif session_name == 'asian':
         # Asian session — low vol, higher failure rate for breakouts
         # 2026-04-25: direction-aware. LONG in asian = 0/3 wins (-$282)
