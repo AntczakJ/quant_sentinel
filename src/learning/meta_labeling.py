@@ -199,7 +199,7 @@ def cli_fit():
         return 1
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute(
-        "SELECT factors, status, setup_score, rsi, atr "
+        "SELECT factors, status, setup_score, rsi, model_agreement "
         "FROM trades WHERE status IN ('WIN','LOSS','PROFIT') "
         "AND factors IS NOT NULL"
     ).fetchall()
@@ -215,7 +215,7 @@ def cli_fit():
             feat_keys.update(json.loads(r[0]).keys())
         except Exception:
             continue
-    feat_keys.update({"setup_score", "rsi", "atr"})
+    feat_keys.update({"setup_score", "rsi", "model_agreement"})
     feature_names = sorted(feat_keys)
 
     X = []
@@ -227,10 +227,10 @@ def cli_fit():
             facts = {}
         row = []
         for fn in feature_names:
-            if fn == "setup_score": row.append(float(r[2] or 0))
-            elif fn == "rsi":       row.append(float(r[3] or 50))
-            elif fn == "atr":       row.append(float(r[4] or 0))
-            else:                   row.append(float(facts.get(fn, 0)))
+            if fn == "setup_score":     row.append(float(r[2] or 0))
+            elif fn == "rsi":            row.append(float(r[3] or 50))
+            elif fn == "model_agreement": row.append(float(r[4] or 0))
+            else:                        row.append(float(facts.get(fn, 0)))
         X.append(row)
         y.append(1 if r[1] in ("WIN", "PROFIT") else 0)
     X = np.array(X, dtype=np.float64)
