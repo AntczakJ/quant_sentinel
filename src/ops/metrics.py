@@ -113,6 +113,15 @@ daily_loss_pct = _Gauge()
 open_positions_count = _Gauge()
 model_agreement_ratio = _Gauge()
 
+# 2026-05-05: risk-adjusted return + drawdown gauges per WR research adoption.
+# Industry standards (Grant *Trading Risk*, Turtle rules): pause scanner when
+# DD-from-peak > 6% (warn at 10%, halt at 20%). Calmar = CAGR/MaxDD; Sortino
+# = mean/downside-stdev; both rolling 30-day on closed trades.
+current_dd_pct = _Gauge()        # |% from rolling-30d peak equity| (positive)
+peak_equity_30d = _Gauge()       # peak equity in last 30 days
+calmar_ratio_30d = _Gauge()      # 30-day annualized return / max DD
+sortino_ratio_30d = _Gauge()     # 30-day mean P&L / downside-stdev (annualized)
+
 
 def get_all_metrics() -> Dict:
     """Return all metrics as a dict for the /api/metrics endpoint."""
@@ -226,6 +235,11 @@ def to_prometheus_text() -> str:
     _gauge("quant_open_positions", open_positions_count.value, "Currently open positions")
     _gauge("quant_model_agreement_ratio", model_agreement_ratio.value, "Ensemble agreement ratio 0-1")
     _gauge("quant_scan_last_ts", scan_last_ts.value, "Unix timestamp of last scan")
+    # 2026-05-05 risk-adjusted gauges
+    _gauge("quant_current_drawdown_pct", current_dd_pct.value, "Current drawdown from 30d peak (positive %)")
+    _gauge("quant_peak_equity_30d", peak_equity_30d.value, "Rolling 30d peak equity USD")
+    _gauge("quant_calmar_ratio_30d", calmar_ratio_30d.value, "Calmar ratio 30d (annualized return / max DD)")
+    _gauge("quant_sortino_ratio_30d", sortino_ratio_30d.value, "Sortino ratio 30d (downside-adjusted)")
 
     # Histograms
     _histogram("quant_scan_duration_seconds", scan_duration, "Scan cycle duration")

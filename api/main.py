@@ -867,6 +867,49 @@ async def _background_scanner():
         except Exception as _stk:
             logger.debug(f"Streak check failed: {_stk}")
 
+        # --- 2026-05-05: DD-based pause + risk-adjusted metrics ---
+        # Replace count-based streak with %-DD-based per Grant Trading Risk
+        # + Turtle rules. DD>6% from rolling-30d peak ⇒ soft pause. DD>20%
+        # ⇒ hard halt. Always-on; complements the streak check above.
+        try:
+            from src.risk.drawdown import (
+                compute_drawdown_state, dd_action,
+                DD_SOFT_PAUSE_PCT, DD_HARD_HALT_PCT,
+            )
+            from src.ops import metrics as _m
+            _dd_state = compute_drawdown_state(days=30)
+            # Update Prometheus gauges every cycle (cheap — few SQL rows)
+            _m.current_dd_pct.set(_dd_state["dd_pct"])
+            _m.peak_equity_30d.set(_dd_state["peak"])
+            if _dd_state["calmar"] is not None:
+                _m.calmar_ratio_30d.set(_dd_state["calmar"])
+            if _dd_state["sortino"] is not None:
+                _m.sortino_ratio_30d.set(_dd_state["sortino"])
+
+            _action = dd_action(_dd_state["dd_pct"])
+            if _action in ("soft_pause", "halt") and not _os.path.exists(_PAUSE_FLAG):
+                _reason = (
+                    f"auto-pause DD={_dd_state['dd_pct']:.1f}% (peak={_dd_state['peak']:.0f}, "
+                    f"now={_dd_state['current_equity']:.0f}, n={_dd_state['n_trades']}) "
+                    f"action={_action}"
+                )
+                with open(_PAUSE_FLAG, 'w') as _pf:
+                    _pf.write(_reason + "\n")
+                logger.error(f"🛑 [BG Scanner] {_reason} — SCANNER_PAUSED flag created")
+                try:
+                    from src.trading.scanner import send_telegram_alert as _tg
+                    _tg(
+                        f"🛑 Scanner DD-pause: {_reason}. "
+                        f"Soft pause threshold {DD_SOFT_PAUSE_PCT}%, hard halt {DD_HARD_HALT_PCT}%. "
+                        f"Unpause by deleting data/SCANNER_PAUSED after reviewing risk."
+                    )
+                except Exception as _tge:
+                    logger.debug(f"Telegram alert on DD-pause failed: {_tge}")
+                await asyncio.sleep(_SCAN_INTERVAL_SEC)
+                continue
+        except Exception as _dd_err:
+            logger.debug(f"DD check failed: {_dd_err}")
+
         # ── Sentry cron heartbeat ─────────────────────────────────
         # Soft-noop without DSN. Sentry expects an in-progress check-in
         # at cycle start and a follow-up OK/ERROR with the same id at
