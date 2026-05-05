@@ -2118,9 +2118,14 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         a_plus_cut, a_cut, b_cut = 75, 55, 40
 
     if score >= a_plus_cut:
+        # 2026-05-05 (audit follow-up): target_rr 3.0 → 2.5 per
+        # target_rr_finding_2026-05-04 evidence (LOSS planned R:R 2.87 vs
+        # WIN realized R:R 2.17 — wide RR is the trap, not a feature). A+
+        # score-tier and 1.5× risk multiplier kept; just tighten where TP
+        # sits so winners don't bleed back to BE chasing 3R.
         grade = "A+"
         risk_mult = 1.5
-        target_rr = 3.0
+        target_rr = 2.5
     elif score >= a_cut:
         # 2026-05-05: A grade DEMOTED → B treatment (1yr backtest evidence).
         # 1yr cohort: A n=3, WR 0%, total -$36. Toxic factor stacking hits

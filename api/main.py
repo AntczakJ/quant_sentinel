@@ -1382,8 +1382,19 @@ async def _auto_resolve_trades():
                     try:
                         from datetime import datetime as _dt_wk, timezone as _tz_wk
                         _now_wk = _dt_wk.now(_tz_wk.utc)
-                        # Friday = weekday 4. Close window: Friday 19:30-20:00 UTC
-                        if _now_wk.weekday() == 4 and _now_wk.hour >= 19 and _now_wk.minute >= 30:
+                        # Friday = weekday 4. Close window: Friday 19:30 UTC onwards.
+                        # Audit 2026-05-05: original `hour >= 19 and minute >= 30`
+                        # was an off-by-one — only matched 19:30-19:59 + 20:30-20:59
+                        # + 21:30-21:59 (any hour ≥19, but only minute ≥30 of THAT
+                        # hour). Missed 20:00-20:29, 21:00-21:29 entirely. Fixed:
+                        # 19:30-19:59 OR any time at hour ≥ 20.
+                        _wk_close = (
+                            _now_wk.weekday() == 4 and (
+                                (_now_wk.hour == 19 and _now_wk.minute >= 30)
+                                or _now_wk.hour >= 20
+                            )
+                        )
+                        if _wk_close:
                             OZ_WK = 100.0
                             lot_wk = float(lot or 0.01)
                             if direction and "LONG" in str(direction).upper():

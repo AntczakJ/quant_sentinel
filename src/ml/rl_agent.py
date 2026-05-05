@@ -370,9 +370,17 @@ class TradingEnv:
         if self.index >= self._n - 1:
             self.done = True
             if self.position != 0:
+                # 2026-05-05 audit fix: previously this returned reward
+                # added BOTH `_close_position(...)` AND `final_return * 3`,
+                # double-counting the same final P&L on episode end. The
+                # `_close_position` already encodes the full per-trade
+                # asymmetric reward (10× win / 15× loss). Adding final
+                # equity again biased policy toward "hold-to-end" and
+                # contaminated the asymmetric penalty signal.
+                # Remove `final_return * 3` — keep only _close_position.
                 reward += self._close_position(self._prices[self.index])
-            final_return = (self.balance - self.initial_balance) / self.initial_balance
-            reward += final_return * 3
+            # No final_return double-count. Episode reward = sum of
+            # per-step rewards (incl. terminal _close_position).
 
         return self._state(), reward, self.done, self._info()
 

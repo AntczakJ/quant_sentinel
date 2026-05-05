@@ -89,23 +89,21 @@ def test_a_grade_returns_b_sizing():
         pytest.skip(f"Setup scored as {res['grade']}, not A — boundary test")
 
 
-def test_a_plus_untouched():
-    """A+ grade (score >= a_plus_cut) keeps risk_mult=1.5, target_rr=3.0."""
-    from src.trading.smc_engine import score_setup_quality
-    # We can't reliably build a 75+ score without heavy fixtures. Instead
-    # source-check that A+ branch still has the legacy values.
+def test_a_plus_sizing():
+    """A+ grade keeps full 1.5× risk multiplier (premium sizing) but
+    target_rr is tightened to 2.5 per target_rr_finding_2026-05-04
+    evidence (LOSS planned RR 2.87 vs WIN realized 2.17 — wide RR
+    correlates with more LOSSES, not bigger WINS)."""
     from pathlib import Path
     src = Path(__file__).resolve().parents[1] / "src" / "trading" / "smc_engine.py"
     text = src.read_text(encoding="utf-8")
-    # Look for the A+ block pattern
     assert 'grade = "A+"' in text
-    # Confirm that within ~5 lines of that assignment we still see the
-    # legacy 1.5 / 3.0 values (rather than 0.5 / 2.0 which would mean A+
-    # got accidentally demoted too)
     idx = text.index('grade = "A+"')
-    snippet = text[idx:idx + 200]
-    assert "risk_mult = 1.5" in snippet, "A+ risk_mult was demoted (should be 1.5)"
-    assert "target_rr = 3.0" in snippet, "A+ target_rr was demoted (should be 3.0)"
+    snippet = text[idx:idx + 400]
+    assert "risk_mult = 1.5" in snippet, "A+ risk_mult should still be 1.5 (premium sizing)"
+    assert "target_rr = 2.5" in snippet, "A+ target_rr should be 2.5 (tightened from 3.0)"
+    # Confirm the old 3.0 is gone (would silently re-introduce wide-RR trap)
+    assert "target_rr = 3.0" not in snippet, "A+ target_rr=3.0 re-introduced — wide-RR trap"
 
 
 def test_finance_does_not_override_target_rr():
