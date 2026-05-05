@@ -1344,6 +1344,58 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
         logger.warning(f"Setup quality scoring failed, using B-grade fallback: {e}")
         setup_quality = {'grade': 'B', 'score': 40, 'risk_mult': 0.5, 'target_rr': 2.0, 'factors_detail': {}}
 
+    # --- 7c. META-LABEL GATE (env-gated, default OFF) ---
+    # Lopez de Prado §3 meta-labeling. SMC primary already picked side;
+    # secondary classifier outputs calibrated P(profitable) for THIS
+    # specific feature vector. If P < min_threshold (default 0.55),
+    # refuse the trade — there's no expected edge.
+    # First-step: veto-only (no lot sizing override yet — too risky
+    # without forward observation). Future: replace `lot` with
+    # kelly_fraction(p_meta) × base_lot.
+    # Env opt-in: QUANT_META_LABEL_GATE=1. Labeler pkl at
+    # models/meta_labeler.pkl (run `python -m src.learning.meta_labeling`).
+    if os.environ.get("QUANT_META_LABEL_GATE") == "1":
+        try:
+            from src.learning.meta_labeling import MetaLabeler
+            _ml = MetaLabeler.load()
+            if _ml is not None:
+                # Build feature vector matching trained feature_names.
+                # Same construction as cli_fit: factors + setup_score + rsi
+                # + model_agreement (defaults to 0 if absent).
+                _ml_factors = extract_factors(analysis, direction) or {}
+                import numpy as _np
+                _x = []
+                for fn in _ml.feature_names:
+                    if fn == "setup_score":
+                        _x.append(float(setup_quality.get('score', 0)))
+                    elif fn == "rsi":
+                        _x.append(float(current_rsi or 50))
+                    elif fn == "model_agreement":
+                        _x.append(0.0)  # not in analysis dict at scanner stage
+                    else:
+                        _x.append(float(_ml_factors.get(fn, 0)))
+                _ml_x = _np.asarray(_x, dtype=_np.float64)
+                _ml_out = _ml.size_trade(_ml_x, payoff_ratio=setup_quality.get('target_rr', 2.0))
+                if _ml_out["skip"]:
+                    logger.info(
+                        f"[MTF] {tf}: meta-label gate — P(profitable)="
+                        f"{_ml_out['prob']:.2f} < {_ml.min_prob_threshold:.2f} "
+                        f"threshold, refusing trade"
+                    )
+                    _log_rejection(db, tf, direction, current_price,
+                                   f"meta_p={_ml_out['prob']:.2f}<thr={_ml.min_prob_threshold:.2f}",
+                                   "meta_label_gate",
+                                   confluence_count=confluence_count, rsi=current_rsi,
+                                   trend=current_trend, pattern=pattern, atr=current_atr)
+                    return None
+                else:
+                    logger.info(
+                        f"[MTF] {tf}: meta-label P(profitable)={_ml_out['prob']:.2f} "
+                        f"(kelly_f={_ml_out['kelly_f']:.2f}, suggested_lot={_ml_out['lot']:.4f})"
+                    )
+        except Exception as _ml_err:
+            logger.debug(f"Meta-label gate skipped: {_ml_err}")
+
     # --- 8. SETUP WAŻNY — zwróć parametry trade'a ---
     grade_icon = {"A+": "⭐", "A": "✅", "B": "⚠️"}.get(setup_quality['grade'], "❓")
     logger.info(
