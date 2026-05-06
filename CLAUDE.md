@@ -228,11 +228,21 @@ Three evidence-driven trading-logic changes from the 1yr backtest
 | `STRICT_SHORT_IN_BULL` | 1 | SHORT in bull regime needs score ≥ 50 |
 | `ONNX_FORCE_CPU` | 1 | Workaround for DirectML suspend issue |
 
-### 3yr backtest in flight
-Started 2026-05-05: `run_production_backtest.py --warehouse --start
-2023-05-01 --end 2026-04-27 --step-minutes 15 --reset --analytics`.
-ETA ~30h. Output: `reports/2026-05-05_post_audit_3yr.json`.
-Log: `logs/big_backtest_3yr.log`.
+### 3yr backtest finished 2026-05-06 ~07:15 CEST — VALIDATES first wave
+Result: PF 1.30 / **+5.07% return** / MaxDD -2.11% / 203 trades / WR 45.2%.
+EVERY metric improved over 1yr baseline (PF 1.29 / +4.54% / -2.23% / 178).
+Per `memory/big_backtest_3yr_2026-05-06.md`:
+- LONG +$699 (n=173 WR 46%) / SHORT -$135 (n=4 WR 0% — STRICT_SHORT working)
+- B grade +$602 (47% WR) / A grade -$51 (39% WR — demote partial)
+- Asian session BIGGEST contributor +$364 / Overlap WR 60% / London -$80
+- M30 100% WR n=7 +$267 / M5 +$342 / M15 -$45
+
+Caveat: only FIRST-wave fixes were active (London block, A demote, SHORT
+floor, finance override, 5 SMC factors, A+ RR 2.5, BREAKEVEN, good_hour,
+IFVG decay, ORB loose). Post-restart wave (OOD, meta-label, portfolio
+cap, DD kill switch) only validates in forward live observation.
+
+Walk-forward 4-fold triggered — see `logs/wf_2026-05-06.log`.
 
 ## Pre-2026-05-05 state (as of 2026-04-26 — sweep + lot-sizing rebuild + frontend v3)
 
