@@ -1171,25 +1171,31 @@ def main():
         _reset_backtest_db()
 
     if args.walk_forward and args.walk_forward > 1:
-        # Split the --days window into N non-overlapping chunks and run each
+        # Split the --days window into N non-overlapping chunks and run each.
+        # 2026-05-06: anchor on --end if provided (else today()) so warehouse
+        # boundary is respected. Old behavior used today() unconditionally,
+        # which would push window 3 past available warehouse data.
         import datetime as _dt
         total_days = args.days
         chunk = max(total_days // args.walk_forward, 1)
-        print(f"[walk-forward] {args.walk_forward} windows x {chunk} days each\n")
+        if args.end:
+            anchor = _dt.date.fromisoformat(args.end)
+        else:
+            anchor = _dt.date.today()
+        print(f"[walk-forward] {args.walk_forward} windows x {chunk} days each, anchor={anchor}\n")
         window_results = []
         for w in range(args.walk_forward):
             _reset_backtest_db()
-            # Fresh args with shifted dates
+            # Fresh args with shifted dates (relative to anchor)
             end_offset_days = total_days - w * chunk
             start_offset_days = end_offset_days - chunk
-            # Use --start/--end via computed dates
-            end_date = _dt.date.today() - _dt.timedelta(days=start_offset_days)
-            start_date = _dt.date.today() - _dt.timedelta(days=end_offset_days)
+            end_date = anchor - _dt.timedelta(days=start_offset_days)
+            start_date = anchor - _dt.timedelta(days=end_offset_days)
             args.start = start_date.isoformat()
             args.end = end_date.isoformat()
             print(f"\n[window {w+1}/{args.walk_forward}] {args.start} -> {args.end}")
             s = asyncio.run(_run_backtest(args))
-            window_results.append({"window": f"{args.start}→{args.end}", **s})
+            window_results.append({"window": f"{args.start} to {args.end}", **s})
         # Aggregate
         print("\n" + "=" * 70)
         print("WALK-FORWARD AGGREGATE")

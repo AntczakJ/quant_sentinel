@@ -34,9 +34,12 @@ cp data/backtest.db "data/backups/backtest_3yr_pre_wf_${ts}.db"
 echo "[wf] Backed up backtest.db → data/backups/backtest_3yr_pre_wf_${ts}.db"
 
 # Run 4-fold walk-forward across same period
-.venv/Scripts/python.exe run_production_backtest.py \
+# 2026-05-06: use --days 1090 (3yr) — `--walk-forward N` overrides
+# --start/--end with today()-offset windows. -X utf8 forces UTF-8
+# stdout so Unicode arrows in aggregate print don't crash on cp1252.
+.venv/Scripts/python.exe -X utf8 run_production_backtest.py \
     --warehouse \
-    --start 2023-05-01 \
+    --days 1080 \
     --end 2026-04-27 \
     --step-minutes 15 \
     --reset \
