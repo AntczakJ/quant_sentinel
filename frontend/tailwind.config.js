@@ -170,6 +170,14 @@ export default {
           '0%, 100%': { filter: 'drop-shadow(0 0 8px rgba(212,175,55,0.20))' },
           '50%':      { filter: 'drop-shadow(0 0 24px rgba(212,175,55,0.55))' },
         },
+        shineSlide: {
+          '0%':   { backgroundPosition: '-100% 0%, 0% 0%' },
+          '100%': { backgroundPosition: '200% 0%, 0% 0%' },
+        },
+        floatY: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%':      { transform: 'translateY(-6px)' },
+        },
       },
     },
   },

@@ -22,6 +22,9 @@ import { ConfettiBurst } from '@/components/ConfettiBurst'
 import { GridBackground } from '@/components/GridBackground'
 import { ParticleField } from '@/components/ParticleField'
 import { AnimatedDivider } from '@/components/AnimatedDivider'
+import { HeroDepth } from '@/components/HeroDepth'
+import { ShinyText } from '@/components/ShinyText'
+import { ParallaxItem } from '@/components/ParallaxItem'
 import { useEffect, useRef, useState } from 'react'
 import { isSoundEnabled, playWin, playLoss } from '@/lib/sound'
 
@@ -83,7 +86,9 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col gap-10">
       <RiskHaltBanner />
-      <Hero ticker={ticker} portfolio={portfolio} macro={macro} winBurst={winBurst} />
+      <HeroDepth>
+        <Hero ticker={ticker} portfolio={portfolio} macro={macro} winBurst={winBurst} />
+      </HeroDepth>
 
       {/* ─── Live ticker marquee — XAU + recent trades ─────────────── */}
       <TickerMarquee ticker={ticker} trades={trades.slice(0, 8)} />
@@ -286,7 +291,7 @@ function Hero({
         <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
           <div>
             <div className="text-micro uppercase tracking-wider text-ink-600 mb-3">
-              <GradientText>Spot · gold per ounce</GradientText>
+              <ShinyText variant="gold" duration={5}>Spot · gold per ounce</ShinyText>
             </div>
             <div
               className="num font-display text-display-lg text-ink-900 leading-none"

@@ -9,6 +9,7 @@ import { ScrambleText } from './ScrambleText'
 import { HealthDeepPopover } from './HealthDeepPopover'
 import { ScrollProgress } from './ScrollProgress'
 import { CursorFollower } from './CursorFollower'
+import { CursorAura } from './CursorAura'
 import { RouteTransitionOverlay } from './RouteTransitionOverlay'
 import { LiveDot } from './LiveDot'
 import { isSoundEnabled, setSoundEnabled, playClick } from '@/lib/sound'
@@ -43,6 +44,9 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="min-h-screen flex flex-col relative">
       {/* ─── Top scroll-progress bar ────────────────────────────────── */}
       <ScrollProgress />
+
+      {/* ─── Page-wide gold ambient halo (cursor-following) ──────── */}
+      <CursorAura />
 
       {/* ─── Magnetic cursor follower (gold dot + glow trail) ───────── */}
       <CursorFollower />
