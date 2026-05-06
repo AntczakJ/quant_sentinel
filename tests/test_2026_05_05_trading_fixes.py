@@ -50,8 +50,9 @@ def test_london_hard_block_env_off_disables(monkeypatch):
 # ─── 2. A grade demote ───────────────────────────────────────────────────
 
 def test_a_grade_returns_b_sizing():
-    """`score_setup_quality` returns grade='A' (label preserved for
-    observability) but with B-level risk_mult=0.5 and target_rr=2.0."""
+    """2026-05-06: A grade now FULLY relabeled to 'B' too (was: kept A label,
+    B sizing). Score-tier still in A range [a_cut, a_plus_cut) but
+    operational classification is B."""
     from src.trading.smc_engine import score_setup_quality
 
     # Construct an analysis that scores in A range. Use a scalp tier
@@ -75,18 +76,22 @@ def test_a_grade_returns_b_sizing():
     }
     res = score_setup_quality(analysis, 'LONG')
 
-    # If the score landed exactly in A range, demote must kick in
-    if res['grade'] == 'A':
+    # 2026-05-06: A→B fully merged. score in A range [a_cut, a_plus_cut)
+    # → grade should now be "B", not "A". Sizing remains 0.5/2.0.
+    if res['grade'] == 'B':
         assert res['risk_mult'] == 0.5, (
-            f"A grade demote broken: risk_mult={res['risk_mult']} (expected 0.5)"
+            f"B sizing broken: risk_mult={res['risk_mult']} (expected 0.5)"
         )
         assert res['target_rr'] == 2.0, (
-            f"A grade target_rr broken: {res['target_rr']} (expected 2.0)"
+            f"B target_rr broken: {res['target_rr']} (expected 2.0)"
         )
-    # If it landed in A+ or B, the test setup didn't actually exercise the
-    # demote path — log but don't fail (other tests cover boundaries).
+    elif res['grade'] == 'A':
+        pytest.fail(
+            f"A grade still being assigned with score {res['score']:.1f} — "
+            f"2026-05-06 merge into B was supposed to relabel"
+        )
     else:
-        pytest.skip(f"Setup scored as {res['grade']}, not A — boundary test")
+        pytest.skip(f"Setup scored as {res['grade']}, boundary test")
 
 
 def test_a_plus_sizing():

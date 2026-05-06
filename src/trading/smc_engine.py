@@ -2186,14 +2186,14 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         risk_mult = 1.5
         target_rr = 2.5
     elif score >= a_cut:
-        # 2026-05-05: A grade DEMOTED → B treatment (1yr backtest evidence).
-        # 1yr cohort: A n=3, WR 0%, total -$36. Toxic factor stacking hits
-        # the A range (above b_cut, below a_plus_cut) without producing
-        # reliable signal. Audit memo a_plus_grade_bug_2026-05-04.md called
-        # this — A+ trap from factor stacking. We keep grade label "A" for
-        # observability (so post-mortems still see what scored A) but apply
-        # B-level sizing + tighter target_rr.
-        grade = "A"
+        # 2026-05-06: A grade FULLY merged into B (3yr backtest evidence).
+        # 1yr cohort: A n=3 WR 0% -$36. 3yr cohort: A n=51 WR 39.2% -$51.
+        # Persistent negative cohort across both horizons even after
+        # 2026-05-05 demote (kept A label, B sizing). Now: also relabel
+        # to "B" so analytics group correctly + remove confusion.
+        # The score-tier remains in the "A range" [a_cut, a_plus_cut)
+        # but the operational classification is B.
+        grade = "B"
         risk_mult = 0.5
         target_rr = 2.0
     elif score >= b_cut:
