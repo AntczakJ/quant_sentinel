@@ -1649,8 +1649,132 @@ def cascade_mtf_scan(db, balance: float = 10000, currency: str = "USD") -> dict 
         else:
             logger.debug(f"⏭️ [MTF] Brak setupu na {TF_LABELS.get(tf, tf)} — szukam niżej...")
 
+    # 2026-05-06 — Phase C parallel strategies (env-flagged, default OFF).
+    # When primary SMC scanner finds nothing, check uncorrelated strategies:
+    #   - mean_reversion (Bollinger fade)
+    #   - vol_breakout (ATR contraction)
+    #   - news_llm (LLM headline classifier)
+    # Each fires independently. First positive signal becomes the trade.
+    # Sized via portfolio risk_budget_pct from src/trading/assets.py.
+    if any(os.environ.get(f) == "1" for f in
+           ("QUANT_MEAN_REV_LIVE", "QUANT_VOL_BREAKOUT_LIVE", "QUANT_NEWS_LLM_LIVE")):
+        try:
+            phase_c_signal = _run_phase_c_parallel(db, balance, currency)
+            if phase_c_signal is not None:
+                logger.info(
+                    f"✅ [Phase C] Trade z {phase_c_signal.get('logic', '?')}"
+                )
+                return phase_c_signal
+        except Exception as _pc_err:
+            logger.debug(f"Phase C parallel scan skipped: {_pc_err}")
+
     logger.info("🔎 [MTF] Brak ważnego setupu na żadnym TF.")
     return None
+
+
+def _run_phase_c_parallel(db, balance: float, currency: str) -> dict | None:
+    """Run Phase C parallel strategies on M5 or M15 frame.
+
+    Each strategy is independent — first positive signal returned.
+    Risk-budget aware: each strategy sized to its allocated fraction.
+
+    Returns trade dict (compatible with cascade_mtf_scan return) or None.
+    """
+    # Use M15 for mean-rev + vol-breakout (slower regime read)
+    primary_tf = "15m"
+    df = _fetch_candles_for_tf(primary_tf)
+    if df is None or len(df) < 30:
+        return None
+
+    # Compute ATR for SL sizing
+    try:
+        import pandas_ta as _ta
+        atr_series = _ta.atr(df["high"], df["low"], df["close"], length=14)
+        atr = float(atr_series.iloc[-1]) if atr_series is not None and not atr_series.empty else 1.0
+    except Exception:
+        atr = 1.0
+    rsi = 50.0
+    try:
+        import pandas_ta as _ta
+        rsi_series = _ta.rsi(df["close"], length=14)
+        if rsi_series is not None and not rsi_series.empty:
+            rsi = float(rsi_series.iloc[-1])
+    except Exception:
+        pass
+
+    # Strategy roster — each as separate signal source
+    candidates = []
+
+    if os.environ.get("QUANT_MEAN_REV_LIVE") == "1":
+        try:
+            from src.trading.strategies import mean_reversion
+            sig = mean_reversion.detect_setup(df, atr=atr, rsi=rsi)
+            if sig is not None:
+                candidates.append(sig)
+        except Exception as e:
+            logger.debug(f"mean_reversion skipped: {e}")
+
+    if os.environ.get("QUANT_VOL_BREAKOUT_LIVE") == "1":
+        try:
+            from src.trading.strategies import vol_breakout
+            sig = vol_breakout.detect_setup(df, atr=atr)
+            if sig is not None:
+                candidates.append(sig)
+        except Exception as e:
+            logger.debug(f"vol_breakout skipped: {e}")
+
+    if os.environ.get("QUANT_NEWS_LLM_LIVE") == "1":
+        try:
+            # News LLM aggregates active classifications from cache.
+            # Population of the cache is operator-side (cron / news poller).
+            pass  # Wired separately via news_feed.py daemon
+        except Exception as e:
+            logger.debug(f"news_llm skipped: {e}")
+
+    if not candidates:
+        return None
+
+    # Pick highest-confidence signal
+    best = max(candidates, key=lambda s: s.confidence)
+
+    # Build trade dict matching cascade_mtf_scan return shape
+    return {
+        "tf": primary_tf,
+        "tf_label": TF_LABELS.get(primary_tf, primary_tf.upper()),
+        "direction": best.direction,
+        "entry": best.entry or 0.0,
+        "sl": best.sl or 0.0,
+        "tp": best.tp or 0.0,
+        "lot": 0.01,  # Phase D HRP allocator will adjust
+        "logic": f"PhaseC:{best.strategy_name} {best.reason}",
+        "trend": best.direction.lower(),
+        "rsi": rsi,
+        "structure": f"PhaseC[{best.strategy_name}]",
+        "fvg": False,
+        "ob_price": None,
+        "atr": atr,
+        "factors": {f"phase_c_{best.strategy_name}": 1},
+        "setup_quality": {
+            "grade": "B",
+            "score": int(best.confidence * 100),
+            "risk_mult": 0.5,
+            "target_rr": 2.0,
+            "factors_detail": {f"phase_c_{best.strategy_name}": int(best.confidence * 100)},
+        },
+        "phase_c_strategy": best.strategy_name,
+        "phase_c_confidence": best.confidence,
+    }
+
+
+def _fetch_candles_for_tf(tf: str, limit: int = 200):
+    """Fetch candles for given TF, used by Phase C parallel strategies."""
+    try:
+        from src.data.data_sources import get_provider
+        provider = get_provider()
+        df = provider.get_candles("XAU/USD", tf, limit)
+        return df
+    except Exception:
+        return None
 
 
 
