@@ -1389,10 +1389,42 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                                    trend=current_trend, pattern=pattern, atr=current_atr)
                     return None
                 else:
-                    logger.info(
-                        f"[MTF] {tf}: meta-label P(profitable)={_ml_out['prob']:.2f} "
-                        f"(kelly_f={_ml_out['kelly_f']:.2f}, suggested_lot={_ml_out['lot']:.4f})"
-                    )
+                    # 2026-05-06 — Phase 1: SIZING mode wired (Lopez de Prado).
+                    # Override flat lot with kelly_fraction(p_meta) × base_lot.
+                    # Higher P → larger lot (up to half-Kelly cap).
+                    # Env-flag QUANT_META_LABEL_SIZING=1 (default OFF — operator
+                    # opt-in after meta-labeler is forward-validated on N≥50
+                    # live trades). MAX_LOT_CAP from .env still applies as ceiling.
+                    if os.environ.get("QUANT_META_LABEL_SIZING") == "1":
+                        _ml_lot = _ml_out["lot"]
+                        # Hard cap: respect MAX_LOT_CAP if set
+                        try:
+                            _ceiling = float(os.environ.get("MAX_LOT_CAP", 1.0))
+                            _ml_lot = min(_ml_lot, _ceiling)
+                        except (TypeError, ValueError):
+                            pass
+                        if _ml_lot >= 0.001:
+                            logger.info(
+                                f"[MTF] {tf}: META-SIZING — P={_ml_out['prob']:.2f} "
+                                f"kelly_f={_ml_out['kelly_f']:.3f} "
+                                f"lot {lot:.4f} → {_ml_lot:.4f}"
+                            )
+                            lot = _ml_lot
+                            # Mark for downstream observability (e.g. trade.factors)
+                            analysis['_meta_sizing_applied'] = True
+                            analysis['_meta_prob'] = _ml_out['prob']
+                            analysis['_meta_kelly_f'] = _ml_out['kelly_f']
+                        else:
+                            logger.info(
+                                f"[MTF] {tf}: meta-sizing computed lot={_ml_lot:.4f} "
+                                f"below 0.001 minimum — falling back to baseline lot={lot}"
+                            )
+                    else:
+                        logger.info(
+                            f"[MTF] {tf}: meta-label P(profitable)={_ml_out['prob']:.2f} "
+                            f"(kelly_f={_ml_out['kelly_f']:.2f}, suggested_lot={_ml_out['lot']:.4f}) "
+                            f"— SIZING mode disabled, using baseline lot={lot}"
+                        )
         except Exception as _ml_err:
             logger.debug(f"Meta-label gate skipped: {_ml_err}")
 

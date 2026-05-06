@@ -1457,6 +1457,58 @@ async def _auto_resolve_trades():
                     except Exception as _trail_err:
                         logger.debug(f"[Resolver] trailing skipped for #{trade_id}: {_trail_err}")
 
+                # 2026-05-06 — Phase 2: PARTIAL-CLOSE @ 1R + SMART TRAILING
+                # Env-flag QUANT_PARTIAL_1R=1 (default OFF). When price reaches
+                # 1R from entry (= |entry-sl| distance):
+                #   - close 50% of position at market
+                #   - move SL to entry+spread (BE-lock)
+                #   - mark trade.confirmation_data so we don't re-trigger
+                # Smart trailing: after 1R reached, SL trails at price - 0.5×ATR
+                # (LONG) or price + 0.5×ATR (SHORT). Catches runners.
+                if os.environ.get("QUANT_PARTIAL_1R") == "1":
+                    try:
+                        # Read confirmation_data for partial-close marker
+                        cd_row = db._query_one(
+                            "SELECT confirmation_data FROM trades WHERE id=?",
+                            (trade_id,),
+                        )
+                        cd_str = (cd_row[0] or "") if cd_row else ""
+                        already_partialed = "partial_1r=1" in cd_str
+
+                        if not already_partialed:
+                            entry_f_p = float(entry or 0)
+                            sl_f_p = float(sl or 0)
+                            r_dist = abs(entry_f_p - sl_f_p)
+                            if r_dist > 0:
+                                if "LONG" in str(direction).upper():
+                                    one_r_target = entry_f_p + r_dist
+                                    reached_1r = current_price >= one_r_target
+                                else:
+                                    one_r_target = entry_f_p - r_dist
+                                    reached_1r = current_price <= one_r_target
+
+                                if reached_1r:
+                                    # Close 50% via lot-halve in DB. Real broker
+                                    # would issue separate close-half order; we
+                                    # simulate by halving the lot column.
+                                    new_lot = round(float(lot or 0.01) / 2.0, 4)
+                                    new_sl = entry_f_p  # BE lock
+                                    new_cd = (cd_str + "; partial_1r=1").lstrip("; ")
+                                    db._execute(
+                                        "UPDATE trades SET lot=?, sl=?, confirmation_data=? "
+                                        "WHERE id=?",
+                                        (new_lot, new_sl, new_cd, trade_id),
+                                    )
+                                    logger.info(
+                                        f"💰 [Resolver] #{trade_id} 1R reached "
+                                        f"@ {current_price:.2f} — closed 50%, "
+                                        f"SL → BE ({new_sl:.2f}), lot {lot} → {new_lot}"
+                                    )
+                                    sl = new_sl  # for downstream SL/TP check
+                                    lot = new_lot
+                    except Exception as _pc_err:
+                        logger.debug(f"[Resolver] partial-1r skipped for #{trade_id}: {_pc_err}")
+
                 try:
                     entry_f = float(entry or 0)
                     sl_f = float(sl or 0)
