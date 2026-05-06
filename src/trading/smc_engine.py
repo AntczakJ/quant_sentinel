@@ -1948,6 +1948,65 @@ def score_setup_quality(analysis: dict, direction: str) -> dict:
         score += 5
         factors_detail['good_hour'] = 5
 
+    # --- 2026-05-06 PHASE A: 5 quick alphas ---
+    # All read-only flags from analysis dict (set by scanner.py per cycle).
+
+    # A1: LBMA fix windows (10:30 + 15:00 UTC ±5min)
+    # Documented dealer hedging — pre-fix range expansion + directional break post.
+    # Post-fix break in the direction of the trade gets a bonus.
+    _lbma = analysis.get('lbma_fix') or {}
+    if _lbma.get('in_window') and _lbma.get('phase') == 'post_fix':
+        score += 12
+        factors_detail['lbma_fix'] = 12
+
+    # A3: GVZ regime gate — backwardation ≈ acute stress = gold safe-haven bid
+    # Direction-aware: only when LONG (not SHORT against safe-haven flow)
+    _gvz_bias = analysis.get('gvz_gold_bias', 0)
+    if _gvz_bias == 1 and direction == "LONG":
+        score += 8
+        factors_detail['gvz_backwardation'] = 8
+
+    # A4: January seasonality + EOM rebalancing flow
+    # Q1 80% of years positive on gold. EOM = institutional flow.
+    if analysis.get('january_long_bias') and direction == "LONG":
+        score += 5
+        factors_detail['january_seasonality'] = 5
+    if analysis.get('eom_window'):
+        # Don't direction-gate; flow is real both ways
+        score += 3
+        factors_detail['eom_rebalance'] = 3
+
+    # A2: COT extreme-divergence bias (weekly signal)
+    # signal=+1 → long bias; signal=-1 → short bias
+    _cot_signal = analysis.get('cot_extreme_signal', 0)
+    if _cot_signal == 1 and direction == "LONG":
+        score += 6
+        factors_detail['cot_extreme_long'] = 6
+    elif _cot_signal == -1 and direction == "SHORT":
+        score += 6
+        factors_detail['cot_extreme_short'] = 6
+
+    # A5: Carry overlay — XAU-USDJPY 20-day correlation regime
+    # When |corr| > 0.7 (regime stable), trades aligned with macro tilt
+    # get a small bonus. Already have xau_usdjpy_corr_20 in features.
+    _xau_jpy_corr = analysis.get('xau_usdjpy_corr')
+    if _xau_jpy_corr is not None:
+        try:
+            _corr = float(_xau_jpy_corr)
+            # Strong negative correlation = canonical (USDJPY up → XAU down)
+            # When corr ≈ -0.7+, USDJPY z-score predicts XAU direction
+            _zscore = float(analysis.get('usdjpy_zscore', 0) or 0)
+            if _corr <= -0.7:
+                # Classic regime: SHORT XAU when USDJPY high, LONG when low
+                if direction == "LONG" and _zscore < -1.0:
+                    score += 4
+                    factors_detail['carry_aligned'] = 4
+                elif direction == "SHORT" and _zscore > 1.0:
+                    score += 4
+                    factors_detail['carry_aligned'] = 4
+        except (TypeError, ValueError):
+            pass
+
     # RSI w optymalnej strefie (max 5 pkt)
     rsi = analysis.get('rsi', 50)
     if direction == "LONG" and 35 <= rsi <= 55:

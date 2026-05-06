@@ -1118,6 +1118,37 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
                                rsi=current_rsi, trend=current_trend, pattern=pattern, atr=current_atr)
                 return None
 
+        # 2026-05-06 PHASE A: time-based + macro alphas computed once per cycle
+        try:
+            from src.analysis.time_alphas import (
+                in_lbma_fix_window, january_long_bias, end_of_month_window,
+            )
+            from src.trading.sim_time import now_utc as _sim_now
+            _ref = _sim_now()
+            _lbma_state = in_lbma_fix_window(_ref)
+            analysis['lbma_fix'] = _lbma_state
+            analysis['january_long_bias'] = january_long_bias(_ref)
+            analysis['eom_window'] = end_of_month_window(_ref)
+        except Exception as _ta_err:
+            logger.debug(f"Time alphas skipped: {_ta_err}")
+
+        # GVZ regime (cached, ~free)
+        try:
+            from src.analysis.gvz_regime import get_gvz_regime
+            _gvz = get_gvz_regime()
+            analysis['gvz_gold_bias'] = _gvz.get('gold_bias', 0)
+            analysis['gvz_term_pct'] = _gvz.get('term_pct')
+        except Exception as _gvz_err:
+            logger.debug(f"GVZ regime skipped: {_gvz_err}")
+
+        # COT extreme-divergence bias (weekly)
+        try:
+            from src.analysis.cot_bias import get_cot_extreme_bias
+            _cot = get_cot_extreme_bias()
+            analysis['cot_extreme_signal'] = _cot.get('signal', 0)
+        except Exception as _cot_err:
+            logger.debug(f"COT bias skipped: {_cot_err}")
+
         # 2026-05-05: positive bonus for historically GOOD hours.
         # Mirror of the bad-hour block, asymmetry caught by WR audit
         # Agent 1. min_trades=10 (vs bad_hours' 5) and min_winrate 0.55
