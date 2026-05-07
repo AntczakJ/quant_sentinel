@@ -781,6 +781,24 @@ def _evaluate_tf_for_trade(tf: str, db, balance: float = 10000, currency: str = 
     lot = pos.get('lot', 0.01)
     logic = pos.get('logic', '')
 
+    # 2026-05-07 — MEGA: tier compounding multiplier on lot.
+    # When QUANT_TIER_COMPOUNDING=1, scale lot by equity-tier mult
+    # (1.0× at $10k baseline → 1.5× at $100k+, with 30-day persist gate).
+    # Reads portfolio_balance from dynamic_params + equity history.
+    try:
+        from src.risk.compounding import compounded_lot
+        _comp = compounded_lot(lot)
+        if _comp.get("multiplier", 1.0) != 1.0:
+            old_lot = lot
+            lot = _comp["lot"]
+            logger.info(
+                f"[MTF] {tf}: TIER COMPOUNDING — tier {_comp['tier']} "
+                f"({_comp['status']}) multiplier {_comp['multiplier']} → "
+                f"lot {old_lot:.4f} → {lot:.4f}"
+            )
+    except Exception as _tc_err:
+        logger.debug(f"Tier compounding skipped: {_tc_err}")
+
     # --- 3a. PORTFOLIO-RISK CAP (2026-05-05, env-tunable) ---
     # Bloomberg PORT pattern: aggregate open R-units across all positions,
     # cap total at QUANT_MAX_OPEN_R (default 2.0). Single-asset XAU today,
@@ -1657,7 +1675,8 @@ def cascade_mtf_scan(db, balance: float = 10000, currency: str = "USD") -> dict 
     # Each fires independently. First positive signal becomes the trade.
     # Sized via portfolio risk_budget_pct from src/trading/assets.py.
     if any(os.environ.get(f) == "1" for f in
-           ("QUANT_MEAN_REV_LIVE", "QUANT_VOL_BREAKOUT_LIVE", "QUANT_NEWS_LLM_LIVE")):
+           ("QUANT_MEAN_REV_LIVE", "QUANT_VOL_BREAKOUT_LIVE", "QUANT_NEWS_LLM_LIVE",
+            "QUANT_SUNDAY_GAP_LIVE", "QUANT_FOMC_SQUEEZE_LIVE")):
         try:
             phase_c_signal = _run_phase_c_parallel(db, balance, currency)
             if phase_c_signal is not None:
@@ -1730,6 +1749,26 @@ def _run_phase_c_parallel(db, balance: float, currency: str) -> dict | None:
             pass  # Wired separately via news_feed.py daemon
         except Exception as e:
             logger.debug(f"news_llm skipped: {e}")
+
+    # MEGA: Sunday gap-fill fade (only fires Sun 22:00 UTC ± 14h)
+    if os.environ.get("QUANT_SUNDAY_GAP_LIVE") == "1":
+        try:
+            from src.trading.strategies import sunday_gap
+            sig = sunday_gap.detect_setup(df)
+            if sig is not None:
+                candidates.append(sig)
+        except Exception as e:
+            logger.debug(f"sunday_gap skipped: {e}")
+
+    # MEGA: Pre-FOMC squeeze (only fires post-FOMC announcement +30m to +4h)
+    if os.environ.get("QUANT_FOMC_SQUEEZE_LIVE") == "1":
+        try:
+            from src.trading.strategies import fomc_squeeze
+            sig = fomc_squeeze.detect_setup(df, atr=atr)
+            if sig is not None:
+                candidates.append(sig)
+        except Exception as e:
+            logger.debug(f"fomc_squeeze skipped: {e}")
 
     if not candidates:
         return None

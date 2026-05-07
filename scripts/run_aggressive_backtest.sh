@@ -37,7 +37,8 @@ cp data/backtest.db "data/backups/backtest_pre_aggr_${ts}.db" 2>/dev/null || tru
 # Phase B sizing (3 toggles)
 # Phase 1 meta-labeler sizing
 # Phase 2 partial-1R
-# Phase C strategies live
+# Phase C strategies live (mean-rev + vol-breakout)
+# MEGA strategies (Sunday gap + FOMC squeeze + tier compounding)
 # OOD gate OFF for full-history fairness (was fit on recent ~5k prices)
 # Meta-label gate kept ON (already validated veto-only)
 
@@ -48,6 +49,9 @@ QUANT_META_LABEL_SIZING=1 \
 QUANT_PARTIAL_1R=1 \
 QUANT_MEAN_REV_LIVE=1 \
 QUANT_VOL_BREAKOUT_LIVE=1 \
+QUANT_SUNDAY_GAP_LIVE=1 \
+QUANT_FOMC_SQUEEZE_LIVE=1 \
+QUANT_TIER_COMPOUNDING=1 \
 QUANT_OOD_GATE=0 \
 QUANT_META_LABEL_GATE=1 \
 .venv/Scripts/python.exe -X utf8 run_production_backtest.py \
